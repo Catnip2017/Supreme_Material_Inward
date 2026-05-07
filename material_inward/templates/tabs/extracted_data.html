@@ -1,0 +1,432 @@
+<div class="content-card">
+  <h3>📊 Extracted Data from Documents</h3>
+  
+  {% if invoice_data or ewaybill_data or lr_data %}
+    <div class="content-tabs">
+      {% if invoice_data %}
+        <button class="tab-button {% if invoice_data %}active{% endif %}" onclick="switchDataTab('invoice')">
+          Invoice Data
+        </button>
+      {% endif %}
+      
+      {% if ewaybill_data %}
+        <button class="tab-button {% if ewaybill_data and not invoice_data %}active{% endif %}" onclick="switchDataTab('ewaybill')">
+          E-Way Bill Data
+        </button>
+      {% endif %}
+      
+      {% if lr_data %}
+        <button class="tab-button {% if lr_data and not invoice_data and not ewaybill_data %}active{% endif %}" onclick="switchDataTab('lr')">
+          LR Data
+        </button>
+      {% endif %}
+    </div>
+    
+    <!-- Invoice Data Tab -->
+    {% if invoice_data %}
+    <div id="invoiceData" class="tab-content {% if invoice_data %}active{% endif %}">
+      <div class="data-display">
+        <!-- Basic Invoice Information -->
+        <div class="data-section">
+          <h4>📋 Basic Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Invoice Number</div>
+              <div class="data-item-value highlight">{{ invoice_data.get('invoice_number', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Invoice Date</div>
+              <div class="data-item-value">{{ invoice_data.get('invoice_date', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">PO Number</div>
+              <div class="data-item-value">{{ invoice_data.get('po_number', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Buyer Information -->
+        <div class="data-section">
+          <h4>🏢 Buyer Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Buyer Name</div>
+              <div class="data-item-value">{{ invoice_data.get('buyer_name', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Buyer GSTIN</div>
+              <div class="data-item-value">{{ invoice_data.get('buyer_gstin', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Buyer Address</div>
+              <div class="data-item-value">{{ invoice_data.get('buyer_address', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Seller Information -->
+        <div class="data-section">
+          <h4>🏪 Seller Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Seller Name</div>
+              <div class="data-item-value">{{ invoice_data.get('seller_name', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Seller GSTIN</div>
+              <div class="data-item-value">{{ invoice_data.get('seller_gstin', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Company PAN</div>
+              <div class="data-item-value">{{ invoice_data.get('company_pan', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Seller Address</div>
+              <div class="data-item-value">{{ invoice_data.get('seller_address', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Shipping Information -->
+        <div class="data-section">
+          <h4>🚚 Shipping Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Ship To Name</div>
+              <div class="data-item-value">{{ invoice_data.get('ship_to_name', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Ship To Address</div>
+              <div class="data-item-value">{{ invoice_data.get('ship_to_address', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Ship To State</div>
+              <div class="data-item-value">{{ invoice_data.get('ship_to_state', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Ship To Code</div>
+              <div class="data-item-value">{{ invoice_data.get('ship_to_code', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Tax Information -->
+        <div class="data-section">
+          <h4>💰 Tax & Amount Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Total Taxable Amount</div>
+              <div class="data-item-value highlight">{{ invoice_data.get('total_taxable_amount', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">CGST Amount</div>
+              <div class="data-item-value">{{ invoice_data.get('cgst_amount', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">SGST Amount</div>
+              <div class="data-item-value">{{ invoice_data.get('sgst_amount', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">IGST Amount</div>
+              <div class="data-item-value">{{ invoice_data.get('igst_amount', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Total Tax Amount</div>
+              <div class="data-item-value highlight">{{ invoice_data.get('total_tax_amount', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Grand Total</div>
+              <div class="data-item-value highlight">{{ invoice_data.get('grand_total', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Amount in Words</div>
+              <div class="data-item-value">{{ invoice_data.get('amount_in_words', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Mode/Terms of Payment</div>
+              <div class="data-item-value">{{ invoice_data.get('payment_terms', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- HSN Details -->
+        {% if invoice_data.get('hsn_details') and invoice_data['HSN Details']|length > 0 %}
+        <div class="data-section">
+          <h4>📦 HSN/SAC Details</h4>
+          <div class="hsn-table-wrapper">
+            <table class="hsn-table">
+              <thead>
+                <tr>
+                  <th>HSN/SAC</th>
+                  <th>Description</th>
+                  <th>Quantity</th>
+                  <th>Taxable Value</th>
+                  <th>CGST Rate</th>
+                  <th>CGST Amount</th>
+                  <th>SGST Rate</th>
+                  <th>SGST Amount</th>
+                  <th>IGST Rate</th>
+                  <th>IGST Amount</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in invoice_data['HSN Details'] %}
+                <tr>
+                  <td>{{ item.get('HSN/SAC', '-') }}</td>
+                  <td>{{ item.get('Description', '-') }}</td>
+                  <td>{{ item.get('Quantity', '-') }}</td>
+                  <td>{{ item.get('Taxable Value', '-') }}</td>
+                  <td>{{ item.get('CGST Rate', '-') }}</td>
+                  <td>{{ item.get('CGST Amount', '-') }}</td>
+                  <td>{{ item.get('SGST Rate', '-') }}</td>
+                  <td>{{ item.get('SGST Amount', '-') }}</td>
+                  <td>{{ item.get('IGST Rate', '-') }}</td>
+                  <td>{{ item.get('IGST Amount', '-') }}</td>
+                  <td>{{ item.get('Total', '-') }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+        
+        {% if invoice_data.get('filename') %}
+        <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data['filename']) }}" target="_blank" class="view-document-link">
+          View Original Invoice
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    
+    <!-- E-Way Bill Data Tab -->
+    {% if ewaybill_data %}
+    <div id="ewaybillData" class="tab-content {% if ewaybill_data and not invoice_data %}active{% endif %}">
+      <div class="data-display">
+        <!-- E-Way Bill Basic Info -->
+        <div class="data-section">
+          <h4>📋 E-Way Bill Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">E-way Bill No</div>
+              <div class="data-item-value highlight">{{ ewaybill_data.get('ewaybill_number', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Generated Date</div>
+              <div class="data-item-value">{{ ewaybill_data.get('generated_date', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Validity Date</div>
+              <div class="data-item-value">{{ ewaybill_data.get('validity_date', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Invoice Number</div>
+              <div class="data-item-value">{{ ewaybill_data.get('invoice_number', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Invoice Date</div>
+              <div class="data-item-value">{{ ewaybill_data.get('invoice_date', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">PO Number</div>
+              <div class="data-item-value">{{ ewaybill_data.get('po_number', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Goods Information -->
+        <div class="data-section">
+          <h4>📦 Goods Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Goods Description</div>
+              <div class="data-item-value">{{ ewaybill_data.get('goods_description', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">HSN Code</div>
+              <div class="data-item-value">{{ ewaybill_data.get('hsn_code', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Quantity</div>
+              <div class="data-item-value">{{ ewaybill_data.get('quantity', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Value of Goods</div>
+              <div class="data-item-value highlight">{{ ewaybill_data.get('value_of_goods', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Address Information -->
+        <div class="data-section">
+          <h4>📍 Dispatch Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Dispatch From</div>
+              <div class="data-item-value">{{ ewaybill_data.get('dispatch_from', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Dispatch To</div>
+              <div class="data-item-value">{{ ewaybill_data.get('dispatch_to', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Transport Information -->
+        <div class="data-section">
+          <h4>🚚 Transport Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Transport Mode</div>
+              <div class="data-item-value">{{ ewaybill_data.get('transport_mode', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Vehicle Number</div>
+              <div class="data-item-value">{{ ewaybill_data.get('vehicle_number', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Transporter Name</div>
+              <div class="data-item-value">{{ ewaybill_data.get('transporter_name', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Transporter GSTIN</div>
+              <div class="data-item-value">{{ ewaybill_data.get('transporter_gstin', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Transport Document No</div>
+              <div class="data-item-value">{{ ewaybill_data.get('transport_doc_no', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Transport Document Date</div>
+              <div class="data-item-value">{{ ewaybill_data.get('Transport Document Date', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Tax Information -->
+        <div class="data-section">
+          <h4>💰 Tax Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Total Taxable Amount</div>
+              <div class="data-item-value highlight">{{ ewaybill_data.get('Total Taxable Amount', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Total Invoice Amount</div>
+              <div class="data-item-value highlight">{{ ewaybill_data.get('Total Invoice Amount', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        {% if ewaybill_data.get('filename') %}
+        <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) }}" target="_blank" class="view-document-link">
+          View Original E-Way Bill
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    
+    <!-- LR Data Tab -->
+    {% if lr_data %}
+    <div id="lrData" class="tab-content {% if lr_data and not invoice_data and not ewaybill_data %}active{% endif %}">
+      <div class="data-display">
+        <!-- LR Basic Info -->
+        <div class="data-section">
+          <h4>📋 Lorry Receipt Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Lorry Receipt No</div>
+              <div class="data-item-value highlight">{{ lr_data.get('lr_number', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Date</div>
+              <div class="data-item-value">{{ lr_data.get('lr_date', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Vehicle Number</div>
+              <div class="data-item-value">{{ lr_data.get('vehicle_number', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Consignment Information -->
+        <div class="data-section">
+          <h4>📦 Consignment Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Consignor Name</div>
+              <div class="data-item-value">{{ lr_data.get('consignor_name', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Consignee Name</div>
+              <div class="data-item-value">{{ lr_data.get('consignee_name', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Material Description</div>
+              <div class="data-item-value">{{ lr_data.get('material_description', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Quantity</div>
+              <div class="data-item-value">{{ lr_data.get('quantity', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Weight</div>
+              <div class="data-item-value">{{ lr_data.get('weight', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Location Information -->
+        <div class="data-section">
+          <h4>📍 Location Information</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">From Location</div>
+              <div class="data-item-value">{{ lr_data.get('from_location', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">To Location</div>
+              <div class="data-item-value">{{ lr_data.get('to_location', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Delivery Address</div>
+              <div class="data-item-value">{{ lr_data.get('delivery_address', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Transport & Freight -->
+        <div class="data-section">
+          <h4>🚚 Transport & Freight</h4>
+          <div class="data-grid">
+            <div class="data-item">
+              <div class="data-item-label">Transporter Name</div>
+              <div class="data-item-value">{{ lr_data.get('transporter_name', '-') }}</div>
+            </div>
+            <div class="data-item">
+              <div class="data-item-label">Freight Amount</div>
+              <div class="data-item-value highlight">{{ lr_data.get('freight_amount', '-') }}</div>
+            </div>
+          </div>
+        </div>
+        
+        {% if lr_data.get('filename') %}
+        <a href="{{ url_for('view_document', doctype='lr', filename=lr_data['filename']) }}" target="_blank" class="view-document-link">
+          View Original LR
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    
+  {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">📄</div>
+      <h3>No Data Available</h3>
+      <p>Upload documents from the sidebar to extract and view data</p>
+    </div>
+  {% endif %}
+</div>

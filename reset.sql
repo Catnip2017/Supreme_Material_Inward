@@ -1,0 +1,1 @@
+UPDATE users SET password='$2b$12$sV/TxpVZ2eWf4FjOh9WR5.GvQnMjEoZJ5sqa1oV.J8zohQnS7PZXq' WHERE username='admin@catnip.com';

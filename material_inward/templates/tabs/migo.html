@@ -1,0 +1,929 @@
+<style>
+.req { color:#e74c3c; margin-left:2px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+.readonly-field { background:#f8f9fb !important; color:#1e5ca8; font-weight:600; }
+
+/* Verification panel */
+.verify-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+  min-width: 0; /* prevents grid blowout */
+}
+.verify-panel > div {
+  min-width: 0;
+  overflow: hidden;
+}
+.verify-panel-header {
+  font-size:13px; font-weight:700; padding:9px 14px;
+  border-radius:6px 6px 0 0;
+}
+.invoice-header { background:#e8f0fe; color:#1e5ca8; }
+.po-header      { background:#e8f7f0; color:#00796b; }
+
+/* Scrollable table container — horizontal + vertical */
+.table-scroll-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 340px; /* ~10 rows */
+  border: 1px solid #e0e0e0;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+}
+.table-scroll-wrap::-webkit-scrollbar { width:6px; height:6px; }
+.table-scroll-wrap::-webkit-scrollbar-track { background:#f1f1f1; border-radius:3px; }
+.table-scroll-wrap::-webkit-scrollbar-thumb { background:#c5cdd8; border-radius:3px; }
+.table-scroll-wrap::-webkit-scrollbar-thumb:hover { background:#a0aab4; }
+
+.verify-table { width:100%; border-collapse:collapse; font-size:12px; }
+.verify-table thead th {
+  background:#f8f9fb; padding:7px 8px; text-align:left;
+  font-weight:600; border-bottom:2px solid #e0e0e0; white-space:nowrap;
+  position: sticky; top: 0; z-index: 1; /* sticky header while scrolling */
+}
+.verify-table td {
+  padding:5px 7px; border-bottom:1px solid #f0f0f0; vertical-align:middle;
+  white-space: nowrap;
+}
+.verify-table td.cell-text {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.verify-table tr:hover td { background:#fafbff; }
+.verify-table input.form-input {
+  width:100%; padding:3px 6px; font-size:12px; min-width:55px; max-width:100px;
+}
+.verify-table tr.selected-inv td { background:#dbeafe !important; }
+.verify-table tr.selected-po  td { background:#d1fae5 !important; }
+.verify-table tr.matched-inv  td { background:#f3f0ff !important; opacity:0.55; }
+.verify-table tr.matched-po   td { background:#f3f0ff !important; opacity:0.55; }
+
+/* Match button */
+.btn-match {
+  background:#1e5ca8; color:#fff; border:none;
+  padding:8px 22px; border-radius:6px; cursor:pointer;
+  font-weight:600; font-size:13px; transition:background .2s;
+}
+.btn-match:hover:not(:disabled) { background:#154a8a; }
+.btn-match:disabled { background:#b0bec5; cursor:not-allowed; }
+
+/* Matched pairs section */
+.matched-section {
+  margin-top:18px;
+  border:2px solid #7c3aed;
+  border-radius:8px;
+  overflow:hidden;
+  animation: fadeIn .3s ease;
+}
+@keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+
+.matched-section-header {
+  background:#7c3aed; color:#fff;
+  padding:9px 16px; font-weight:700; font-size:13px;
+  display:flex; align-items:center; gap:8px;
+}
+.matched-table { width:100%; border-collapse:collapse; font-size:12px; }
+.matched-table th {
+  background:#f5f3ff; padding:7px 10px;
+  text-align:left; font-weight:600;
+  border-bottom:2px solid #ddd6fe; white-space:nowrap;
+  position:sticky; top:0; z-index:1;
+}
+.matched-table td {
+  padding:6px 10px; border-bottom:1px solid #ede9fe; vertical-align:middle;
+  white-space:nowrap;
+}
+.matched-table td.cell-text {
+  max-width:140px; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap;
+}
+.matched-table td input.form-input {
+  width:80px; padding:4px 6px; font-size:12px;
+}
+.matched-table tr:hover td { background:#faf8ff; }
+
+.btn-unmatch {
+  background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;
+  cursor:pointer; font-size:12px; padding:3px 8px;
+  border-radius:4px; font-weight:600; white-space:nowrap;
+}
+.btn-unmatch:hover { background:#fecaca; }
+
+.po-status-badge {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 12px; border-radius:12px;
+  font-size:11px; font-weight:700;
+}
+.po-fetched { background:#d1fae5; color:#065f46; }
+.po-pending { background:#fef3c7; color:#92400e; }
+
+.match-hint {
+  font-size:12px; color:#888; margin-left:12px;
+  transition: color .2s;
+}
+.match-hint.ready { color:#00b894; font-weight:600; }
+
+.verify-table td.cell-text,
+.verify-table input.form-input {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+</style>
+
+<div class="content-card">
+  <h3>📦 MIGO - Goods Receipt</h3>
+
+  {% if history and not history.gate_in %}
+  <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:20px;color:#856404;font-weight:500;">
+    ⚠ Gate In must be completed before MIGO.
+  </div>
+  {% endif %}
+
+  <input type="hidden" id="history_id_migo" value="{{ history_id or '' }}">
+
+  <!-- ======================================================== -->
+  <!-- MIGO 103                                                  -->
+  <!-- ======================================================== -->
+  <div id="migo103Section">
+    <h4 style="color:#1e5ca8;font-size:17px;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid #1e5ca8;">
+      Step 1 — MIGO 103: GR into Blocked Stock
+      {% if history and history.migo_103 %}
+      <span style="color:#00b894;font-size:13px;margin-left:12px;">✓ Done — Mat. Doc: {{ history.material_doc_number }}</span>
+      {% endif %}
+    </h4>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Purchase Order No <span class="req">*</span></label>
+        <input type="text" id="migoPoNumber" class="form-input"
+               value="{{ (migo_data.get('migo_po_number') if migo_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+               placeholder="e.g. 4500012345">
+        <div class="field-error-msg" id="err_migoPoNumber">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Document Date <span class="req">*</span></label>
+        <input type="date" id="migoDocDate" class="form-input"
+               value="{{ (migo_data.get('migo_doc_date') if migo_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}">
+        <div class="field-error-msg" id="err_migoDocDate">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Posting Date <span class="req">*</span></label>
+        <input type="date" id="migoPostDate" class="form-input"
+               value="{{ migo_data.get('migo_post_date', '') if migo_data else '' }}">
+        <div class="field-error-msg" id="err_migoPostDate">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Delivery Note <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Invoice No)</span></label>
+        <input type="text" id="migoDeliveryNote" class="form-input"
+               value="{{ (migo_data.get('migo_delivery_note') if migo_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
+               placeholder="Invoice number">
+        <div class="field-error-msg" id="err_migoDeliveryNote">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Bill of Lading <span style="font-size:11px;color:#888;">(LR No)</span></label>
+        <input type="text" id="migoBillOfLading" class="form-input"
+               value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or (lr_data.get('lr_number') if lr_data else '') or '' }}"
+               placeholder="LR number">
+      </div>
+      <div class="form-group">
+        <label>GR/GI Slip No</label>
+        <input type="text" id="migoGRSlipNo" class="form-input"
+               value="{{ migo_data.get('migo_gr_slip_no', '') if migo_data else '' }}"
+               placeholder="BOE / slip number">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Header Text <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Gate In Number)</span></label>
+      <input type="text" id="migoHeaderText" class="form-input"
+             value="{{ (migo_data.get('migo_header_text') or (history.gate_in_number if history and history.gate_in_number else '')) or '' }}"
+             placeholder="Auto-filled after Gate In">
+      <div class="field-error-msg" id="err_migoHeaderText">Required — complete Gate In first</div>
+    </div>
+
+    <!-- ======================================================== -->
+    <!-- LINE ITEM VERIFICATION                                    -->
+    <!-- ======================================================== -->
+    <div style="margin-top:28px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <h4 style="color:#1e5ca8;font-size:14px;margin:0;font-weight:700;">
+          📋 Line Item Verification
+        </h4>
+        <span id="poStatusBadge">
+          {% if po_data and po_data|length > 0 %}
+          <span class="po-status-badge po-fetched">✓ PO data loaded — {{ po_data|length }} line(s)</span>
+          {% else %}
+          <span class="po-status-badge po-pending">⏳ PO data pending — fetched after Gate In</span>
+          {% endif %}
+        </span>
+      </div>
+      <p style="font-size:12px;color:#888;margin-bottom:14px;line-height:1.6;">
+        Check one invoice row <span style="background:#dbeafe;padding:1px 6px;border-radius:3px;">blue</span>
+        and one PO row <span style="background:#d1fae5;padding:1px 6px;border-radius:3px;">green</span>,
+        then click <strong>Match Selected</strong>. Adjust quantities in the matched section before posting.
+      </p>
+
+      <div class="verify-panel">
+
+        <!-- Invoice table -->
+        <div>
+          <div class="verify-panel-header invoice-header">📄 Invoice Line Items (from OCR)</div>
+          <div class="table-scroll-wrap" style="border-color:#dde3f0;">
+            <table class="verify-table" id="invoiceItemsTable">
+              <thead>
+                <tr>
+                  <th style="width:28px;"></th>
+                  <th>#</th>
+                  <th>Material Code</th>
+                  <th>Short Text</th>
+                  <th>Qty</th>
+                  <th>Rate</th>
+                  <th>Amount</th>
+                  <th>HSN/SAC</th>
+                  <th style="width:30px;"></th>
+                </tr>
+              </thead>
+              <tbody id="invoiceItemsBody">
+                {% set items = (migo_data.get('items_data') if migo_data else []) or [] %}
+                {% if items %}
+                  {% for item in items %}
+                  <tr data-idx="{{ loop.index0 }}">
+                    <td><input type="checkbox" class="inv-check" onchange="onInvCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                    <td><input type="text" class="form-input" value="{{ item.get('material_code','') }}" placeholder="Item code"></td>
+                    <td><input type="text" class="form-input" 
+                    value="{{ item.get('short_text','') }}" 
+                    placeholder="Description"
+                    title="{{ item.get('short_text','') }}"
+                    oninput="this.title=this.value"></td>
+                    <!-- <td><input type="text" class="form-input" value="{{ item.get('mat_short_text','') or item.get('material','') }}" placeholder="Description"></td> -->
+                    <td><input type="text" class="form-input" value="{{ item.get('qty_expected','') }}" placeholder="Qty"></td>
+                    <td><input type="text" class="form-input" value="{{ item.get('rate','') }}" placeholder="Rate"></td>
+                    <td><input type="text" class="form-input" value="{{ item.get('amount','') }}" placeholder="Amount"></td>
+                    <td><input type="text" class="form-input" value="{{ item.get('hsn_sac','') }}" placeholder="HSN/SAC"></td>
+                    <td><button type="button" onclick="deleteInvRow(this)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:700;">×</button></td>
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <!-- Dummy data for demo
+                  <tr data-idx="0" class="dummy-row">
+                    <td><input type="checkbox" class="inv-check" onchange="onInvCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">1</td>
+                    <td><input type="text" class="form-input" value="21027696" placeholder="Item code"></td>
+                    <td><input type="text" class="form-input" value="PANEL, MCC 415V 30MCCO" placeholder="Description"></td>
+                    <td><input type="text" class="form-input" value="1" placeholder="Qty"></td>
+                    <td><input type="text" class="form-input" value="18765.00" placeholder="Rate"></td>
+                    <td><input type="text" class="form-input" value="18765.00" placeholder="Amount"></td>
+                    <td><input type="text" class="form-input" value="85364900" placeholder="HSN/SAC"></td>
+                    <td><button type="button" onclick="deleteInvRow(this)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:700;">×</button></td>
+                  </tr>
+                  <tr data-idx="1" class="dummy-row">
+                    <td><input type="checkbox" class="inv-check" onchange="onInvCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">2</td>
+                    <td><input type="text" class="form-input" value="73269099" placeholder="Item code"></td>
+                    <td><input type="text" class="form-input" value="ACCESSORY FOR INDEPENDENT MOUNTING" placeholder="Description"></td>
+                    <td><input type="text" class="form-input" value="20" placeholder="Qty"></td>
+                    <td><input type="text" class="form-input" value="384.80" placeholder="Rate"></td>
+                    <td><input type="text" class="form-input" value="7696.00" placeholder="Amount"></td>
+                    <td><input type="text" class="form-input" value="73269099" placeholder="HSN/SAC"></td>
+                    <td><button type="button" onclick="deleteInvRow(this)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:700;">×</button></td>
+                  </tr>
+                  <tr data-idx="2" class="dummy-row">
+                    <td><input type="checkbox" class="inv-check" onchange="onInvCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">3</td>
+                    <td><input type="text" class="form-input" value="85072000" placeholder="Item code"></td>
+                    <td><input type="text" class="form-input" value="XIDE EP 1234W (12V 9AH) RR" placeholder="Description"></td>
+                    <td><input type="text" class="form-input" value="10" placeholder="Qty"></td>
+                    <td><input type="text" class="form-input" value="1450.00" placeholder="Rate"></td>
+                    <td><input type="text" class="form-input" value="14500.00" placeholder="Amount"></td>
+                    <td><input type="text" class="form-input" value="85072000" placeholder="HSN/SAC"></td>
+                    <td><button type="button" onclick="deleteInvRow(this)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:700;">×</button></td>
+                  </tr> -->
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+          <button type="button" onclick="addInvRow()" style="margin-top:8px;font-size:12px;padding:5px 14px;background:#e8f0fe;color:#1e5ca8;border:1px solid #c5d8f8;border-radius:5px;cursor:pointer;font-weight:600;">➕ Add Line</button>
+        </div>
+
+        <!-- PO table -->
+        <div>
+          <div class="verify-panel-header po-header">🏭 PO Line Items (from SAP)</div>
+          <div class="table-scroll-wrap" style="border-color:#c8e6c9;">
+            <table class="verify-table" id="poItemsTable">
+              <thead>
+                <tr>
+                  <th style="width:28px;"></th>
+                  <th>#</th>
+                  <th>Material Code</th>
+                  <th>Short Text</th>
+                  <th>Qty</th>
+                  <th>Rate</th>
+                  <th>Amount</th>
+                  <th>HSN/SAC</th>
+                </tr>
+              </thead>
+              <tbody id="poItemsBody">
+                {% if po_data and po_data|length > 0 %}
+                  {% for item in po_data %}
+                  <tr data-idx="{{ loop.index0 }}">
+                    <td><input type="checkbox" class="po-check" onchange="onPoCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                    <td>{{ item.get('material_code','') }}</td>
+                    <!-- <td class="cell-text">{{ item.get('short_text','') }}</td> -->
+                     <td class="cell-text" title="{{ item.get('short_text','') }}">
+                      {{ item.get('short_text','') }}
+                     </td>
+                    <td>{{ item.get('qty','') }}</td>
+                    <td>{{ item.get('rate','') }}</td>
+                    <td>{{ item.get('amount','') }}</td>
+                    <td>{{ item.get('hsn_sac','') }}</td>
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <!-- Dummy PO data for demo
+                  <tr data-idx="0" class="dummy-row">
+                    <td><input type="checkbox" class="po-check" onchange="onPoCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">1</td>
+                    <td>21027696</td>
+                    <td class="cell-text">PANEL,MCC,415V,30MCO</td>
+                    <td>1</td>
+                    <td>18765.00</td>
+                    <td>18765.00</td>
+                    <td>85364900</td>
+                  </tr>
+                  <tr data-idx="1" class="dummy-row">
+                    <td><input type="checkbox" class="po-check" onchange="onPoCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">2</td>
+                    <td>73269099</td>
+                    <td class="cell-text">ACCESSORY IND MOUNTING</td>
+                    <td>20</td>
+                    <td>384.80</td>
+                    <td>7696.00</td>
+                    <td>73269099</td>
+                  </tr>
+                  <tr data-idx="2" class="dummy-row">
+                    <td><input type="checkbox" class="po-check" onchange="onPoCheck(this)"></td>
+                    <td style="color:#888;font-size:11px;">3</td>
+                    <td>85072000</td>
+                    <td class="cell-text">XIDE EP 1234W BATTERY</td>
+                    <td>10</td>
+                    <td>1450.00</td>
+                    <td>14500.00</td>
+                    <td>85072000</td>
+                  </tr> -->
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Match controls -->
+      <div style="display:flex;align-items:center;justify-content:center;margin-top:14px;gap:12px;flex-wrap:wrap;">
+        <button type="button" class="btn-match" id="matchBtn" onclick="matchSelected()" disabled>
+          🔗 Match Selected
+        </button>
+        <span class="match-hint" id="matchHint">Select one invoice row and one PO row to match</span>
+      </div>
+
+      <!-- Matched pairs — appears dynamically -->
+      <div class="matched-section" id="matchedSection" style="display:none;">
+        <div class="matched-section-header">
+          <span>🔗 Matched Pairs</span>
+          <span style="font-size:11px;font-weight:400;opacity:0.9;">— Enter actual received quantities before posting</span>
+        </div>
+        <div style="overflow-x:auto;overflow-y:auto;max-height:300px;">
+          <table class="matched-table" id="matchedTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Material Code</th>
+                <th>Short Text (Invoice)</th>
+                <th>Short Text (PO)</th>
+                <th>HSN/SAC</th>
+                <th>Qty</th>
+                <th>Delivery Note QTY <span class="req">*</span></th>
+                <th>Rate</th>
+                <th>Amount</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="matchedBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Remarks -->
+    <div class="form-group" style="margin-top:18px;">
+      <label>Text <span style="font-size:11px;color:#888;">(Remarks)</span></label>
+      <input type="text" id="migoRemarks" class="form-input"
+             value="{{ migo_data.get('migo_remarks', '') if migo_data else '' }}"
+             placeholder="Optional remarks">
+    </div>
+
+    <div id="migo103Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+    <div class="action-buttons">
+      <button type="button" id="migo103Btn" class="btn btn-primary" onclick="submitMigo103()"
+              {% if history and history.migo_103 %}style="background:#00b894;"{% endif %}>
+        {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
+      </button>
+      <button type="button" class="btn btn-secondary" onclick="clearMigoForm()">🔄 Clear</button>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MIGO 105                                                  -->
+  <!-- ======================================================== -->
+  <div id="migo105Section" style="margin-top:40px;padding-top:30px;border-top:3px dashed #e0e0e0;
+  
+    /* {% if not (history and history.migo_103) %}opacity:0.4;pointer-events:none;{% endif %}"> */
+
+    <h4 style="color:#6c5ce7;font-size:17px;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid #6c5ce7;">
+      Step 2 — MIGO 105: Release from Blocked Stock
+      {% if history and history.migo_105 %}
+      <span style="color:#00b894;font-size:13px;margin-left:12px;">✓ Done</span>
+      {% endif %}
+    </h4>
+
+    <div class="form-group">
+      <label>Material Document Number <span style="font-size:11px;color:#1e5ca8;">(auto-filled from MIGO 103)</span></label>
+      <input type="text" id="materialDocNumber" class="form-input readonly-field"
+             value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
+             readonly>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Storage Location <span class="req">*</span></label>
+        <select id="storageLocation" class="form-select">
+          <option value="">Loading...</option>
+        </select>
+        <div class="field-error-msg" id="err_storageLocation">Required</div>
+        <script>
+        (function() {
+          const saved = "{{ migo_data.get('migo_105_storage_loc', '') if migo_data else '' }}";
+          fetch('/api/storage_locations')
+            .then(r => r.json())
+            .then(data => {
+              const sel = document.getElementById('storageLocation');
+              sel.innerHTML = '<option value="">Select Storage Location</option>';
+              (data.data || []).forEach(loc => {
+                const opt = document.createElement('option');
+                opt.value = loc.code;
+                opt.textContent = loc.code + ' — ' + loc.description;
+                if (loc.code === saved) opt.selected = true;
+                sel.appendChild(opt);
+              });
+            })
+            .catch(() => {
+              document.getElementById('storageLocation').innerHTML =
+                '<option value="">Error loading — refresh page</option>';
+            });
+        })();
+        </script>
+      </div>
+      <div class="form-group">
+        <label>Batch</label>
+        <input type="text" id="batch" class="form-input"
+               value="{{ migo_data.get('migo_105_batch', '') if migo_data else '' }}"
+               placeholder="Batch number">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Vendor Invoice Amount <span style="font-size:11px;color:#888;">(Grand total)</span></label>
+      <input type="text" id="vendorInvoiceDetail" class="form-input"
+             value="{{ (migo_data.get('migo_105_vendor_invoice') if migo_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
+             placeholder="Invoice grand total">
+    </div>
+
+    <div class="form-group">
+      <label>Remarks</label>
+      <input type="text" id="remarks105" class="form-input"
+             value="{{ migo_data.get('migo_105_remarks', '') if migo_data else '' }}"
+             placeholder="Optional remarks for 105">
+    </div>
+
+    <div id="migo105Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+    <div class="action-buttons">
+      <button type="button" id="migo105Btn" class="btn btn-primary" onclick="submitMigo105()"
+              style="{% if history and history.migo_105 %}background:#00b894;{% else %}background:#6c5ce7;{% endif %}">
+        {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Auto-set posting date to today
+(function() {
+  const pd = document.getElementById('migoPostDate');
+  if (pd && !pd.value) pd.value = new Date().toISOString().split('T')[0];
+})();
+
+// ============================================================
+// INVOICE TABLE — add / delete rows
+// ============================================================
+function addInvRow() {
+  const tbody = document.getElementById('invoiceItemsBody');
+  const n = tbody.rows.length + 1;
+  const tr = tbody.insertRow();
+  tr.setAttribute('data-idx', n - 1);
+  tr.innerHTML = `
+    <td><input type="checkbox" class="inv-check" onchange="onInvCheck(this)"></td>
+    <td style="color:#888;font-size:11px;">${n}</td>
+    <td><input type="text" class="form-input" placeholder="Item code"></td>
+    <td><input type="text" class="form-input" placeholder="Description"></td>
+    <td><input type="text" class="form-input" placeholder="Qty"></td>
+    <td><input type="text" class="form-input" placeholder="Rate"></td>
+    <td><input type="text" class="form-input" placeholder="Amount"></td>
+    <td><input type="text" class="form-input" placeholder="HSN/SAC"></td>
+    <td><button type="button" onclick="deleteInvRow(this)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;padding:3px 7px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:700;">×</button></td>
+  `;
+}
+
+function deleteInvRow(btn) {
+  const tbody = document.getElementById('invoiceItemsBody');
+  if (tbody.rows.length > 1) {
+    btn.closest('tr').remove();
+    renumberInvTable();
+  }
+}
+
+function renumberInvTable() {
+  document.querySelectorAll('#invoiceItemsBody tr').forEach((r, i) => {
+    r.setAttribute('data-idx', i);
+    const cells = r.querySelectorAll('td');
+    if (cells[1]) cells[1].textContent = i + 1;
+  });
+}
+
+// ============================================================
+// MATCHING STATE
+// ============================================================
+let selectedInvRow = null;
+let selectedPoRow  = null;
+let matchedPairs   = [];  // [{pairIdx, invRow, poRow, ...}]
+
+function onInvCheck(cb) {
+  document.querySelectorAll('.inv-check').forEach(c => { if (c !== cb) c.checked = false; });
+  document.querySelectorAll('#invoiceItemsBody tr').forEach(r => r.classList.remove('selected-inv'));
+
+  if (cb.checked) {
+    const row = cb.closest('tr');
+    if (row.classList.contains('matched-inv')) {
+      cb.checked = false;
+      alert('This invoice row is already matched. Undo the match first.');
+      return;
+    }
+    row.classList.add('selected-inv');
+    selectedInvRow = row;
+  } else {
+    selectedInvRow = null;
+  }
+  updateMatchBtn();
+}
+
+function onPoCheck(cb) {
+  document.querySelectorAll('.po-check').forEach(c => { if (c !== cb) c.checked = false; });
+  document.querySelectorAll('#poItemsBody tr').forEach(r => r.classList.remove('selected-po'));
+
+  if (cb.checked) {
+    const row = cb.closest('tr');
+    if (row.classList.contains('matched-po')) {
+      cb.checked = false;
+      alert('This PO row is already matched. Undo the match first.');
+      return;
+    }
+    row.classList.add('selected-po');
+    selectedPoRow = row;
+  } else {
+    selectedPoRow = null;
+  }
+  updateMatchBtn();
+}
+
+function updateMatchBtn() {
+  const btn  = document.getElementById('matchBtn');
+  const hint = document.getElementById('matchHint');
+  if (selectedInvRow && selectedPoRow) {
+    btn.disabled = false;
+    hint.textContent = '✓ Ready to match!';
+    hint.classList.add('ready');
+  } else {
+    btn.disabled = true;
+    hint.textContent = 'Select one invoice row and one PO row to match';
+    hint.classList.remove('ready');
+  }
+}
+
+// ============================================================
+// MATCH SELECTED
+// ============================================================
+function matchSelected() {
+  if (!selectedInvRow || !selectedPoRow) return;
+
+  // Invoice inputs: 0=material_code, 1=short_text, 2=qty, 3=rate, 4=amount, 5=hsn_sac
+  const invInputs = selectedInvRow.querySelectorAll('input[type="text"]');
+  const invData = {
+    material_code: invInputs[0] ? invInputs[0].value : '',
+    short_text:    invInputs[1] ? invInputs[1].value : '',
+    qty:           invInputs[2] ? invInputs[2].value : '',
+    rate:          invInputs[3] ? invInputs[3].value : '',
+    amount:        invInputs[4] ? invInputs[4].value : '',
+    hsn_sac:       invInputs[5] ? invInputs[5].value : '',
+  };
+
+  const poCells = selectedPoRow.querySelectorAll('td');
+  const poData = {
+    material_code: poCells[2] ? poCells[2].textContent.trim() : '',
+    short_text:    poCells[3] ? poCells[3].textContent.trim() : '',
+    qty:           poCells[4] ? poCells[4].textContent.trim() : '',
+    rate:          poCells[5] ? poCells[5].textContent.trim() : '',
+    amount:        poCells[6] ? poCells[6].textContent.trim() : '',
+    hsn_sac:       poCells[7] ? poCells[7].textContent.trim() : '',
+  };
+
+  const pairIdx = Date.now(); // unique id
+  matchedPairs.push({ pairIdx, invRow: selectedInvRow, poRow: selectedPoRow });
+
+  // Mark source rows
+  selectedInvRow.classList.remove('selected-inv');
+  selectedInvRow.classList.add('matched-inv');
+  selectedPoRow.classList.remove('selected-po');
+  selectedPoRow.classList.add('matched-po');
+
+  // Uncheck
+  selectedInvRow.querySelector('.inv-check').checked = false;
+  selectedPoRow.querySelector('.po-check').checked   = false;
+  selectedInvRow = null;
+  selectedPoRow  = null;
+  updateMatchBtn();
+
+  // Render matched row
+  _addMatchedRow(pairIdx, invData, poData);
+  document.getElementById('matchedSection').style.display = 'block';
+}
+
+function _addMatchedRow(pairIdx, inv, po) {
+  const tbody = document.getElementById('matchedBody');
+  const rowNum = tbody.rows.length + 1;
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-pair', pairIdx);
+  tr.innerHTML = `
+    <td style="font-weight:600;color:#7c3aed;">${rowNum}</td>
+    <td>${_esc(inv.material_code || po.material_code)}</td>
+    <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
+    <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
+    <td>${_esc(inv.hsn_sac || po.hsn_sac)}</td>
+    <td><input type="text" class="form-input" value="${_esc(inv.qty || po.qty)}" placeholder="Qty" style="width:70px;"></td>
+    <td><input type="text" class="form-input matched-actual-qty" value="" placeholder="Actual" required style="width:70px;"></td>
+    <td><input type="text" class="form-input" value="${_esc(inv.rate || po.rate)}" placeholder="Rate" style="width:80px;"></td>
+    <td><input type="text" class="form-input" value="${_esc(inv.amount || po.amount)}" placeholder="Amount" style="width:90px;"></td>
+    <td><button type="button" class="btn-unmatch" onclick="unmatch(this,${pairIdx})">↩ Undo</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+// ============================================================
+// UNDO MATCH
+// ============================================================
+function unmatch(btn, pairIdx) {
+  const pair = matchedPairs.find(p => p.pairIdx === pairIdx);
+  if (pair) {
+    pair.invRow.classList.remove('matched-inv');
+    pair.poRow.classList.remove('matched-po');
+  }
+  matchedPairs = matchedPairs.filter(p => p.pairIdx !== pairIdx);
+
+  const row = document.querySelector(`#matchedBody tr[data-pair="${pairIdx}"]`);
+  if (row) row.remove();
+
+  // Renumber
+  document.querySelectorAll('#matchedBody tr').forEach((r, i) => {
+    r.querySelector('td:first-child').textContent = i + 1;
+  });
+
+  if (matchedPairs.length === 0) {
+    document.getElementById('matchedSection').style.display = 'none';
+  }
+}
+
+// ============================================================
+// COLLECT ITEMS FOR ROBOT
+// Uses matched pairs if available, falls back to invoice rows.
+// Actual qty always comes from matched pairs section.
+// ============================================================
+function _collectMigoItems() {
+  const items = [];
+  const matchedRows = document.querySelectorAll('#matchedBody tr');
+
+  if (matchedRows.length > 0) {
+    // Matched pairs: inputs = [qty, actual_qty, rate, amount]
+    matchedRows.forEach((row, idx) => {
+      const inputs = row.querySelectorAll('input[type="text"]');
+      items.push({
+        line:         idx + 1,
+        material:     row.querySelector('td:nth-child(2)') ? row.querySelector('td:nth-child(2)').textContent.trim() : '',
+        qty_expected: inputs[0] ? inputs[0].value : '',
+        qty_actual:   inputs[1] ? inputs[1].value : '',
+        rate:         inputs[2] ? inputs[2].value : '',
+        amount:       inputs[3] ? inputs[3].value : '',
+      });
+    });
+    return items;
+  }
+
+  // Fallback — no matches made, use invoice table
+  // Invoice columns (no actual qty): checkbox | # | material_code | short_text | qty | rate | amount | hsn_sac | delete
+  // inputs[]: 0=material_code, 1=short_text, 2=qty, 3=rate, 4=amount, 5=hsn_sac
+  document.querySelectorAll('#invoiceItemsBody tr').forEach((row, idx) => {
+    const inputs = row.querySelectorAll('input[type="text"]');
+    if (inputs.length >= 5) {
+      items.push({
+        line:         idx + 1,
+        material:     inputs[0] ? inputs[0].value : '',
+        qty_expected: inputs[2] ? inputs[2].value : '',
+        qty_actual:   '',  // user must fill via matched pairs
+        rate:         inputs[3] ? inputs[3].value : '',
+        amount:       inputs[4] ? inputs[4].value : '',
+      });
+    }
+  });
+  return items;
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function _esc(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function clearMigoForm() {
+  ['migoPoNumber','migoDocDate','migoPostDate','migoDeliveryNote',
+   'migoBillOfLading','migoGRSlipNo','migoHeaderText','migoRemarks'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+}
+
+// ============================================================
+// VALIDATION
+// ============================================================
+function validateMigo103() {
+  let valid = true;
+  const fields = [
+    { id:'migoPoNumber',     errId:'err_migoPoNumber' },
+    { id:'migoDocDate',      errId:'err_migoDocDate' },
+    { id:'migoPostDate',     errId:'err_migoPostDate' },
+    { id:'migoDeliveryNote', errId:'err_migoDeliveryNote' },
+    { id:'migoHeaderText',   errId:'err_migoHeaderText' },
+  ];
+  fields.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el) el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  fields.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el && !el.value.trim()) {
+      el.classList.add('field-error');
+      if (err) err.classList.add('show');
+      valid = false;
+    }
+  });
+
+  // Actual qty must be filled in matched pairs section
+  const matchedQtys = document.querySelectorAll('.matched-actual-qty');
+  if (matchedQtys.length === 0) {
+    valid = false;
+    alert('Please match at least one invoice row with a PO row and enter the actual received quantity.');
+  } else {
+    let hasQty = false;
+    matchedQtys.forEach(q => { if (q.value.trim()) hasQty = true; });
+    if (!hasQty) {
+      matchedQtys.forEach(q => q.classList.add('field-error'));
+      valid = false;
+      alert('Please enter actual received quantity in the Matched Pairs section.');
+    }
+  }
+  return valid;
+}
+
+// ============================================================
+// SUBMIT MIGO 103
+// ============================================================
+function submitMigo103() {
+  if (!validateMigo103()) return;
+  const historyId = parseInt(document.getElementById('history_id_migo').value);
+  if (!historyId) { alert('History ID missing.'); return; }
+
+  const payload = {
+    history_id:       historyId,
+    purchaseOrder:    document.getElementById('migoPoNumber').value,
+    migoPoNumber:     document.getElementById('migoPoNumber').value,
+    migoDocDate:      document.getElementById('migoDocDate').value,
+    migoPostDate:     document.getElementById('migoPostDate').value,
+    migoDeliveryNote: document.getElementById('migoDeliveryNote').value,
+    migoBillOfLading: document.getElementById('migoBillOfLading').value,
+    migoGRSlipNo:     document.getElementById('migoGRSlipNo').value,
+    migoHeaderText:   document.getElementById('migoHeaderText').value,
+    migoRemarks:      document.getElementById('migoRemarks').value,
+    items_data:       _collectMigoItems()
+  };
+
+  const btn      = document.getElementById('migo103Btn');
+  const statusEl = document.getElementById('migo103Status');
+
+  submitAndPoll('/api/run_migo_103', payload, btn, {
+    onSuccess: (result) => {
+      const matDoc = result.material_doc_number || '—';
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `✓ MIGO 103 posted! Material Document: ${matDoc}`;
+      btn.textContent        = '✓ MIGO 103 Done';
+      btn.style.background   = '#00b894';
+      document.getElementById('materialDocNumber').value = matDoc;
+      const s105 = document.getElementById('migo105Section');
+      s105.style.opacity = '1'; s105.style.pointerEvents = 'auto';
+      if (confirm(`✓ MIGO 103 posted!\nMaterial Document: ${matDoc}\n\nProceed to MIGO 105?`)) {
+        s105.scrollIntoView({ behavior:'smooth' });
+      }
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+// ============================================================
+// MIGO 105
+// ============================================================
+function validateMigo105() {
+  const sel = document.getElementById('storageLocation');
+  const err = document.getElementById('err_storageLocation');
+  sel.classList.remove('field-error'); err.classList.remove('show');
+  if (!sel.value) { sel.classList.add('field-error'); err.classList.add('show'); return false; }
+  return true;
+}
+
+function submitMigo105() {
+  if (!validateMigo105()) return;
+  const historyId = parseInt(document.getElementById('history_id_migo').value);
+  if (!historyId) { alert('History ID missing.'); return; }
+
+  const payload = {
+    history_id:          historyId,
+    storageLocation:     document.getElementById('storageLocation').value,
+    batch:               document.getElementById('batch').value,
+    vendorInvoiceDetail: document.getElementById('vendorInvoiceDetail').value,
+    remarks105:          document.getElementById('remarks105').value
+  };
+
+  const btn      = document.getElementById('migo105Btn');
+  const statusEl = document.getElementById('migo105Status');
+
+  submitAndPoll('/api/run_migo_105', payload, btn, {
+    onSuccess: () => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '✓ MIGO 105 posted! Proceed to MIRO.';
+      btn.textContent        = '✓ MIGO 105 Done';
+      btn.style.background   = '#00b894';
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+</script>

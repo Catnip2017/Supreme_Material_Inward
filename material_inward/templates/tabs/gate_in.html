@@ -1,0 +1,610 @@
+<style>
+.req { color:#e74c3c; margin-left:2px; }
+.manual-hint { font-size:11px; color:#1e5ca8; font-weight:600; margin-left:6px; background:#f0f4ff; padding:2px 8px; border-radius:10px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+.form-group { margin-bottom:18px; }
+
+/* PO field wrapper */
+.po-field-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.po-field-wrap .form-input {
+  flex: 1;
+}
+
+/* Fetch PO button */
+.btn-fetch-po {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 14px;
+  height: 38px;
+  background: #1e5ca8;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background .2s;
+}
+.btn-fetch-po:hover:not(:disabled) { background: #154a8a; }
+.btn-fetch-po:disabled { background: #b0bec5; cursor: not-allowed; }
+.btn-fetch-po .spinner {
+  display: none;
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+.btn-fetch-po.loading .spinner { display: inline-block; }
+.btn-fetch-po.loading .arrow-icon { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* PO dropdown list */
+.po-dropdown {
+  display: none;
+  position: absolute;
+  z-index: 200;
+  background: #fff;
+  border: 1px solid #c5d8f8;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(30,92,168,0.12);
+  min-width: 320px;
+  max-width: 460px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+.po-dropdown.show { display: block; }
+.po-dropdown::-webkit-scrollbar { width: 5px; }
+.po-dropdown::-webkit-scrollbar-thumb { background: #c5d8f8; border-radius: 3px; }
+
+.po-dropdown-header {
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #1e5ca8;
+  background: #f0f4ff;
+  border-bottom: 1px solid #e0eafc;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.po-dropdown-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f4ff;
+  transition: background .15s;
+  font-size: 13px;
+}
+.po-dropdown-item:last-child { border-bottom: none; }
+.po-dropdown-item:hover { background: #e8f0fe; }
+.po-dropdown-item .po-num {
+  font-weight: 700;
+  color: #1e5ca8;
+  font-size: 14px;
+}
+.po-dropdown-item .po-meta {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+.po-dropdown-empty {
+  padding: 20px 14px;
+  text-align: center;
+  color: #aaa;
+  font-size: 13px;
+  font-style: italic;
+}
+.po-fetch-status {
+  font-size: 12px;
+  margin-top: 5px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: none;
+}
+.po-fetch-status.show { display: block; }
+.po-fetch-status.info    { background: #e8f0fe; color: #1e5ca8; }
+.po-fetch-status.error   { background: #fee2e2; color: #b91c1c; }
+.po-fetch-status.success { background: #d1fae5; color: #065f46; }
+</style>
+
+<div class="content-card">
+  <h3>🚪 Gate In Entry Form</h3>
+
+  {% if lock_warning %}
+  <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:20px;color:#856404;font-weight:500;">
+    ⚠ {{ lock_warning }}
+  </div>
+  {% endif %}
+
+  {% if history %}
+  <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+    <strong>Status:</strong>
+    Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO: {% if history.migo_103 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <form id="gateInForm" novalidate>
+    <input type="hidden" id="history_id" value="{{ history_id or '' }}">
+
+    <h4 style="color:#1e5ca8;font-size:15px;margin-top:16px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">⏰ Gate In Timing</h4>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gate In Date <span class="req">*</span></label>
+        <input type="date" id="gateInDate" class="form-input"
+               value="{{ gatein_data.get('gate_in_date', '') if gatein_data else '' }}">
+        <div class="field-error-msg" id="err_gateInDate">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Gate In Time <span class="req">*</span></label>
+        <input type="time" id="gateInTime" class="form-input"
+               value="{{ gatein_data.get('gate_in_time', '') if gatein_data else '' }}">
+        <div class="field-error-msg" id="err_gateInTime">Required</div>
+      </div>
+    </div>
+
+    <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🚚 Truck Details</h4>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Vendor Name <span class="req">*</span></label>
+        <input type="text" id="vendorName" class="form-input"
+               value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+               placeholder="Vendor name">
+        <div class="field-error-msg" id="err_vendorName">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Transporter</label>
+        <input type="text" id="transporter" class="form-input"
+               value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
+               placeholder="Transporter name (if applicable)">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Truck No <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <input type="text" id="truckNo" class="form-input"
+               value="{{ gatein_data.get('truck_no', '') if gatein_data else '' }}"
+               placeholder="Enter truck number">
+        <div class="field-error-msg" id="err_truckNo">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Driver Name <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <input type="text" id="driverName" class="form-input"
+               value="{{ gatein_data.get('driver_name', '') if gatein_data else '' }}"
+               placeholder="Enter driver name">
+        <div class="field-error-msg" id="err_driverName">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>License No <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <input type="text" id="licenseNo" class="form-input"
+               value="{{ gatein_data.get('license_no', '') if gatein_data else '' }}"
+               placeholder="Enter license number">
+        <div class="field-error-msg" id="err_licenseNo">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Container No</label>
+        <input type="text" id="containerNo" class="form-input"
+               value="{{ gatein_data.get('container_no', '') if gatein_data else '' }}"
+               placeholder="If applicable">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>No. of Persons</label>
+        <input type="number" id="numPersons" class="form-input"
+               value="{{ gatein_data.get('num_persons', '1') if gatein_data else '1' }}"
+               min="1">
+      </div>
+    </div>
+
+    <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">📦 Material Details</h4>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Category <span class="req">*</span></label>
+        <select id="category" class="form-select">
+          <option value="">Select category</option>
+          <option value="A" {% if gatein_data and gatein_data.get('category')=='A' %}selected{% endif %}>A — Stores</option>
+          <option value="B" {% if gatein_data and gatein_data.get('category')=='B' %}selected{% endif %}>B — Tankfarm</option>
+          <option value="C" {% if gatein_data and gatein_data.get('category')=='C' %}selected{% endif %}>C — Scrap</option>
+          <option value="D" {% if gatein_data and gatein_data.get('category')=='D' %}selected{% endif %}>D — Despatch</option>
+          <option value="E" {% if gatein_data and gatein_data.get('category')=='E' %}selected{% endif %}>E — Sales Return</option>
+          <option value="F" {% if gatein_data and gatein_data.get('category')=='F' %}selected{% endif %}>F — Job Work</option>
+          <option value="G" {% if gatein_data and gatein_data.get('category')=='G' %}selected{% endif %}>G — Despatch Scrap</option>
+        </select>
+        <div class="field-error-msg" id="err_category">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Material <span class="req">*</span></label>
+        <input type="text" id="material" class="form-input"
+               value="{{ (gatein_data.get('material') if gatein_data else '') or (ewaybill_data.get('goods_description') if ewaybill_data else '') or '' }}"
+               placeholder="Material description">
+        <div class="field-error-msg" id="err_material">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Delivery Challan No <span class="req">*</span></label>
+        <input type="text" id="challanNo" class="form-input"
+               value="{{ gatein_data.get('challan_no', '') if gatein_data else '' }}"
+               placeholder="Enter from physical Challan document">
+        <div class="field-error-msg" id="err_challanNo">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Challan Quantity <span class="req">*</span></label>
+        <input type="text" id="challanQty" class="form-input"
+               value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or (ewaybill_data.get('quantity') if ewaybill_data else '') or '' }}"
+               placeholder="Quantity from challan">
+        <div class="field-error-msg" id="err_challanQty">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Import BOE No</label>
+        <input type="text" id="boeNo" class="form-input"
+               value="{{ gatein_data.get('boe_no', '') if gatein_data else '' }}"
+               placeholder="If applicable">
+      </div>
+
+      <!-- Purchase Order with PO List Fetch -->
+      <div class="form-group">
+        <label>Purchase Order <span class="req">*</span>
+          <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
+            Click ▾ to fetch pending POs for this vendor
+          </span>
+        </label>
+        <div class="po-field-wrap" style="position:relative;">
+          <input type="text" id="purchaseOrder" class="form-input"
+                 value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '' }}"
+                 placeholder="PO number"
+                 autocomplete="off">
+          <button type="button" class="btn-fetch-po" id="fetchPoBtn" onclick="fetchPoList()"
+                  title="Fetch pending POs for this vendor from SAP">
+            <span class="spinner"></span>
+            <span class="arrow-icon">▾ Fetch POs</span>
+          </button>
+          <!-- Dropdown -->
+          <div class="po-dropdown" id="poDropdown">
+            <div class="po-dropdown-header">
+              <span id="poDropdownTitle">Pending POs</span>
+              <span onclick="closePoDropdown()" style="cursor:pointer;color:#888;font-size:14px;">✕</span>
+            </div>
+            <div id="poDropdownList"></div>
+          </div>
+        </div>
+        <div class="po-fetch-status" id="poFetchStatus"></div>
+        <div class="field-error-msg" id="err_purchaseOrder">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gate Pass No (RTGP) <span class="req">*</span></label>
+        <input type="text" id="gatePassNo" class="form-input"
+               value="{{ gatein_data.get('gate_pass_no', '') if gatein_data else '' }}"
+               placeholder="Gate pass number">
+        <div class="field-error-msg" id="err_gatePassNo">Required</div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Note</label>
+      <textarea id="note" class="form-textarea" rows="3"
+                placeholder="Additional notes (optional)">{{ gatein_data.get('note', '') if gatein_data else '' }}</textarea>
+    </div>
+
+    <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;"></div>
+
+    <div class="action-buttons">
+      <button type="submit" id="gateInSubmitBtn" class="btn btn-primary"
+              {% if history and history.gate_in %}style="background:#00b894;"{% endif %}>
+        {% if history and history.gate_in %}✓ Gate In Done (GIN: {{ history.gate_in_number }}){% else %}💾 Save & Post Gate In{% endif %}
+      </button>
+      <button type="button" class="btn btn-secondary" onclick="clearGateInForm()">🔄 Clear Form</button>
+    </div>
+  </form>
+</div>
+
+<script>
+// ============================================================
+// AUTO-SET DATE/TIME
+// ============================================================
+(function() {
+  const dateEl = document.getElementById('gateInDate');
+  const timeEl = document.getElementById('gateInTime');
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().split('T')[0];
+  if (timeEl && !timeEl.value) {
+    const now = new Date();
+    timeEl.value = now.toTimeString().slice(0, 5);
+  }
+})();
+
+// ============================================================
+// VALIDATION
+// ============================================================
+const MANDATORY_FIELDS = [
+  { id: 'gateInDate',    errId: 'err_gateInDate' },
+  { id: 'gateInTime',    errId: 'err_gateInTime' },
+  { id: 'vendorName',    errId: 'err_vendorName' },
+  { id: 'truckNo',       errId: 'err_truckNo' },
+  { id: 'driverName',    errId: 'err_driverName' },
+  { id: 'licenseNo',     errId: 'err_licenseNo' },
+  { id: 'category',      errId: 'err_category' },
+  { id: 'material',      errId: 'err_material' },
+  { id: 'challanNo',     errId: 'err_challanNo' },
+  { id: 'challanQty',    errId: 'err_challanQty' },
+  { id: 'purchaseOrder', errId: 'err_purchaseOrder' },
+  { id: 'gatePassNo',    errId: 'err_gatePassNo' },
+];
+
+function validateGateIn() {
+  let valid = true;
+  MANDATORY_FIELDS.forEach(f => {
+    const el  = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el)  el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  MANDATORY_FIELDS.forEach(f => {
+    const el  = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el && !el.value.trim()) {
+      el.classList.add('field-error');
+      if (err) err.classList.add('show');
+      valid = false;
+    }
+  });
+  return valid;
+}
+
+// Clear errors on input
+MANDATORY_FIELDS.forEach(f => {
+  const el  = document.getElementById(f.id);
+  const err = document.getElementById(f.errId);
+  if (el) {
+    el.addEventListener('input',  () => { el.classList.remove('field-error'); if (err) err.classList.remove('show'); });
+    el.addEventListener('change', () => { el.classList.remove('field-error'); if (err) err.classList.remove('show'); });
+  }
+});
+
+// ============================================================
+// FORM SUBMIT
+// ============================================================
+document.getElementById('gateInForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  if (!validateGateIn()) {
+    const firstError = document.querySelector('.field-error');
+    if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const historyId = parseInt(document.getElementById('history_id').value);
+  if (!historyId) {
+    alert('History ID missing. Please go back to History and reopen this record.');
+    return;
+  }
+
+  const payload = {
+    history_id:    historyId,
+    gateInDate:    document.getElementById('gateInDate').value,
+    gateInTime:    document.getElementById('gateInTime').value,
+    vendorName:    document.getElementById('vendorName').value,
+    transporter:   document.getElementById('transporter').value,
+    truckNo:       document.getElementById('truckNo').value,
+    driverName:    document.getElementById('driverName').value,
+    licenseNo:     document.getElementById('licenseNo').value,
+    containerNo:   document.getElementById('containerNo').value,
+    numPersons:    document.getElementById('numPersons').value,
+    category:      document.getElementById('category').value,
+    material:      document.getElementById('material').value,
+    challanNo:     document.getElementById('challanNo').value,
+    challanQty:    document.getElementById('challanQty').value,
+    boeNo:         document.getElementById('boeNo').value,
+    purchaseOrder: document.getElementById('purchaseOrder').value,
+    gatePassNo:    document.getElementById('gatePassNo').value,
+    note:          document.getElementById('note').value,
+  };
+
+  const btn      = document.getElementById('gateInSubmitBtn');
+  const statusEl = document.getElementById('gateInStatus');
+
+  submitAndPoll('/save_gatein', payload, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `✓ Gate In posted! Gate In Number: ${result.gate_in_number || '—'}`;
+      btn.textContent        = `✓ Gate In Done (GIN: ${result.gate_in_number || ''})`;
+      btn.style.background   = '#00b894';
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+});
+
+// ============================================================
+// CLEAR FORM
+// ============================================================
+function clearGateInForm() {
+  ['gateInDate','gateInTime','vendorName','transporter','truckNo',
+   'driverName','licenseNo','containerNo','numPersons','category',
+   'material','challanNo','challanQty','boeNo','purchaseOrder',
+   'gatePassNo','note'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const np = document.getElementById('numPersons');
+  if (np) np.value = '1';
+  document.getElementById('gateInDate').value = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  document.getElementById('gateInTime').value = now.toTimeString().slice(0, 5);
+  MANDATORY_FIELDS.forEach(f => {
+    const el  = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el)  el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  closePoDropdown();
+}
+
+// ============================================================
+// PO LIST FETCH
+// ============================================================
+let _poFetchJobId  = null;
+let _poFetchPoller = null;
+
+function fetchPoList() {
+  const vendorName = document.getElementById('vendorName').value.trim();
+  if (!vendorName) {
+    _showPoStatus('Please fill in the Vendor Name field first.', 'error');
+    document.getElementById('vendorName').classList.add('field-error');
+    return;
+  }
+
+  const historyId = parseInt(document.getElementById('history_id').value);
+  if (!historyId) {
+    _showPoStatus('History ID missing — cannot fetch POs.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('fetchPoBtn');
+  btn.disabled = true;
+  btn.classList.add('loading');
+  closePoDropdown();
+  _showPoStatus('⏳ Fetching pending POs from SAP...', 'info');
+
+  fetch('/api/run_po_list_fetch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ history_id: historyId, vendor_name: vendorName })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (!data.success) {
+      _resetFetchBtn();
+      _showPoStatus(`❌ ${data.error || 'Failed to queue PO fetch.'}`, 'error');
+      return;
+    }
+    _poFetchJobId = data.job_id;
+    _pollPoFetch();
+  })
+  .catch(err => {
+    _resetFetchBtn();
+    _showPoStatus(`❌ Network error: ${err.message}`, 'error');
+  });
+}
+
+function _pollPoFetch() {
+  if (!_poFetchJobId) return;
+  _poFetchPoller = setInterval(() => {
+    fetch(`/api/queue_status/${_poFetchJobId}`)
+      .then(r => r.json())
+      .then(data => {
+        const job = data.job;
+        if (!job) return;
+        if (job.status === 'done') {
+          clearInterval(_poFetchPoller);
+          _resetFetchBtn();
+          const result = job.result || {};
+          if (result.success && result.po_list && result.po_list.length > 0) {
+            _showPoStatus(`✓ Found ${result.po_list.length} pending PO(s)`, 'success');
+            _renderPoDropdown(result.po_list);
+          } else {
+            _showPoStatus('No pending POs found for this vendor.', 'info');
+          }
+        } else if (job.status === 'failed') {
+          clearInterval(_poFetchPoller);
+          _resetFetchBtn();
+          _showPoStatus(`❌ PO fetch failed: ${job.error_message || 'Unknown error'}`, 'error');
+        }
+        // pending/running — keep polling
+      })
+      .catch(() => { /* keep polling */ });
+  }, 3000);
+}
+
+function _renderPoDropdown(poList) {
+  const listEl  = document.getElementById('poDropdownList');
+  const titleEl = document.getElementById('poDropdownTitle');
+  titleEl.textContent = `${poList.length} Pending PO(s) for this vendor`;
+  listEl.innerHTML = '';
+
+  if (poList.length === 0) {
+    listEl.innerHTML = '<div class="po-dropdown-empty">No pending POs found.</div>';
+  } else {
+    poList.forEach(po => {
+      const item = document.createElement('div');
+      item.className = 'po-dropdown-item';
+      item.innerHTML = `
+        <div class="po-num">${_escHtml(po.po_number)}</div>
+        <div class="po-meta">
+          ${po.vendor ? _escHtml(po.vendor) + ' &nbsp;|&nbsp; ' : ''}
+          ${po.creation_date ? 'Created: ' + _escHtml(po.creation_date) + ' &nbsp;|&nbsp; ' : ''}
+          ${po.open_qty ? 'Open Qty: ' + _escHtml(po.open_qty) : ''}
+        </div>
+      `;
+      item.onclick = () => selectPo(po.po_number);
+      listEl.appendChild(item);
+    });
+  }
+  document.getElementById('poDropdown').classList.add('show');
+}
+
+function selectPo(poNumber) {
+  document.getElementById('purchaseOrder').value = poNumber;
+  document.getElementById('purchaseOrder').classList.remove('field-error');
+  document.getElementById('err_purchaseOrder').classList.remove('show');
+  closePoDropdown();
+  _showPoStatus(`✓ PO ${poNumber} selected`, 'success');
+}
+
+function closePoDropdown() {
+  document.getElementById('poDropdown').classList.remove('show');
+}
+
+function _resetFetchBtn() {
+  const btn = document.getElementById('fetchPoBtn');
+  btn.disabled = false;
+  btn.classList.remove('loading');
+}
+
+function _showPoStatus(msg, type) {
+  const el = document.getElementById('poFetchStatus');
+  el.textContent = msg;
+  el.className   = `po-fetch-status show ${type}`;
+}
+
+function _escHtml(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+  const wrap = document.querySelector('.po-field-wrap');
+  if (wrap && !wrap.contains(e.target)) closePoDropdown();
+});
+</script>
