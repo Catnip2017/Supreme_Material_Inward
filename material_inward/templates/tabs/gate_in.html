@@ -6,132 +6,97 @@
 .field-error-msg.show { display:block; }
 .form-group { margin-bottom:18px; }
 
-/* PO field wrapper */
-.po-field-wrap {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
+.gate-banner {
+  background:#fff3cd; border:1px solid #ffc107;
+  border-radius:8px; padding:14px 18px; margin-bottom:20px;
+  color:#856404; font-weight:500; font-size:14px;
+  display:flex; align-items:center; gap:10px;
 }
-.po-field-wrap .form-input {
-  flex: 1;
+.gate-banner.unlocked {
+  background:#ecfdf5; border-color:#00b894; color:#1a7a3c;
 }
 
-/* Fetch PO button */
+/* PO field wrapper */
+.po-field-wrap {
+  display: flex; gap: 8px; align-items: flex-start;
+}
+.po-field-wrap .form-input { flex: 1; }
 .btn-fetch-po {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 14px;
-  height: 38px;
-  background: #1e5ca8;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: background .2s;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 14px; height: 38px;
+  background: #1e5ca8; color: #fff; border: none; border-radius: 6px;
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  white-space: nowrap; flex-shrink: 0; transition: background .2s;
 }
 .btn-fetch-po:hover:not(:disabled) { background: #154a8a; }
 .btn-fetch-po:disabled { background: #b0bec5; cursor: not-allowed; }
 .btn-fetch-po .spinner {
-  display: none;
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,0.4);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin .7s linear infinite;
+  display: none; width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+  border-radius: 50%; animation: spin .7s linear infinite;
 }
 .btn-fetch-po.loading .spinner { display: inline-block; }
 .btn-fetch-po.loading .arrow-icon { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* PO dropdown list */
 .po-dropdown {
-  display: none;
-  position: absolute;
-  z-index: 200;
-  background: #fff;
-  border: 1px solid #c5d8f8;
-  border-radius: 8px;
+  display: none; position: absolute; z-index: 200;
+  background: #fff; border: 1px solid #c5d8f8; border-radius: 8px;
   box-shadow: 0 8px 24px rgba(30,92,168,0.12);
-  min-width: 320px;
-  max-width: 460px;
-  max-height: 280px;
-  overflow-y: auto;
-  margin-top: 4px;
+  min-width: 320px; max-width: 460px; max-height: 280px;
+  overflow-y: auto; margin-top: 4px;
 }
 .po-dropdown.show { display: block; }
-.po-dropdown::-webkit-scrollbar { width: 5px; }
-.po-dropdown::-webkit-scrollbar-thumb { background: #c5d8f8; border-radius: 3px; }
-
 .po-dropdown-header {
-  padding: 8px 14px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #1e5ca8;
-  background: #f0f4ff;
-  border-bottom: 1px solid #e0eafc;
+  padding: 8px 14px; font-size: 11px; font-weight: 700;
+  color: #1e5ca8; background: #f0f4ff; border-bottom: 1px solid #e0eafc;
   border-radius: 8px 8px 0 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  display: flex; justify-content: space-between; align-items: center;
 }
 .po-dropdown-item {
-  padding: 10px 14px;
-  cursor: pointer;
-  border-bottom: 1px solid #f0f4ff;
-  transition: background .15s;
-  font-size: 13px;
+  padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f4ff;
+  transition: background .15s; font-size: 13px;
 }
-.po-dropdown-item:last-child { border-bottom: none; }
 .po-dropdown-item:hover { background: #e8f0fe; }
-.po-dropdown-item .po-num {
-  font-weight: 700;
-  color: #1e5ca8;
-  font-size: 14px;
-}
-.po-dropdown-item .po-meta {
-  font-size: 11px;
-  color: #888;
-  margin-top: 2px;
-}
-.po-dropdown-empty {
-  padding: 20px 14px;
-  text-align: center;
-  color: #aaa;
-  font-size: 13px;
-  font-style: italic;
-}
+.po-dropdown-item .po-num { font-weight: 700; color: #1e5ca8; font-size: 14px; }
+.po-dropdown-item .po-meta { font-size: 11px; color: #888; margin-top: 2px; }
 .po-fetch-status {
-  font-size: 12px;
-  margin-top: 5px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  display: none;
+  font-size: 12px; margin-top: 5px; padding: 4px 8px;
+  border-radius: 4px; display: none;
 }
 .po-fetch-status.show { display: block; }
-.po-fetch-status.info    { background: #e8f0fe; color: #1e5ca8; }
-.po-fetch-status.error   { background: #fee2e2; color: #b91c1c; }
+.po-fetch-status.info { background: #e8f0fe; color: #1e5ca8; }
+.po-fetch-status.error { background: #fee2e2; color: #b91c1c; }
 .po-fetch-status.success { background: #d1fae5; color: #065f46; }
 </style>
 
 <div class="content-card">
   <h3>🚪 Gate In Entry Form</h3>
+{% set status = (history.approval_status if history else 'pending') or 'pending' %}
+{% set post_locked = (status != 'approved') %}
+{% set is_approved = (status == 'approved') %}
+{% if not is_approved %}
+<div class="gate-banner">⏸ <strong>Awaiting Approval</strong> — Approve the record first.</div>
+{% else %}
+<div class="gate-banner unlocked">✓ <strong>Approved</strong> — Ready for Gate In posting.</div>
+{% endif %}
 
-  {% if lock_warning %}
-  <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:20px;color:#856404;font-weight:500;">
-    ⚠ {{ lock_warning }}
+  <!-- {% if gate_in_locked %}
+  <div class="gate-banner">
+    ⏸ <strong>Awaiting Approval</strong> — Documents must be verified and approved on the Extracted Data tab before Gate In can run.
   </div>
-  {% endif %}
+  {% else %}
+  <div class="gate-banner unlocked">
+    ✓ <strong>Approved</strong> — You may proceed with Gate In posting.
+  </div>
+  {% endif %} -->
 
   {% if history %}
   <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
     <strong>Status:</strong>
     Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
-    &nbsp;|&nbsp; MIGO: {% if history.migo_103 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
     &nbsp;|&nbsp; MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   </div>
   {% endif %}
@@ -144,13 +109,15 @@
       <div class="form-group">
         <label>Gate In Date <span class="req">*</span></label>
         <input type="date" id="gateInDate" class="form-input"
-               value="{{ gatein_data.get('gate_in_date', '') if gatein_data else '' }}">
+               value="{{ gatein_data.get('gate_in_date', '') if gatein_data else '' }}"
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gateInDate">Required</div>
       </div>
       <div class="form-group">
         <label>Gate In Time <span class="req">*</span></label>
         <input type="time" id="gateInTime" class="form-input"
-               value="{{ gatein_data.get('gate_in_time', '') if gatein_data else '' }}">
+               value="{{ gatein_data.get('gate_in_time', '') if gatein_data else '' }}"
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gateInTime">Required</div>
       </div>
     </div>
@@ -161,47 +128,47 @@
         <label>Vendor Name <span class="req">*</span></label>
         <input type="text" id="vendorName" class="form-input"
                value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-               placeholder="Vendor name">
+               placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_vendorName">Required</div>
       </div>
       <div class="form-group">
         <label>Transporter</label>
         <input type="text" id="transporter" class="form-input"
                value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
-               placeholder="Transporter name (if applicable)">
+               {% if gate_in_locked %}disabled{% endif %}>
       </div>
     </div>
 
     <div class="form-row">
       <div class="form-group">
-        <label>Truck No <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <label>Truck No <span class="req">*</span> <span class="manual-hint">Manual</span></label>
         <input type="text" id="truckNo" class="form-input"
                value="{{ gatein_data.get('truck_no', '') if gatein_data else '' }}"
-               placeholder="Enter truck number">
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_truckNo">Required</div>
       </div>
       <div class="form-group">
-        <label>Driver Name <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <label>Driver Name <span class="req">*</span> <span class="manual-hint">Manual</span></label>
         <input type="text" id="driverName" class="form-input"
                value="{{ gatein_data.get('driver_name', '') if gatein_data else '' }}"
-               placeholder="Enter driver name">
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_driverName">Required</div>
       </div>
     </div>
 
     <div class="form-row">
       <div class="form-group">
-        <label>License No <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <label>License No <span class="req">*</span> <span class="manual-hint">Manual</span></label>
         <input type="text" id="licenseNo" class="form-input"
                value="{{ gatein_data.get('license_no', '') if gatein_data else '' }}"
-               placeholder="Enter license number">
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_licenseNo">Required</div>
       </div>
       <div class="form-group">
         <label>Container No</label>
         <input type="text" id="containerNo" class="form-input"
                value="{{ gatein_data.get('container_no', '') if gatein_data else '' }}"
-               placeholder="If applicable">
+               {% if gate_in_locked %}disabled{% endif %}>
       </div>
     </div>
 
@@ -210,7 +177,7 @@
         <label>No. of Persons</label>
         <input type="number" id="numPersons" class="form-input"
                value="{{ gatein_data.get('num_persons', '1') if gatein_data else '1' }}"
-               min="1">
+               min="1" {% if gate_in_locked %}disabled{% endif %}>
       </div>
     </div>
 
@@ -218,7 +185,7 @@
     <div class="form-row">
       <div class="form-group">
         <label>Category <span class="req">*</span></label>
-        <select id="category" class="form-select">
+        <select id="category" class="form-select" {% if gate_in_locked %}disabled{% endif %}>
           <option value="">Select category</option>
           <option value="A" {% if gatein_data and gatein_data.get('category')=='A' %}selected{% endif %}>A — Stores</option>
           <option value="B" {% if gatein_data and gatein_data.get('category')=='B' %}selected{% endif %}>B — Tankfarm</option>
@@ -234,7 +201,7 @@
         <label>Material <span class="req">*</span></label>
         <input type="text" id="material" class="form-input"
                value="{{ (gatein_data.get('material') if gatein_data else '') or (ewaybill_data.get('goods_description') if ewaybill_data else '') or '' }}"
-               placeholder="Material description">
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_material">Required</div>
       </div>
     </div>
@@ -243,15 +210,15 @@
       <div class="form-group">
         <label>Delivery Challan No <span class="req">*</span></label>
         <input type="text" id="challanNo" class="form-input"
-               value="{{ gatein_data.get('challan_no', '') if gatein_data else '' }}"
-               placeholder="Enter from physical Challan document">
+               value="{{ (gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanNo">Required</div>
       </div>
       <div class="form-group">
         <label>Challan Quantity <span class="req">*</span></label>
         <input type="text" id="challanQty" class="form-input"
-               value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or (ewaybill_data.get('quantity') if ewaybill_data else '') or '' }}"
-               placeholder="Quantity from challan">
+              value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or (ewaybill_data.get('quantity') if ewaybill_data else '') or '' }}"
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanQty">Required</div>
       </div>
     </div>
@@ -261,10 +228,9 @@
         <label>Import BOE No</label>
         <input type="text" id="boeNo" class="form-input"
                value="{{ gatein_data.get('boe_no', '') if gatein_data else '' }}"
-               placeholder="If applicable">
+               {% if gate_in_locked %}disabled{% endif %}>
       </div>
 
-      <!-- Purchase Order with PO List Fetch -->
       <div class="form-group">
         <label>Purchase Order <span class="req">*</span>
           <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
@@ -274,14 +240,12 @@
         <div class="po-field-wrap" style="position:relative;">
           <input type="text" id="purchaseOrder" class="form-input"
                  value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '' }}"
-                 placeholder="PO number"
-                 autocomplete="off">
+                 autocomplete="off" {% if gate_in_locked %}disabled{% endif %}>
           <button type="button" class="btn-fetch-po" id="fetchPoBtn" onclick="fetchPoList()"
-                  title="Fetch pending POs for this vendor from SAP">
+                  {% if gate_in_locked %}disabled{% endif %}>
             <span class="spinner"></span>
             <span class="arrow-icon">▾ Fetch POs</span>
           </button>
-          <!-- Dropdown -->
           <div class="po-dropdown" id="poDropdown">
             <div class="po-dropdown-header">
               <span id="poDropdownTitle">Pending POs</span>
@@ -300,7 +264,7 @@
         <label>Gate Pass No (RTGP) <span class="req">*</span></label>
         <input type="text" id="gatePassNo" class="form-input"
                value="{{ gatein_data.get('gate_pass_no', '') if gatein_data else '' }}"
-               placeholder="Gate pass number">
+               {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gatePassNo">Required</div>
       </div>
     </div>
@@ -308,7 +272,7 @@
     <div class="form-group">
       <label>Note</label>
       <textarea id="note" class="form-textarea" rows="3"
-                placeholder="Additional notes (optional)">{{ gatein_data.get('note', '') if gatein_data else '' }}</textarea>
+                {% if gate_in_locked %}disabled{% endif %}>{{ gatein_data.get('note', '') if gatein_data else '' }}</textarea>
     </div>
 
     <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;"></div>
@@ -318,15 +282,18 @@
               {% if history and history.gate_in %}style="background:#00b894;"{% endif %}>
         {% if history and history.gate_in %}✓ Gate In Done (GIN: {{ history.gate_in_number }}){% else %}💾 Save & Post Gate In{% endif %}
       </button>
-      <button type="button" class="btn btn-secondary" onclick="clearGateInForm()">🔄 Clear Form</button>
+      <button type="button" class="btn btn-secondary" onclick="clearGateInForm()" {% if gate_in_locked %}disabled{% endif %}>🔄 Clear Form</button>
     </div>
   </form>
 </div>
 
+
 <script>
-// ============================================================
-// AUTO-SET DATE/TIME
-// ============================================================
+
+
+const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
+// const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+
 (function() {
   const dateEl = document.getElementById('gateInDate');
   const timeEl = document.getElementById('gateInTime');
@@ -337,9 +304,6 @@
   }
 })();
 
-// ============================================================
-// VALIDATION
-// ============================================================
 const MANDATORY_FIELDS = [
   { id: 'gateInDate',    errId: 'err_gateInDate' },
   { id: 'gateInTime',    errId: 'err_gateInTime' },
@@ -375,7 +339,6 @@ function validateGateIn() {
   return valid;
 }
 
-// Clear errors on input
 MANDATORY_FIELDS.forEach(f => {
   const el  = document.getElementById(f.id);
   const err = document.getElementById(f.errId);
@@ -385,23 +348,33 @@ MANDATORY_FIELDS.forEach(f => {
   }
 });
 
-// ============================================================
-// FORM SUBMIT
-// ============================================================
 document.getElementById('gateInForm').addEventListener('submit', function(e) {
   e.preventDefault();
+  if (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED) {
+    alert('⏸ Record must be approved before Gate In can be posted.');
+    return;
+  }
   if (!validateGateIn()) {
     const firstError = document.querySelector('.field-error');
-    if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (firstError) firstError.scrollIntoView({ behavior:'smooth', block:'center' });
     return;
   }
-
   const historyId = parseInt(document.getElementById('history_id').value);
-  if (!historyId) {
-    alert('History ID missing. Please go back to History and reopen this record.');
-    return;
-  }
+  if (!historyId) { alert('History ID missing.'); return; }
+  showConfirm(
+    'Confirm Gate In Posting',
+    'You are about to post Gate In to SAP. Make sure all fields are correct — this cannot be undone from the portal.',
+    () => _doSubmitGateIn(historyId)
+  );
+});
 
+// Add this function anywhere in the script block:
+function _stripToNumeric(val) {
+  return String(val || '').replace(/[^0-9]/g, '');
+}
+
+function _doSubmitGateIn(historyId) {
+  
   const payload = {
     history_id:    historyId,
     gateInDate:    document.getElementById('gateInDate').value,
@@ -415,7 +388,8 @@ document.getElementById('gateInForm').addEventListener('submit', function(e) {
     numPersons:    document.getElementById('numPersons').value,
     category:      document.getElementById('category').value,
     material:      document.getElementById('material').value,
-    challanNo:     document.getElementById('challanNo').value,
+    // challanNo:     document.getElementById('challanNo').value,
+    challanNo: _stripToNumeric(document.getElementById('challanNo').value),
     challanQty:    document.getElementById('challanQty').value,
     boeNo:         document.getElementById('boeNo').value,
     purchaseOrder: document.getElementById('purchaseOrder').value,
@@ -442,11 +416,8 @@ document.getElementById('gateInForm').addEventListener('submit', function(e) {
       statusEl.textContent   = `❌ ${error}`;
     }
   });
-});
+}
 
-// ============================================================
-// CLEAR FORM
-// ============================================================
 function clearGateInForm() {
   ['gateInDate','gateInTime','vendorName','transporter','truckNo',
    'driverName','licenseNo','containerNo','numPersons','category',
@@ -460,12 +431,6 @@ function clearGateInForm() {
   document.getElementById('gateInDate').value = new Date().toISOString().split('T')[0];
   const now = new Date();
   document.getElementById('gateInTime').value = now.toTimeString().slice(0, 5);
-  MANDATORY_FIELDS.forEach(f => {
-    const el  = document.getElementById(f.id);
-    const err = document.getElementById(f.errId);
-    if (el)  el.classList.remove('field-error');
-    if (err) err.classList.remove('show');
-  });
   closePoDropdown();
 }
 
@@ -478,16 +443,11 @@ let _poFetchPoller = null;
 function fetchPoList() {
   const vendorName = document.getElementById('vendorName').value.trim();
   if (!vendorName) {
-    _showPoStatus('Please fill in the Vendor Name field first.', 'error');
-    document.getElementById('vendorName').classList.add('field-error');
+    _showPoStatus('Please fill in the Vendor Name first.', 'error');
     return;
   }
-
   const historyId = parseInt(document.getElementById('history_id').value);
-  if (!historyId) {
-    _showPoStatus('History ID missing — cannot fetch POs.', 'error');
-    return;
-  }
+  if (!historyId) return;
 
   const btn = document.getElementById('fetchPoBtn');
   btn.disabled = true;
@@ -528,7 +488,7 @@ function _pollPoFetch() {
           clearInterval(_poFetchPoller);
           _resetFetchBtn();
           const result = job.result || {};
-          if (result.success && result.po_list && result.po_list.length > 0) {
+          if (result.po_list && result.po_list.length > 0) {
             _showPoStatus(`✓ Found ${result.po_list.length} pending PO(s)`, 'success');
             _renderPoDropdown(result.po_list);
           } else {
@@ -537,38 +497,31 @@ function _pollPoFetch() {
         } else if (job.status === 'failed') {
           clearInterval(_poFetchPoller);
           _resetFetchBtn();
-          _showPoStatus(`❌ PO fetch failed: ${job.error_message || 'Unknown error'}`, 'error');
+          _showPoStatus(`❌ ${job.error_message || 'Fetch failed'}`, 'error');
         }
-        // pending/running — keep polling
       })
-      .catch(() => { /* keep polling */ });
+      .catch(() => { });
   }, 3000);
 }
 
 function _renderPoDropdown(poList) {
   const listEl  = document.getElementById('poDropdownList');
   const titleEl = document.getElementById('poDropdownTitle');
-  titleEl.textContent = `${poList.length} Pending PO(s) for this vendor`;
+  titleEl.textContent = `${poList.length} Pending PO(s)`;
   listEl.innerHTML = '';
-
-  if (poList.length === 0) {
-    listEl.innerHTML = '<div class="po-dropdown-empty">No pending POs found.</div>';
-  } else {
-    poList.forEach(po => {
-      const item = document.createElement('div');
-      item.className = 'po-dropdown-item';
-      item.innerHTML = `
-        <div class="po-num">${_escHtml(po.po_number)}</div>
-        <div class="po-meta">
-          ${po.vendor ? _escHtml(po.vendor) + ' &nbsp;|&nbsp; ' : ''}
-          ${po.creation_date ? 'Created: ' + _escHtml(po.creation_date) + ' &nbsp;|&nbsp; ' : ''}
-          ${po.open_qty ? 'Open Qty: ' + _escHtml(po.open_qty) : ''}
-        </div>
-      `;
-      item.onclick = () => selectPo(po.po_number);
-      listEl.appendChild(item);
-    });
-  }
+  poList.forEach(po => {
+    const item = document.createElement('div');
+    item.className = 'po-dropdown-item';
+    item.innerHTML = `
+      <div class="po-num">${_escHtml(po.po_number)}</div>
+      <div class="po-meta">
+        ${po.vendor ? _escHtml(po.vendor) + ' &nbsp;|&nbsp; ' : ''}
+        ${po.creation_date ? 'Created: ' + _escHtml(po.creation_date) + ' &nbsp;|&nbsp; ' : ''}
+        ${po.open_qty ? 'Open Qty: ' + _escHtml(po.open_qty) : ''}
+      </div>`;
+    item.onclick = () => selectPo(po.po_number);
+    listEl.appendChild(item);
+  });
   document.getElementById('poDropdown').classList.add('show');
 }
 
@@ -597,12 +550,9 @@ function _showPoStatus(msg, type) {
 }
 
 function _escHtml(str) {
-  return String(str || '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// Close dropdown when clicking outside
 document.addEventListener('click', function(e) {
   const wrap = document.querySelector('.po-field-wrap');
   if (wrap && !wrap.contains(e.target)) closePoDropdown();

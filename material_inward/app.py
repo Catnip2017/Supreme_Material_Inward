@@ -1,15 +1,15 @@
 """
 app.py — Material Inward Process — Final Production Application.
 
-Features:
-- Role-based access (Admin / User)
-- Admin-only upload sidebar
-- Phase rollout via ENABLED_STEPS env var
-- PDF moved to uploads/processed/ or uploads/failed/ after OCR
-- Storage location master (Admin managed)
-- RF queue (one job at a time)
-- Record locking
-- Session expiry detection
+v4 changes:
+- Removed: lock_record / unlock_record routes (no more record locking)
+- Added: /api/save_extracted_invoice, /api/save_extracted_eway, /api/save_extracted_lr
+- Added: /api/approve, /api/hold
+- Added: /api/rerun_ocr/<id>
+- Added: /api/notifications/unread, /api/notifications/<id>/mark_read
+- Added: /api/migo_matched_pairs/<id>
+- Email-step gating for tabs
+- 7-day notification cleanup, 60-day record cleanup (existing)
 """
 
 import os
@@ -17,11 +17,9 @@ import shutil
 import json
 import threading
 import time
-import traceback
-from datetime import datetime
+import re
+from datetime import datetime, date
 from functools import wraps
-from database.po_operations import get_po_line_items
-
 
 from flask import (
     Flask, render_template, request, redirect,
@@ -34,21 +32,24 @@ from database.connection import init_pool, get_connection
 from database.db_operations import (
     create_history_record, get_history_by_id,
     get_history_details_by_id, get_all_history,
-    update_history_step, lock_record, unlock_record,
-    unlock_stale_locks, save_invoice_to_db,
-    save_ewaybill_to_db, save_lr_to_db,
-    get_history_search, get_today_counts
+    update_history_step,
+    save_invoice_to_db, save_ewaybill_to_db, save_lr_to_db,
+    get_history_search, get_today_counts,
+    set_approval_status, set_hold_status,
+    set_ocr_status, increment_ocr_retry, get_ocr_failed_path
 )
 from database.gatein_operations import (
     upsert_gatein_entry, get_gatein_entry, map_ocr_to_gatein
 )
 from database.migo_operations import (
     upsert_migo_entry, save_migo_105_fields,
-    get_migo_entry, map_ocr_to_migo
+    get_migo_entry, map_ocr_to_migo,
+    update_migo_105_items_with_batches
 )
 from database.miro_operations import (
     upsert_miro_entry, get_miro_entry, map_ocr_to_miro
 )
+from database.po_operations import get_po_line_items
 from database.rf_queue_operations import enqueue_rf_job, get_job_status
 from database.user_operations import (
     verify_user, get_all_users, add_user, update_user, delete_user
@@ -56,8 +57,13 @@ from database.user_operations import (
 from database.storage_location_operations import (
     get_all_storage_locations, add_storage_location, update_storage_location
 )
+from database.notifications_operations import (
+    get_unread_for_user, mark_as_read, mark_all_as_read_for_user,
+    cleanup_old_notifications, create_notification
+)
 from services.extract import process_document
 from services.rf_queue_worker import start_worker
+from services.mail_service import send_approval_notification
 
 logger = get_logger(__name__)
 
@@ -71,7 +77,6 @@ app.config["MAX_CONTENT_LENGTH"] = config.MAX_FILE_SIZE_BYTES
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = False
 
-# Ensure all upload folders exist
 for folder in [config.UPLOAD_FOLDER, config.UPLOAD_PROCESSED_FOLDER, config.UPLOAD_FAILED_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
@@ -86,51 +91,47 @@ with app.app_context():
     except Exception as e:
         logger.critical(f"DB pool failed: {e}")
 
-# AFTER:
-
 _rf_worker = start_worker()  # noqa: F841
- 
-# Start intake method based on env switch
-_intake_method = os.getenv("INTAKE_METHOD", "folder").lower()
+
+_intake_method = config.INTAKE_METHOD
 if _intake_method == "folder":
     from services.folder_watcher import start_folder_watcher
     start_folder_watcher()
     logger.info("Intake: Folder watcher started.")
 else:
     logger.info("Intake: Mail poller mode — run mail_poller.py via Task Scheduler.")
- 
- 
-# 2. Add cleanup loop after the stale lock thread block:
- 
+
+
+# ============================================================
+# CLEANUP TASKS
+# ============================================================
+
 def _clear_old_records():
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM history WHERE created_at < NOW() - INTERVAL '2 months'"
-                )
+                cur.execute("DELETE FROM history WHERE created_at < NOW() - INTERVAL '2 months'")
         logger.info("Old records cleared (>2 months).")
     except Exception as e:
         logger.error(f"Record cleanup error: {e}")
- 
+
+
 def _cleanup_loop():
     while True:
-        time.sleep(86400)  # check once a day
+        time.sleep(86400)  # daily
         try:
-            from datetime import date
-            if date.today().day == 1:  # run on 1st of month
+            cleanup_old_notifications(days=7)
+            if date.today().day == 1:
                 _clear_old_records()
         except Exception as e:
             logger.error(f"Cleanup loop error: {e}")
- 
-threading.Thread(target=_cleanup_loop, daemon=True, name="RecordCleanup").start()
- 
- 
 
+
+threading.Thread(target=_cleanup_loop, daemon=True, name="DailyCleanup").start()
 
 
 # ============================================================
-# HELPERS
+# DECORATORS / HELPERS
 # ============================================================
 
 def login_required(f):
@@ -173,21 +174,24 @@ def _is_admin() -> bool:
 
 
 def _check_step_allowed(history: dict, step: str) -> tuple:
-    return (True, "")
-
-    # rules = {
-    #     "gate_in":  (True, ""),
-    #     "migo_103": (bool(history.get("gate_in")), "Complete Gate In first."),
-    #     "migo_105": (bool(history.get("gate_in")) and bool(history.get("migo_103")),
-    #                  "Complete Gate In and MIGO 103 first."),
-    #     "miro":     (bool(history.get("gate_in")) and bool(history.get("migo_103")) and bool(history.get("migo_105")),
-    #                  "Complete Gate In, MIGO 103, and MIGO 105 first."),
-    # }
-    # return rules.get(step, (False, f"Unknown step: {step}"))
-
+    step_locks = os.getenv('ENABLE_STEP_LOCKS', 'true').lower() == 'true'
+    if not step_locks:
+        return True, ""
+    if step == "gate_in":
+        if (history.get("approval_status") or "pending") != "approved":
+            return False, "Documents pending verification & approval."
+    elif step == "migo_103":
+        if not history.get("gate_in"):
+            return False, "Awaiting Gate In completion."
+    elif step == "migo_105":
+        if not history.get("migo_103"):
+            return False, "Awaiting MIGO 103 completion."
+    elif step == "miro":
+        if not history.get("migo_105"):
+            return False, "Awaiting MIGO 105 completion."
+    return True, ""
 
 def _move_file(src_path: str, dest_folder: str) -> str:
-    """Move a file to dest_folder. Returns new path."""
     os.makedirs(dest_folder, exist_ok=True)
     filename = os.path.basename(src_path)
     dest_path = os.path.join(dest_folder, filename)
@@ -195,12 +199,11 @@ def _move_file(src_path: str, dest_folder: str) -> str:
         shutil.move(src_path, dest_path)
         return dest_path
     except Exception as e:
-        logger.error(f"Failed to move {src_path} to {dest_folder}: {e}")
+        logger.error(f"Failed to move {src_path}: {e}")
         return src_path
 
 
 def _find_file(filename: str) -> str:
-    """Find a file in uploads/, uploads/processed/, or uploads/failed/."""
     for folder in [config.UPLOAD_FOLDER, config.UPLOAD_PROCESSED_FOLDER, config.UPLOAD_FAILED_FOLDER]:
         path = os.path.join(folder, filename)
         if os.path.exists(path):
@@ -211,6 +214,10 @@ def _find_file(filename: str) -> str:
 def _auto_populate_form_tables(history_id: int) -> None:
     try:
         details = get_history_details_by_id(history_id)
+        history = details.get("history") or {}
+        # Re-populate only if nothing has been posted yet (Gate In not done)
+        if history.get("gate_in"):
+            return
         inv  = details.get("invoice_data")
         eway = details.get("ewaybill_data")
         lr   = details.get("lr_data")
@@ -223,29 +230,17 @@ def _auto_populate_form_tables(history_id: int) -> None:
 
 
 def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: int) -> bool:
-    """
-    Run OCR on a file, save to DB, move to processed/ or failed/.
-    Returns True on success.
-    """
     try:
         extracted = process_document(doctype, file_path, filename)
         if not extracted:
-            logger.warning(f"OCR returned no data for {doctype} — moving to failed/")
             _move_file(file_path, config.UPLOAD_FAILED_FOLDER)
             return False
-
         extracted["filename"] = filename
-        if doctype == "invoice":
-            save_invoice_to_db(history_id, extracted)
-        elif doctype == "ewaybill":
-            save_ewaybill_to_db(history_id, extracted)
-        elif doctype == "lr":
-            save_lr_to_db(history_id, extracted)
-
+        if doctype == "invoice":   save_invoice_to_db(history_id, extracted)
+        elif doctype == "ewaybill": save_ewaybill_to_db(history_id, extracted)
+        elif doctype == "lr":       save_lr_to_db(history_id, extracted)
         _move_file(file_path, config.UPLOAD_PROCESSED_FOLDER)
-        logger.info(f"OCR success for {doctype}, moved to processed/")
         return True
-
     except Exception as e:
         logger.error(f"OCR error for {doctype}: {e}", exc_info=True)
         _move_file(file_path, config.UPLOAD_FAILED_FOLDER)
@@ -253,19 +248,21 @@ def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: i
 
 
 # ============================================================
-# CONTEXT PROCESSOR — pass enabled steps to all templates
+# CONTEXT PROCESSOR — globals available to all templates
 # ============================================================
 
 @app.context_processor
 def inject_globals():
     return {
+        "config": config,  
         "enabled_steps": config._ENABLED_STEPS_RAW.lower(),
         "is_step_enabled": config.is_step_enabled,
         "is_admin": _is_admin(),
         "current_role": session.get("role", ""),
         "current_username": session.get("username", ""),
-        "allow_user_upload": os.getenv("ALLOW_USER_UPLOAD", "false").lower() == "true",
-        "show_dashboard_counts": os.getenv("SHOW_DASHBOARD_COUNTS", "false").lower() == "true",
+        "allow_user_upload": config.ALLOW_USER_UPLOAD,
+        "show_dashboard_counts": config.SHOW_DASHBOARD_COUNTS,
+        "enable_inapp_notifications": config.ENABLE_INAPP_NOTIFICATIONS,
     }
 
 
@@ -287,9 +284,10 @@ def login():
         password = request.form.get("password", "")
         user = verify_user(username, password)
         if user:
-            session["username"] = user["username"]
-            session["role"]     = user["role"]
-            session["name"]     = user["name"]
+            session["username"]   = user["username"]
+            session["role"]       = user["role"]
+            session["name"]       = user["name"]
+            session["step_roles"] = user.get("step_roles", "all")
             logger.info(f"Login: {username} ({user['role']})")
             return redirect(url_for("history_page"))
         logger.warning(f"Failed login: {username}")
@@ -317,7 +315,7 @@ def history_page():
         logger.error(f"History load error: {e}")
         history_data = []
     today_counts = {}
-    if os.getenv("SHOW_DASHBOARD_COUNTS", "false").lower() == "true":
+    if config.SHOW_DASHBOARD_COUNTS:
         try:
             today_counts = get_today_counts()
         except Exception as e:
@@ -339,17 +337,15 @@ def api_history_search():
     date_from = request.args.get("date_from", "").strip()
     date_to   = request.args.get("date_to", "").strip()
     page     = int(request.args.get("page", 1))
-    result = get_history_search(
+    return jsonify(get_history_search(
         search=search, status=status,
         date_from=date_from, date_to=date_to,
         page=page, per_page=20
-    )
-    return jsonify(result)
+    ))
 
 
 @app.route("/change_my_password", methods=["POST"])
 @api_login_required
-@admin_required
 def change_my_password():
     data = request.get_json(silent=True) or {}
     current_password = data.get("current_password", "")
@@ -367,9 +363,7 @@ def change_my_password():
     if not user:
         return jsonify({"success": False, "error": "Current password is incorrect"}), 400
 
-    from database.user_operations import update_user
-    success = update_user(session.get("username"), new_password, session.get("role"))
-    if success:
+    if update_user(session.get("username"), password=new_password):
         return jsonify({"success": True, "message": "Password updated successfully"})
     return jsonify({"success": False, "error": "Failed to update password"}), 500
 
@@ -378,13 +372,10 @@ def change_my_password():
 @login_required
 def view_detail(history_id):
     try:
-        details  = get_history_details_by_id(history_id)
-        history  = details.get("history")
+        details = get_history_details_by_id(history_id)
+        history = details.get("history")
         if not history:
             return redirect(url_for("history_page"))
-
-        lock_result  = lock_record(history_id, _current_user())
-        lock_warning = None if lock_result.get("success") else lock_result.get("message")
 
         gatein_data = get_gatein_entry(history_id) or {}
         migo_data   = get_migo_entry(history_id)   or {}
@@ -396,7 +387,7 @@ def view_detail(history_id):
             migo_data["material_doc_number"] = history["material_doc_number"]
 
         po_data = get_po_line_items(history_id)
- 
+
         return render_template(
             "index.html",
             history=history,
@@ -408,7 +399,6 @@ def view_detail(history_id):
             migo_data=migo_data,
             miro_data=miro_data,
             po_data=po_data,
-            lock_warning=lock_warning,
             username=session.get("username"),
             role=session.get("role"),
             from_history=True
@@ -421,9 +411,7 @@ def view_detail(history_id):
 @app.route("/new_entry")
 @login_required
 def new_entry():
-    """Admin-only/If-user-allowed: start a new manual entry with upload sidebar."""
-    allow_user_upload = os.getenv("ALLOW_USER_UPLOAD", "false").lower() == "true"
-    if not _is_admin() and not allow_user_upload:
+    if not _is_admin() and not config.ALLOW_USER_UPLOAD:
         return redirect(url_for("history_page"))
     session.pop("current_history_id", None)
     return render_template(
@@ -431,7 +419,6 @@ def new_entry():
         history=None, history_id=None,
         invoice_data=None, ewaybill_data=None, lr_data=None,
         gatein_data=None, migo_data=None, miro_data=None,
-        lock_warning=None,
         username=session.get("username"),
         role=session.get("role"),
         from_history=False
@@ -456,22 +443,6 @@ def user_management():
 
 
 # ============================================================
-# RECORD LOCKING
-# ============================================================
-
-@app.route("/api/lock/<int:history_id>", methods=["POST"])
-@api_login_required
-def api_lock(history_id):
-    return jsonify(lock_record(history_id, _current_user()))
-
-
-@app.route("/api/unlock/<int:history_id>", methods=["POST"])
-@api_login_required
-def api_unlock(history_id):
-    return jsonify({"success": unlock_record(history_id, _current_user())})
-
-
-# ============================================================
 # QUEUE STATUS POLLING
 # ============================================================
 
@@ -485,7 +456,223 @@ def api_queue_status(job_id):
 
 
 # ============================================================
-# DOCUMENT UPLOAD (Admin only via sidebar)
+# SAVE EXTRACTED DATA — three sub-tab endpoints
+# ============================================================
+
+@app.route("/api/save_extracted_invoice/<int:history_id>", methods=["POST"])
+@api_login_required
+def save_extracted_invoice(history_id):
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "pending") == "approved":
+        return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
+
+    data = request.get_json(silent=True) or {}
+    if save_invoice_to_db(history_id, data):
+        _auto_populate_form_tables(history_id)
+        return jsonify({"success": True, "message": "Invoice data saved"})
+    return jsonify({"success": False, "error": "Failed to save"}), 500
+
+
+@app.route("/api/save_extracted_eway/<int:history_id>", methods=["POST"])
+@api_login_required
+def save_extracted_eway(history_id):
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "pending") == "approved":
+        return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
+
+    data = request.get_json(silent=True) or {}
+    if save_ewaybill_to_db(history_id, data):
+        _auto_populate_form_tables(history_id)
+        return jsonify({"success": True, "message": "E-Way Bill data saved"})
+    return jsonify({"success": False, "error": "Failed to save"}), 500
+
+
+@app.route("/api/save_extracted_lr/<int:history_id>", methods=["POST"])
+@api_login_required
+def save_extracted_lr(history_id):
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "pending") == "approved":
+        return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
+
+    data = request.get_json(silent=True) or {}
+    if save_lr_to_db(history_id, data):
+        _auto_populate_form_tables(history_id)
+        return jsonify({"success": True, "message": "LR data saved"})
+    return jsonify({"success": False, "error": "Failed to save"}), 500
+
+
+# ============================================================
+# APPROVE / HOLD
+# ============================================================
+
+@app.route("/api/approve/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_approve(history_id):
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    if not set_approval_status(history_id, _current_user()):
+        return jsonify({"success": False, "error": "Failed to approve"}), 500
+
+    details = get_history_details_by_id(history_id)
+    inv = details.get("invoice_data") or {}
+
+    create_notification(
+        history_id=history_id,
+        title="Documents Approved",
+        message=f"Invoice {inv.get('invoice_number') or '#'+str(history_id)} approved by {_current_user()} — ready for Gate In.",
+        notification_type="approve",
+        role_target="gate_in"
+    )
+
+    send_approval_notification(
+        history_id=history_id,
+        invoice_number=inv.get("invoice_number"),
+        approved_by=_current_user()
+    )
+
+    return jsonify({"success": True, "message": "Record approved"})
+
+
+@app.route("/api/hold/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_hold(history_id):
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if history.get("gate_in"):
+        return jsonify({"success": False, "error": "Cannot hold — Gate In already completed."}), 400
+
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()
+    if not reason:
+        return jsonify({"success": False, "error": "Hold reason required"}), 400
+
+    if not set_hold_status(history_id, _current_user(), reason):
+        return jsonify({"success": False, "error": "Failed to hold"}), 500
+
+    create_notification(
+        history_id=history_id,
+        title="Record on Hold",
+        message=f"Record {history_id} put on hold by {_current_user()}: {reason}",
+        notification_type="hold",
+        role_target="all"
+    )
+    return jsonify({"success": True, "message": "Record placed on hold"})
+
+
+# ============================================================
+# OCR RETRY
+# ============================================================
+
+@app.route("/api/rerun_ocr/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_rerun_ocr(history_id):
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("ocr_status") or "") != "failed":
+        return jsonify({"success": False, "error": "Only failed records can be re-run"}), 400
+
+    failed_path = get_ocr_failed_path(history_id)
+    if not failed_path or not os.path.isdir(failed_path):
+        return jsonify({"success": False, "error": "Failed folder not found"}), 404
+
+    retry_count = increment_ocr_retry(history_id)
+    files_processed = 0
+
+    for filename in os.listdir(failed_path):
+        if not filename.lower().endswith(".pdf"):
+            continue
+        file_path = os.path.join(failed_path, filename)
+        # Detect doc type from filename
+        from services.folder_watcher import _detect_doc_type
+        doc_type = _detect_doc_type(filename)
+        if not doc_type:
+            continue
+        try:
+            extracted = process_document(doc_type, file_path, filename)
+            if extracted:
+                extracted["filename"] = filename
+                if doc_type == "invoice":   save_invoice_to_db(history_id, extracted)
+                elif doc_type == "ewaybill": save_ewaybill_to_db(history_id, extracted)
+                elif doc_type == "lr":       save_lr_to_db(history_id, extracted)
+                files_processed += 1
+        except Exception as e:
+            logger.error(f"Re-run OCR error: {e}")
+
+    if files_processed > 0:
+        _auto_populate_form_tables(history_id)
+        set_ocr_status(history_id, "success")
+        return jsonify({"success": True, "message": f"OCR retry succeeded — {files_processed} document(s)", "retry_count": retry_count})
+
+    return jsonify({"success": False, "error": "OCR retry failed", "retry_count": retry_count}), 500
+
+
+# ============================================================
+# NOTIFICATIONS API
+# ============================================================
+@app.route('/api/notifications/read_all', methods=['POST'])
+@login_required
+def mark_all_notifications_read():
+    if not config.ENABLE_INAPP_NOTIFICATIONS:
+        return jsonify({'success': True})
+    from database.notifications_operations import mark_all_read
+    mark_all_read(
+    username=session.get("username"),
+    user_step_roles=session.get("step_roles", "all")
+)
+    return jsonify({'success': True})
+
+
+@app.route("/api/notifications/unread")
+@api_login_required
+def api_notifications_unread():
+    if not config.ENABLE_INAPP_NOTIFICATIONS:
+        return jsonify({"success": True, "notifications": []})
+    notifications = get_unread_for_user(
+        username=session.get("username"),
+        user_step_roles=session.get("step_roles", "all")
+    )
+    return jsonify({"success": True, "notifications": notifications})
+
+
+@app.route("/api/notifications/<int:notif_id>/mark_read", methods=["POST"])
+@api_login_required
+def api_notifications_mark_read(notif_id):
+    return jsonify({"success": mark_as_read(notif_id)})
+
+
+@app.route("/api/notifications/mark_all_read", methods=["POST"])
+@api_login_required
+def api_notifications_mark_all_read():
+    count = mark_all_as_read_for_user(session.get("username"))
+    return jsonify({"success": True, "marked": count})
+
+
+# ============================================================
+# MIGO MATCHED PAIRS (for MIGO 105 page)
+# ============================================================
+
+@app.route("/api/migo_matched_pairs/<int:history_id>")
+@api_login_required
+def api_migo_matched_pairs(history_id):
+    migo = get_migo_entry(history_id)
+    if not migo:
+        return jsonify({"success": True, "items": []})
+    items = migo.get("items_data") or []
+    return jsonify({"success": True, "items": items})
+
+
+# ============================================================
+# DOCUMENT UPLOAD
 # ============================================================
 
 @app.route("/upload/<doctype>", methods=["POST"])
@@ -493,11 +680,9 @@ def api_queue_status(job_id):
 def upload_document(doctype):
     if not _is_admin():
         return jsonify({"error": "Admin access required"}), 403
-
     valid_types = ["invoice", "ewaybill", "lr"]
     if doctype not in valid_types:
         return jsonify({"error": f"Invalid document type: {doctype}"}), 400
-
     if "file" not in request.files or not request.files["file"].filename:
         return jsonify({"error": "No file provided"}), 400
 
@@ -512,12 +697,10 @@ def upload_document(doctype):
             history_id = create_history_record()
             session["current_history_id"] = history_id
 
-        success = _run_ocr_and_save(doctype, file_path, filename, history_id)
-        if not success:
+        if not _run_ocr_and_save(doctype, file_path, filename, history_id):
             return jsonify({"error": "OCR failed — file moved to failed/"}), 500
 
         _auto_populate_form_tables(history_id)
-
         details = get_history_details_by_id(history_id)
         return jsonify({
             "success": True,
@@ -533,8 +716,7 @@ def upload_document(doctype):
 @app.route("/process_all", methods=["POST"])
 @api_login_required
 def process_all():
-    allow_user_upload = os.getenv("ALLOW_USER_UPLOAD", "false").lower() == "true"
-    if not _is_admin() and not allow_user_upload:
+    if not _is_admin() and not config.ALLOW_USER_UPLOAD:
         return jsonify({"error": "Admin access required"}), 403
 
     files = {
@@ -560,12 +742,16 @@ def process_all():
 
     session["current_history_id"] = history_id
     _auto_populate_form_tables(history_id)
+    if any(results.values()):
+        set_ocr_status(history_id, "success")
+    else:
+        set_ocr_status(history_id, "failed")
 
     return jsonify({"success": True, "history_id": history_id, "results": results})
 
 
 # ============================================================
-# GATE IN
+# WORKFLOW ENDPOINTS — Gate In / MIGO 103 / MIGO 105 / MIRO
 # ============================================================
 
 @app.route("/save_gatein", methods=["POST"])
@@ -580,17 +766,16 @@ def save_gatein():
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
 
+    allowed, reason = _check_step_allowed(history, "gate_in")
+    if not allowed:
+        return jsonify({"success": False, "error": reason}), 400
+
     upsert_gatein_entry(history_id, data)
     job_id = enqueue_rf_job(history_id, "gate_in", data)
     if not job_id:
-        return jsonify({"success": False, "error": "Gate In already processing. Please wait."}), 409
-
+        return jsonify({"success": False, "error": "Gate In already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
-
-# ============================================================
-# MIGO 103
-# ============================================================
 
 @app.route("/api/run_migo_103", methods=["POST"])
 @api_login_required
@@ -612,13 +797,8 @@ def run_migo_103():
     job_id = enqueue_rf_job(history_id, "migo_103", data)
     if not job_id:
         return jsonify({"success": False, "error": "MIGO 103 already processing."}), 409
-
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
-
-# ============================================================
-# MIGO 105
-# ============================================================
 
 @app.route("/api/run_migo_105", methods=["POST"])
 @api_login_required
@@ -642,23 +822,23 @@ def run_migo_105():
         return jsonify({"success": False, "error": "Material Doc Number missing — ensure MIGO 103 completed."}), 400
 
     save_migo_105_fields(history_id, data)
+
+    # Save per-line batches if provided
+    line_batches = data.get("line_batches") or []
+    if line_batches:
+        update_migo_105_items_with_batches(history_id, line_batches)
+
     rf_payload = {
         "material_doc_number":     material_doc,
         "migo_105_storage_loc":    data.get("storageLocation"),
-        "migo_105_batch":          data.get("batch"),
         "migo_105_vendor_invoice": data.get("vendorInvoiceDetail"),
         "migo_105_remarks":        data.get("remarks105"),
     }
     job_id = enqueue_rf_job(history_id, "migo_105", rf_payload)
     if not job_id:
         return jsonify({"success": False, "error": "MIGO 105 already processing."}), 409
-
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
-
-# ============================================================
-# MIRO
-# ============================================================
 
 @app.route("/api/run_miro", methods=["POST"])
 @api_login_required
@@ -676,28 +856,31 @@ def run_miro():
     if not allowed:
         return jsonify({"success": False, "error": reason}), 400
 
-    material_doc = history.get("material_doc_number")
-    if not material_doc:
-        migo_entry = get_migo_entry(history_id)
-        material_doc = (migo_entry or {}).get("material_doc_number")
-    if not material_doc:
-        return jsonify({"success": False, "error": "Material Doc Number missing."}), 400
+    # In run_miro route, replace the material_doc fetch block with:
+    migo_entry = get_migo_entry(history_id)
+    miro_doc = (migo_entry or {}).get("miro_doc_number") or ""
+    material_doc = (migo_entry or {}).get("material_doc_number") or history.get("material_doc_number") or ""
 
-    upsert_miro_entry(history_id, data)
+    if not miro_doc:
+        return jsonify({
+            "success": False,
+            "error": "MIRO Document Number missing — ensure MIGO 105 completed successfully."
+        }), 400
+
     details = get_history_details_by_id(history_id)
     inv = details.get("invoice_data") or {}
+    invoice_number = inv.get("invoice_number") or data.get("miroReference") or ""
 
     rf_payload = {
-        "material_doc_number": material_doc,
-        "miroReference":       data.get("miroReference") or inv.get("invoice_number", ""),
+        "material_doc_number": miro_doc,
+        "miroReference":       invoice_number,
         "miroInvoiceDate":     data.get("miroInvoiceDate"),
         "miroPurchaseOrder":   data.get("miroPurchaseOrder") or inv.get("po_number", ""),
-        "invoice_number":      inv.get("invoice_number", ""),
     }
+
     job_id = enqueue_rf_job(history_id, "miro", rf_payload)
     if not job_id:
         return jsonify({"success": False, "error": "MIRO already processing."}), 409
-
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
 
@@ -711,15 +894,10 @@ def api_get_gatein(history_id):
     data = get_gatein_entry(history_id)
     return jsonify({"success": True, "data": data}) if data else (jsonify({"success": False}), 404)
 
+
 @app.route("/api/po_data/<int:history_id>")
 @api_login_required
 def api_get_po_data(history_id):
-    """
-    Return PO line items fetched after Gate In for a given history_id.
-    Called by MIGO screen JS on page load to populate the PO table.
-    Returns empty list (not 404) if PO fetch hasn't run yet —
-    MIGO should still be usable without PO data.
-    """
     items = get_po_line_items(history_id)
     return jsonify({"success": True, "data": items})
 
@@ -730,22 +908,18 @@ def run_po_list_fetch():
     data = request.get_json(silent=True) or {}
     history_id  = data.get("history_id")
     vendor_name = data.get("vendor_name", "").strip()
- 
     if not history_id:
         return jsonify({"success": False, "error": "Missing history_id"}), 400
     if not vendor_name:
         return jsonify({"success": False, "error": "Vendor name required"}), 400
- 
+
     job_id = enqueue_rf_job(
-        history_id,
-        "po_list_fetch",
+        history_id, "po_list_fetch",
         {"vendor_name": vendor_name, "history_id": history_id}
     )
     if not job_id:
         return jsonify({"success": False, "error": "PO list fetch already in queue."}), 409
- 
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
-
 
 
 @app.route("/api/migo/<int:history_id>")
@@ -781,7 +955,6 @@ def api_get_history(history_id):
 @app.route("/api/storage_locations")
 @api_login_required
 def api_storage_locations():
-    """Used by MIGO 105 dropdown to fetch active locations."""
     locations = get_all_storage_locations(active_only=True)
     return jsonify({"success": True, "data": locations})
 
@@ -795,8 +968,7 @@ def api_add_storage_location():
     description = data.get("description", "").strip()
     if not code or not description:
         return jsonify({"success": False, "error": "Code and description required"}), 400
-    success = add_storage_location(code, description)
-    return jsonify({"success": success})
+    return jsonify({"success": add_storage_location(code, description)})
 
 
 @app.route("/api/storage_locations/update", methods=["POST"])
@@ -809,8 +981,7 @@ def api_update_storage_location():
     is_active = data.get("is_active", True)
     if not code:
         return jsonify({"success": False, "error": "Code required"}), 400
-    success = update_storage_location(code, description, is_active)
-    return jsonify({"success": success})
+    return jsonify({"success": update_storage_location(code, description, is_active)})
 
 
 # ============================================================
@@ -827,11 +998,16 @@ def add_user_web():
     confirm  = data.get("confirm_password", "")
     role     = data.get("role", "User")
     name     = data.get("name", "").strip()
+    email    = data.get("email", "").strip()
+    email_notif = bool(data.get("email_notifications_enabled", False))
+    step_roles  = data.get("step_roles", "all").strip() or "all"
+
     if not all([username, password, confirm, role, name]):
-        return jsonify({"status": False, "message": "All fields required"}), 400
+        return jsonify({"status": False, "message": "Username, name, role and password required"}), 400
     if password != confirm:
         return jsonify({"status": False, "message": "Passwords do not match"}), 400
-    success = add_user(username, password, role, name)
+
+    success = add_user(username, password, role, name, email, email_notif, step_roles)
     return jsonify({"status": success, "message": "User created" if success else "Failed — username may exist"})
 
 
@@ -844,9 +1020,23 @@ def edit_user_web():
     password = data.get("password", "").strip()
     confirm  = data.get("confirm_password", "").strip()
     role     = data.get("role", "User")
-    if not username or not password or password != confirm:
-        return jsonify({"status": False, "message": "All fields required and passwords must match"}), 400
-    success = update_user(username, password, role)
+    email    = data.get("email")
+    email_notif = data.get("email_notifications_enabled")
+    step_roles  = data.get("step_roles")
+
+    if not username:
+        return jsonify({"status": False, "message": "Username required"}), 400
+    if password and password != confirm:
+        return jsonify({"status": False, "message": "Passwords do not match"}), 400
+
+    success = update_user(
+        username,
+        password=password if password else None,
+        role=role if role else None,
+        email=email,
+        email_notifications_enabled=email_notif,
+        step_roles=step_roles
+    )
     return jsonify({"status": success, "message": "Updated" if success else "Not found"})
 
 
@@ -860,8 +1050,7 @@ def delete_user_web():
         return jsonify({"status": False, "message": "Username required"}), 400
     if username == _current_user():
         return jsonify({"status": False, "message": "Cannot delete own account"}), 403
-    success = delete_user(username)
-    return jsonify({"status": success, "message": "Deleted" if success else "Not found"})
+    return jsonify({"status": delete_user(username), "message": "Deleted"})
 
 
 # ============================================================
@@ -904,17 +1093,9 @@ def get_document_thumbnail(doctype, filename):
         return str(e), 500
 
 
-
-# ============================================================
-# DOCUMENT DELETE
-# ============================================================
-
 @app.route("/delete_document/<doctype>/<filename>", methods=["DELETE"])
 @api_login_required
 def delete_document(doctype, filename):
-    """Delete a document file and clear its data from DB."""
-    import re
-    # Security check — no path traversal
     if ".." in filename or "/" in filename or "\\" in filename:
         return jsonify({"success": False, "error": "Invalid filename"}), 400
 
@@ -926,24 +1107,20 @@ def delete_document(doctype, filename):
             logger.error(f"Failed to delete file {filename}: {e}")
             return jsonify({"success": False, "error": "Could not delete file"}), 500
 
-    # Extract history_id from filename (format: h{id}_filename.pdf)
     match = re.match(r"h(\d+)_", filename)
     if match:
         history_id = int(match.group(1))
         try:
             with get_connection() as conn:
                 with conn.cursor() as cur:
-                    if doctype == "invoice":
-                        cur.execute("DELETE FROM invoice_data WHERE id = %s", (history_id,))
-                    elif doctype == "ewaybill":
-                        cur.execute("DELETE FROM ewaybill_data WHERE id = %s", (history_id,))
-                    elif doctype == "lr":
-                        cur.execute("DELETE FROM lr_data WHERE id = %s", (history_id,))
+                    if doctype == "invoice":   cur.execute("DELETE FROM invoice_data WHERE id = %s", (history_id,))
+                    elif doctype == "ewaybill": cur.execute("DELETE FROM ewaybill_data WHERE id = %s", (history_id,))
+                    elif doctype == "lr":       cur.execute("DELETE FROM lr_data WHERE id = %s", (history_id,))
         except Exception as e:
-            logger.error(f"Failed to clear DB data for {doctype} history_id={history_id}: {e}")
+            logger.error(f"Failed to clear DB data: {e}")
 
-    logger.info(f"Document deleted: {filename} ({doctype})")
     return jsonify({"success": True, "message": "Document deleted"})
+
 
 # ============================================================
 # ERROR HANDLERS
@@ -973,5 +1150,5 @@ if __name__ == "__main__":
         host=config.HOST,
         port=config.PORT,
         debug=(config.ENV == "development"),
-        use_reloader=False  # Must be False — reloader kills background threads
+        use_reloader=False
     )

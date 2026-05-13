@@ -21,13 +21,13 @@ def save_po_line_items(history_id: int, items: list) -> bool:
     Replaces any existing rows — re-fetch replaces old data.
 
     Each item dict expected keys:
-        item_no, material_code, short_text, qty, unit, hsn_sac
+        item_no, material, short_text, po_qty, unit, hsn_sac
     """
     delete_sql = "DELETE FROM po_line_items WHERE history_id = %s"
     insert_sql = """
         INSERT INTO po_line_items (
-            history_id, item_no, material_code, short_text,
-            qty, rate, amount, hsn_sac
+            history_id, item_no, material, short_text,
+            po_qty, rate, amount, hsn_sac
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """
     try:
@@ -38,9 +38,9 @@ def save_po_line_items(history_id: int, items: list) -> bool:
                     cur.execute(insert_sql, (
                         history_id,
                         item.get("item_no", ""),
-                        item.get("material_code", ""),
+                        item.get("material", ""),
                         item.get("short_text", ""),
-                        item.get("qty", ""),
+                        item.get("po_qty", ""),
                         item.get("rate", ""),
                         item.get("amount", ""),
                         item.get("hsn_sac", ""),
@@ -62,8 +62,8 @@ def get_po_line_items(history_id: int) -> list:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT item_no, material_code, short_text,
-                           qty, rate, amount, hsn_sac, fetched_at
+                     SELECT item_no, material, short_text,
+                    po_qty, rate, amount, hsn_sac, fetched_at
                     FROM po_line_items
                     WHERE history_id = %s
                     ORDER BY id ASC
@@ -76,6 +76,8 @@ def get_po_line_items(history_id: int) -> list:
                     r = dict(row)
                     if r.get("fetched_at") and hasattr(r["fetched_at"], "isoformat"):
                         r["fetched_at"] = r["fetched_at"].isoformat()
+                        r['material_code'] = r.get('material', '')
+                        r['qty'] = r.get('po_qty', '') 
                     result.append(r)
                 return result
     except Exception as e:

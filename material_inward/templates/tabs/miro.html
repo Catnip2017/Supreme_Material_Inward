@@ -3,47 +3,72 @@
 .field-error { border-color:#e74c3c !important; }
 .field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
 .field-error-msg.show { display:block; }
+
+.gate-banner {
+  background:#fff3cd; border:1px solid #ffc107;
+  border-radius:8px; padding:14px 18px; margin-bottom:20px;
+  color:#856404; font-weight:500; font-size:14px;
+}
+.gate-banner.unlocked {
+  background:#ecfdf5; border-color:#00b894; color:#1a7a3c;
+}
 </style>
 
 <div class="content-card">
-  <h3>💰 MIRO - Invoice Verification & Posting</h3>
+  <h3>💰 MIRO — Invoice Verification & Posting</h3>
 
-  {% if history and not history.migo_105 %}
-  <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:20px;color:#856404;font-weight:500;">
-    ⚠ Complete Gate In → MIGO 103 → MIGO 105 before MIRO.
+<!-- {% set post_locked = (history is none) or (not history.migo_105) %}
+{% set step_locked = false %}
+
+  {% if step_locked %}
+  <div class="gate-banner">
+    ⏸ <strong>Awaiting MIGO 105</strong> — Complete Gate In → MIGO 103 → MIGO 105 before MIRO.
   </div>
-  {% endif %}
+  {% else %}
+  <div class="gate-banner unlocked">
+    ✓ <strong>MIGO 105 Done</strong> — Ready for MIRO posting.
+  </div>
+  {% endif %} -->
+
+ {% set post_locked = (history is none) or (not history.migo_105) %}
+{% set migo_105_done = history and history.migo_105 %}
+{% if not migo_105_done %}
+<div class="gate-banner">⏸ <strong>Awaiting MIGO 105</strong> — Complete MIGO 105 before posting MIRO.</div>
+{% else %}
+<div class="gate-banner unlocked">✓ <strong>MIGO 105 Done</strong> — Ready for MIRO posting.</div>
+{% endif %}
 
   <form id="miroForm" novalidate>
     <input type="hidden" id="history_id_miro" value="{{ history_id or '' }}">
 
-    <div class="form-row">
+    <!-- <div class="form-row">
       <div class="form-group">
         <label>Transaction</label>
-        <select class="form-select" id="miroTransaction">
+        <select class="form-select" id="miroTransaction" {% if step_locked %}disabled{% endif %}>
           <option value="1">1 Invoice</option>
           <option value="2">2 Credit Memo</option>
         </select>
       </div>
       <div class="form-group">
         <label>Diff. Posting</label>
-        <select class="form-select" id="miroDiffPosting">
+        <select class="form-select" id="miroDiffPosting" {% if step_locked %}disabled{% endif %}>
           <option value="">Not Applicable</option>
           <option value="1">Option 1</option>
         </select>
       </div>
-    </div>
+    </div> -->
 
     <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">📋 Basic Data</h4>
     <div class="form-row">
       <div class="form-group">
         <label>Invoice Date <span class="req">*</span></label>
         <input type="date" id="miroInvoiceDate" class="form-input"
-               value="{{ (miro_data.get('miro_invoice_date') if miro_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}">
+               value="{{ (miro_data.get('miro_invoice_date') if miro_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}"
+               {% if step_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_miroInvoiceDate">Required</div>
       </div>
       <div class="form-group">
-        <label>Posting Date <span style="font-size:11px;color:#1e5ca8;">(always today — auto)</span></label>
+        <label>Posting Date <span style="font-size:11px;color:#1e5ca8;">(today, auto)</span></label>
         <input type="date" id="miroPostingDate" class="form-input"
                value="" readonly style="background:#f8f9fb;">
       </div>
@@ -54,14 +79,14 @@
         <label>Reference <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Invoice Number)</span></label>
         <input type="text" id="miroReference" class="form-input"
                value="{{ (miro_data.get('miro_reference') if miro_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
-               placeholder="Invoice / bill number">
+               {% if step_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_miroReference">Required</div>
       </div>
       <div class="form-group">
         <label>Amount <span class="req">*</span></label>
         <input type="text" id="miroAmount" class="form-input"
                value="{{ (miro_data.get('miro_amount') if miro_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
-               placeholder="Invoice grand total">
+               {% if step_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_miroAmount">Required</div>
       </div>
     </div>
@@ -71,113 +96,57 @@
         <label>Tax Amount</label>
         <input type="text" id="miroTaxAmount" class="form-input"
                value="{{ (miro_data.get('miro_tax_amount') if miro_data else '') or (invoice_data.get('total_tax_amount') if invoice_data else '') or '' }}"
-               placeholder="Total tax amount">
+               {% if step_locked %}disabled{% endif %}>
       </div>
-      <div class="form-group">
+      <!-- <div class="form-group">
         <label>Tax Code</label>
-        <select class="form-select" id="miroTaxCode">
+        <select class="form-select" id="miroTaxCode" {% if step_locked %}disabled{% endif %}>
           <option value="V0" {% if miro_data and miro_data.get('miro_tax_code')=='V0' %}selected{% endif %}>V0 (TAX - NIL)</option>
           <option value="V1" {% if miro_data and miro_data.get('miro_tax_code')=='V1' %}selected{% endif %}>V1 (CGST+SGST)</option>
           <option value="V2" {% if miro_data and miro_data.get('miro_tax_code')=='V2' %}selected{% endif %}>V2 (IGST)</option>
         </select>
-      </div>
+      </div> -->
     </div>
 
-    <div class="form-group">
+    <!-- <div class="form-group">
       <label>Text</label>
       <input type="text" id="miroText" class="form-input"
              value="{{ miro_data.get('miro_text', '') if miro_data else '' }}"
-             placeholder="Optional text">
-    </div>
+             {% if step_locked %}disabled{% endif %}>
+    </div> -->
 
     <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🔗 PO Reference</h4>
     <div class="form-group">
       <label>Purchase Order <span class="req">*</span></label>
       <input type="text" id="miroPurchaseOrder" class="form-input"
              value="{{ (miro_data.get('miro_purchase_order') if miro_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
-             placeholder="PO number">
+             {% if step_locked %}disabled{% endif %}>
       <div class="field-error-msg" id="err_miroPurchaseOrder">Required</div>
     </div>
-
-    <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">📋 Item Details</h4>
-    <div style="overflow-x:auto;">
-      <table class="data-table" id="miroItemsTable">
-        <thead>
-          <tr>
-            <th style="width:60px;">Item</th>
-            <th>PO Text</th>
-            <th>Quantity</th>
-            <th>Amount</th>
-            <th>HSN/SAC</th>
-            <th>Tax Code</th>
-            <th style="width:80px;">Action</th>
-          </tr>
-        </thead>
-        <tbody id="miroItemsBody">
-          {% if miro_data and miro_data.get('items_data') %}
-            {% for item in miro_data.get('items_data', []) %}
-            <tr>
-              <td>{{ loop.index }}</td>
-              <td><input type="text" class="form-input" value="{{ item.get('po_text') or '' }}"></td>
-              <td><input type="text" class="form-input" value="{{ item.get('quantity') or '' }}"></td>
-              <td><input type="text" class="form-input" value="{{ item.get('amount') or '' }}"></td>
-              <td><input type="text" class="form-input" value="{{ item.get('hsn_sac') or '' }}"></td>
-              <td><input type="text" class="form-input" value="{{ item.get('tax_code') or '' }}"></td>
-              <td><button type="button" onclick="deleteMiroRow(this)" style="background:#f44336;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">×</button></td>
-            </tr>
-            {% endfor %}
-          {% else %}
-          <tr>
-            <td>1</td>
-            <td><input type="text" class="form-input" placeholder="PO Text"></td>
-            <td><input type="text" class="form-input" placeholder="Quantity"></td>
-            <td><input type="text" class="form-input" placeholder="Amount"></td>
-            <td><input type="text" class="form-input" placeholder="HSN/SAC"></td>
-            <td><input type="text" class="form-input" placeholder="Tax"></td>
-            <td><button type="button" onclick="deleteMiroRow(this)" style="background:#f44336;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">×</button></td>
-          </tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
-    <button type="button" class="btn btn-secondary" onclick="addMiroRow()" style="margin-top:12px;">➕ Add Item</button>
 
     <div id="miroStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
 
     <div class="action-buttons">
       <button type="submit" id="miroSubmitBtn" class="btn btn-primary"
+        {% if post_locked %}disabled title="Post MIGO 105 first"{% endif %}
               {% if history and history.miro %}style="background:#00b894;"{% endif %}>
         {% if history and history.miro %}✓ MIRO Posted — Complete{% else %}📮 Post MIRO{% endif %}
       </button>
-      <button type="button" class="btn btn-secondary" onclick="clearMiroForm()">🔄 Clear</button>
     </div>
   </form>
 </div>
 
+
+
 <script>
-// Auto-set posting date to today
+
+const POST_LOCKED_MIRO = {{ 'true' if post_locked else 'false' }};
+// const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+
 (function() {
   const el = document.getElementById('miroPostingDate');
   if (el) el.value = new Date().toISOString().split('T')[0];
 })();
-
-function addMiroRow() {
-  const tbody = document.getElementById('miroItemsBody');
-  const rowCount = tbody.rows.length + 1;
-  const row = tbody.insertRow();
-  row.innerHTML = `
-    <td>${rowCount}</td>
-    <td><input type="text" class="form-input" placeholder="PO Text"></td>
-    <td><input type="text" class="form-input" placeholder="Quantity"></td>
-    <td><input type="text" class="form-input" placeholder="Amount"></td>
-    <td><input type="text" class="form-input" placeholder="HSN/SAC"></td>
-    <td><input type="text" class="form-input" placeholder="Tax"></td>
-    <td><button type="button" onclick="deleteMiroRow(this)" style="background:#f44336;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">×</button></td>
-  `;
-}
-
-function deleteMiroRow(btn) { btn.closest('tr').remove(); }
-function clearMiroForm() { document.getElementById('miroForm').reset(); }
 
 function validateMiro() {
   let valid = true;
@@ -187,14 +156,12 @@ function validateMiro() {
     { id: 'miroAmount',        errId: 'err_miroAmount' },
     { id: 'miroPurchaseOrder', errId: 'err_miroPurchaseOrder' },
   ];
-
   mandatory.forEach(f => {
     const el = document.getElementById(f.id);
     const err = document.getElementById(f.errId);
     if (el) el.classList.remove('field-error');
     if (err) err.classList.remove('show');
   });
-
   mandatory.forEach(f => {
     const el = document.getElementById(f.id);
     const err = document.getElementById(f.errId);
@@ -209,43 +176,37 @@ function validateMiro() {
 
 document.getElementById('miroForm').addEventListener('submit', function(e) {
   e.preventDefault();
+  if (POST_LOCKED_MIRO && STEP_LOCKS_ENABLED) {
+    alert('⏸ MIGO 105 must be completed before posting MIRO.');
+    return;
+  }
   if (!validateMiro()) {
     const firstErr = document.querySelector('.field-error');
     if (firstErr) firstErr.scrollIntoView({ behavior:'smooth', block:'center' });
     return;
   }
-
   const historyId = parseInt(document.getElementById('history_id_miro').value);
   if (!historyId) { alert('History ID missing.'); return; }
+  showConfirm(
+    'Confirm MIRO Posting',
+    'You are about to post MIRO (Invoice Verification) to SAP. This is the final step — make sure reference and amount are correct.',
+    () => _doSubmitMiro(historyId)
+  );
+});
 
-  const items = [];
-  document.querySelectorAll('#miroItemsBody tr').forEach((row, idx) => {
-    const inputs = row.querySelectorAll('input');
-    if (inputs.length >= 5) {
-      items.push({
-        item: idx + 1,
-        po_text:  inputs[0].value,
-        quantity: inputs[1].value,
-        amount:   inputs[2].value,
-        hsn_sac:  inputs[3].value,
-        tax_code: inputs[4].value
-      });
-    }
-  });
-
+function _doSubmitMiro(historyId) {
   const payload = {
-    history_id:       historyId,
-    miroTransaction:  document.getElementById('miroTransaction').value,
-    miroDiffPosting:  document.getElementById('miroDiffPosting').value,
-    miroInvoiceDate:  document.getElementById('miroInvoiceDate').value,
-    miroPostingDate:  document.getElementById('miroPostingDate').value,
-    miroReference:    document.getElementById('miroReference').value,
-    miroAmount:       document.getElementById('miroAmount').value,
-    miroTaxAmount:    document.getElementById('miroTaxAmount').value,
-    miroTaxCode:      document.getElementById('miroTaxCode').value,
-    miroText:         document.getElementById('miroText').value,
+    history_id:        historyId,
+    miroTransaction:   document.getElementById('miroTransaction').value,
+    miroDiffPosting:   document.getElementById('miroDiffPosting').value,
+    miroInvoiceDate:   document.getElementById('miroInvoiceDate').value,
+    miroPostingDate:   document.getElementById('miroPostingDate').value,
+    miroReference:     document.getElementById('miroReference').value,
+    miroAmount:        document.getElementById('miroAmount').value,
+    miroTaxAmount:     document.getElementById('miroTaxAmount').value,
+    miroTaxCode:       document.getElementById('miroTaxCode').value,
+    miroText:          document.getElementById('miroText').value,
     miroPurchaseOrder: document.getElementById('miroPurchaseOrder').value,
-    items_data:       items
   };
 
   const btn = document.getElementById('miroSubmitBtn');
@@ -253,28 +214,19 @@ document.getElementById('miroForm').addEventListener('submit', function(e) {
 
   submitAndPoll('/api/run_miro', payload, btn, {
     onSuccess: () => {
-      statusEl.style.display = 'block';
-      statusEl.style.background = '#ecfdf5';
-      statusEl.style.color = '#00b894';
-      statusEl.style.border = '1px solid #00b894';
-      statusEl.textContent = '✓ MIRO posted successfully! Process complete.';
-      btn.textContent = '✓ MIRO Posted — Complete';
-      btn.style.background = '#00b894';
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '✓ MIRO posted successfully! Process complete.';
+      btn.textContent        = '✓ MIRO Posted — Complete';
+      btn.style.background   = '#00b894';
     },
     onFailure: (error) => {
-      statusEl.style.display = 'block';
-      statusEl.style.background = '#fff5f5';
-      statusEl.style.color = '#e17055';
-      statusEl.style.border = '1px solid #e17055';
-      statusEl.textContent = `❌ ${error}`;
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
     },
     onError: (error) => {
-      statusEl.style.display = 'block';
-      statusEl.style.background = '#fff5f5';
-      statusEl.style.color = '#e17055';
-      statusEl.style.border = '1px solid #e17055';
-      statusEl.textContent = `❌ ${error}`;
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
     }
   });
-});
+}
 </script>

@@ -1,0 +1,956 @@
+<style>
+.req { color:#e74c3c; margin-left:2px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+
+.gate-banner {
+  background:#fff3cd; border:1px solid #ffc107;
+  border-radius:8px; padding:14px 18px; margin-bottom:20px;
+  color:#856404; font-weight:500; font-size:14px;
+}
+.gate-banner.unlocked {
+  background:#ecfdf5; border-color:#00b894; color:#1a7a3c;
+}
+
+/* Compare modal */
+.compare-modal {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.7); z-index:9999;
+}
+.compare-modal.show { display:flex; align-items:center; justify-content:center; }
+.compare-box {
+  background:white; border-radius:12px;
+  width:75vw; max-width:1200px; height:85vh;
+  display:flex; flex-direction:column;
+  box-shadow:0 20px 60px rgba(0,0,0,0.3);
+}
+.compare-header {
+  padding:14px 20px; border-bottom:2px solid #f0f0f0;
+  display:flex; justify-content:space-between; align-items:center;
+}
+.compare-header h3 { color:#2c3e50; font-size:18px; }
+.compare-tabs { display:flex; gap:6px; padding:8px 20px; border-bottom:1px solid #e0e0e0; }
+.compare-tab {
+  padding:8px 18px; border:none; background:none; color:#666;
+  cursor:pointer; font-size:13px; font-weight:600;
+  border-bottom:3px solid transparent;
+}
+.compare-tab:hover { color:#1e5ca8; }
+.compare-tab.active { color:#1e5ca8; border-bottom-color:#1e5ca8; }
+.compare-tab:disabled { color:#ccc; cursor:not-allowed; }
+.compare-content { flex:1; padding:8px; overflow:hidden; }
+.compare-iframe { width:100%; height:100%; border:none; border-radius:6px; }
+.compare-close {
+  background:none; border:none; font-size:24px; color:#999;
+  cursor:pointer; padding:4px 12px;
+}
+.compare-close:hover { color:#e74c3c; }
+.btn-compare {
+  background:linear-gradient(135deg,#9b59b6,#8e44ad); color:white;
+  border:none; padding:10px 20px; border-radius:8px;
+  font-size:13px; font-weight:600; cursor:pointer;
+}
+.btn-compare:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(155,89,182,0.3); }
+
+/* Verification panel */
+.verify-panel {
+  display:grid; grid-template-columns:1fr 1fr; gap:16px;
+  margin-top:8px; min-width:0;
+}
+.verify-panel > div { min-width:0; overflow:hidden; }
+.verify-panel-header {
+  font-size:13px; font-weight:700; padding:9px 14px;
+  border-radius:6px 6px 0 0;
+}
+.invoice-header { background:#e8f0fe; color:#1e5ca8; }
+.po-header { background:#e8f7f0; color:#00796b; }
+
+.table-scroll-wrap {
+  overflow-x:auto; overflow-y:auto; max-height:340px;
+  border:1px solid #e0e0e0; border-top:none; border-radius:0 0 6px 6px;
+}
+.verify-table { width:100%; border-collapse:collapse; font-size:12px; }
+.verify-table thead th {
+  background:#f8f9fb; padding:7px 8px; text-align:left;
+  font-weight:600; border-bottom:2px solid #e0e0e0; white-space:nowrap;
+  position:sticky; top:0; z-index:1;
+}
+.verify-table td {
+  padding:5px 7px; border-bottom:1px solid #f0f0f0; vertical-align:middle;
+  white-space:nowrap;
+}
+.verify-table td.cell-text {
+  max-width:160px; overflow:hidden; text-overflow:ellipsis;
+}
+.verify-table tr:hover td { background:#fafbff; }
+.verify-table input.form-input {
+  width:100%; padding:3px 6px; font-size:12px; min-width:55px; max-width:100px;
+}
+
+/* Pair circle button */
+.pair-btn {
+  width:28px; height:28px; border-radius:50%;
+  border:2px solid #ccc; background:white;
+  cursor:pointer; font-weight:700; font-size:13px;
+  color:#999; transition:all .2s;
+  display:flex; align-items:center; justify-content:center;
+}
+.pair-btn:hover:not(:disabled) { border-color:#1e5ca8; }
+.pair-btn:disabled { cursor:not-allowed; opacity:0.4; }
+.pair-btn.paired-inv { border-color:#1e5ca8; background:#1e5ca8; color:white; }
+.pair-btn.paired-po  { border-color:#00b894; background:#00b894; color:white; }
+
+.match-controls {
+  display:flex; align-items:center; justify-content:center;
+  margin-top:14px; gap:12px; flex-wrap:wrap;
+}
+.btn-match, .btn-auto-pair, .btn-reset {
+  border:none; padding:8px 22px; border-radius:6px; cursor:pointer;
+  font-weight:600; font-size:13px; transition:.2s;
+}
+.btn-match { background:#1e5ca8; color:#fff; }
+.btn-match:hover:not(:disabled) { background:#154a8a; }
+.btn-match:disabled { background:#b0bec5; cursor:not-allowed; }
+.btn-auto-pair { background:#9b59b6; color:white; }
+.btn-auto-pair:hover { background:#8e44ad; }
+.btn-reset { background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; }
+.btn-reset:hover { background:#fecaca; }
+
+.match-hint {
+  font-size:12px; color:#888; margin-left:12px; transition:color .2s;
+}
+.match-hint.ready { color:#00b894; font-weight:600; }
+
+/* Matched pairs table */
+.matched-section {
+  margin-top:18px;
+  border:2px solid #7c3aed; border-radius:8px; overflow:hidden;
+  animation:fadeIn .3s ease;
+}
+@keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+.matched-section-header {
+  background:#7c3aed; color:#fff;
+  padding:9px 16px; font-weight:700; font-size:13px;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.matched-table { width:100%; border-collapse:collapse; font-size:12px; }
+.matched-table th {
+  background:#f5f3ff; padding:7px 10px; text-align:left;
+  font-weight:600; border-bottom:2px solid #ddd6fe;
+  white-space:nowrap; position:sticky; top:0; z-index:1;
+}
+.matched-table td {
+  padding:6px 10px; border-bottom:1px solid #ede9fe;
+  white-space:nowrap;
+}
+.matched-table td input.form-input { width:80px; padding:4px 6px; font-size:12px; }
+.btn-unmatch {
+  background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;
+  cursor:pointer; font-size:12px; padding:3px 8px;
+  border-radius:4px; font-weight:600;
+}
+
+.po-status-badge {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 12px; border-radius:12px;
+  font-size:11px; font-weight:700;
+}
+.po-fetched { background:#d1fae5; color:#065f46; }
+.po-pending { background:#fef3c7; color:#92400e; }
+</style>
+
+<div class="content-card">
+  <h3>📦 MIGO 103 — Goods Receipt into Blocked Stock</h3>
+
+<!-- {% set post_locked = (history is none) or (not history.gate_in) %}
+{% set step_locked = false %}
+
+  {% if step_locked %}
+  <div class="gate-banner">
+    ⏸ <strong>Awaiting Gate In</strong> — MIGO 103 unlocks once Gate In is posted.
+  </div>
+  {% else %}
+  <div class="gate-banner unlocked">
+    ✓ <strong>Gate In Done</strong> — Proceed with MIGO 103 posting.
+  </div>
+  {% endif %} -->
+
+{% set post_locked = (history is none) or (not history.gate_in) %}
+{% set gate_in_done = history and history.gate_in %}
+{% if not gate_in_done %}
+<div class="gate-banner">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 103.</div>
+{% else %}
+<div class="gate-banner unlocked">✓ <strong>Gate In Done</strong> — Ready for MIGO 103 posting.</div>
+{% endif %}
+
+  <input type="hidden" id="history_id_migo" value="{{ history_id or '' }}">
+
+  <div class="form-row">
+    <div class="form-group">
+      <label>Purchase Order No <span class="req">*</span></label>
+      <input type="text" id="migoPoNumber" class="form-input"
+             value="{{ (migo_data.get('migo_po_number') if migo_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+             {% if step_locked %}disabled{% endif %}>
+      <div class="field-error-msg" id="err_migoPoNumber">Required</div>
+    </div>
+    <div class="form-group">
+      <label>Document Date <span class="req">*</span></label>
+      <input type="date" id="migoDocDate" class="form-input"
+             value="{{ (migo_data.get('migo_doc_date') if migo_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}"
+             {% if step_locked %}disabled{% endif %}>
+      <div class="field-error-msg" id="err_migoDocDate">Required</div>
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label>Posting Date <span class="req">*</span></label>
+      <input type="date" id="migoPostDate" class="form-input"
+             value="{{ migo_data.get('migo_post_date', '') if migo_data else '' }}"
+             {% if step_locked %}disabled{% endif %}>
+      <div class="field-error-msg" id="err_migoPostDate">Required</div>
+    </div>
+    <div class="form-group">
+      <label>Delivery Note <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Invoice No)</span></label>
+      <input type="text" id="migoDeliveryNote" class="form-input"
+             value="{{ (migo_data.get('migo_delivery_note') if migo_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
+             {% if step_locked %}disabled{% endif %}>
+      <div class="field-error-msg" id="err_migoDeliveryNote">Required</div>
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label>Bill of Lading <span style="font-size:11px;color:#888;">(LR No)</span></label>
+      <input type="text" id="migoBillOfLading" class="form-input"
+             value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or (lr_data.get('lr_number') if lr_data else '') or '' }}"
+             {% if step_locked %}disabled{% endif %}>
+    </div>
+    <div class="form-group">
+      <label>GR/GI Slip No</label>
+      <input type="text" id="migoGRSlipNo" class="form-input"
+             value="{{ migo_data.get('migo_gr_slip_no', '') if migo_data else '' }}"
+             {% if step_locked %}disabled{% endif %}>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Header Text <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Gate In Number)</span></label>
+    <input type="text" id="migoHeaderText" class="form-input"
+           value="{{ (migo_data.get('migo_header_text') or (history.gate_in_number if history and history.gate_in_number else '')) or '' }}"
+           {% if step_locked %}disabled{% endif %}>
+    <div class="field-error-msg" id="err_migoHeaderText">Required</div>
+  </div>
+
+  <!-- Compare Documents button + Line Item Verification -->
+  <div style="margin-top:28px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+      <h4 style="color:#1e5ca8;font-size:14px;margin:0;font-weight:700;">
+        📋 Line Item Verification
+      </h4>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span id="poStatusBadge">
+          {% if po_data and po_data|length > 0 %}
+          <span class="po-status-badge po-fetched">✓ {{ po_data|length }} PO line(s)</span>
+          {% else %}
+          <span class="po-status-badge po-pending">⏳ PO data pending</span>
+          {% endif %}
+        </span>
+        <button type="button" class="btn-compare" onclick="openCompareModal()">🔍 Compare Documents</button>
+      </div>
+    </div>
+
+    <p style="font-size:12px;color:#888;margin-bottom:14px;line-height:1.5;">
+      Click the circle on each side to mark pairs (numbers auto-assigned). Click again to unpair.
+      Use <strong>Auto-Pair</strong> to detect matches automatically.
+    </p>
+
+    <div class="verify-panel">
+      <!-- Invoice table -->
+      <div>
+        <div class="verify-panel-header invoice-header">📄 Invoice Line Items (from OCR)</div>
+        <div class="table-scroll-wrap" style="border-color:#dde3f0;">
+          <table class="verify-table" id="invoiceItemsTable">
+            <thead>
+              <tr>
+                <th style="width:40px;">Pair</th>
+                <th>#</th>
+                <th>Mat. Code</th>
+                <th>Short Text</th>
+                <th>Qty</th>
+                <th>Rate</th>
+                <th>Amount</th>
+                <th>HSN/SAC</th>
+              </tr>
+            </thead>
+            <tbody id="invoiceItemsBody">
+              {% set items = (migo_data.get('items_data') if migo_data else []) or [] %}
+              {% for item in items %}
+              <tr data-idx="{{ loop.index0 }}">
+                <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)" {% if step_locked %}disabled{% endif %}></button></td>
+                <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                <td><input type="text" class="form-input" value="{{ item.get('material_code','') }}" {% if step_locked %}disabled{% endif %}></td>
+                <td><input type="text" class="form-input" value="{{ item.get('short_text','') }}" title="{{ item.get('short_text','') }}" oninput="this.title=this.value" {% if step_locked %}disabled{% endif %}></td>
+                <td><input type="text" class="form-input" value="{{ item.get('qty_expected','') }}" {% if step_locked %}disabled{% endif %}></td>
+                <td><input type="text" class="form-input" value="{{ item.get('rate','') }}" {% if step_locked %}disabled{% endif %}></td>
+                <td><input type="text" class="form-input" value="{{ item.get('amount','') }}" {% if step_locked %}disabled{% endif %}></td>
+                <td><input type="text" class="form-input" value="{{ item.get('hsn_sac','') }}" {% if step_locked %}disabled{% endif %}></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PO table -->
+      <div>
+        <div class="verify-panel-header po-header">🏭 PO Line Items (from SAP)</div>
+        <div class="table-scroll-wrap" style="border-color:#c8e6c9;">
+          <table class="verify-table" id="poItemsTable">
+            <thead>
+              <tr>
+                <th style="width:40px;">Pair</th>
+                <th>#</th>
+                <th>Mat. Code</th>
+                <th>Short Text</th>
+                <th>Qty</th>
+                <th>Rate</th>
+                <th>Amount</th>
+                <th>HSN/SAC</th>
+              </tr>
+            </thead>
+            <tbody id="poItemsBody">
+              {% if po_data and po_data|length > 0 %}
+                {% for item in po_data %}
+                <tr data-idx="{{ loop.index0 }}">
+                  <td><button type="button" class="pair-btn pair-btn-po" data-pair="" onclick="onPoPairClick(this)" {% if step_locked %}disabled{% endif %}></button></td>
+                  <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                  <td>{{ item.get('material_code','') }}</td>
+                  <td class="cell-text" title="{{ item.get('short_text','') }}">{{ item.get('short_text','') }}</td>
+                  <td>{{ item.get('qty','') }}</td>
+                  <td>{{ item.get('rate','') }}</td>
+                  <td>{{ item.get('amount','') }}</td>
+                  <td>{{ item.get('hsn_sac','') }}</td>
+                </tr>
+                {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="match-controls">
+      <button type="button" class="btn-auto-pair" onclick="autoPair()" {% if step_locked %}disabled{% endif %}>🪄 Auto-Pair</button>
+      <button type="button" class="btn-match" id="confirmMatchBtn" onclick="confirmMatches()" {% if step_locked %}disabled{% endif %}>🔗 Confirm Matches</button>
+      <button type="button" class="btn-reset" onclick="resetAllMatches()" {% if step_locked %}disabled{% endif %}>🗑 Reset All</button>
+      <span class="match-hint" id="matchHint">No pairs marked yet</span>
+    </div>
+
+    <!-- Matched pairs section -->
+    <div class="matched-section" id="matchedSection" style="display:none;">
+      <div class="matched-section-header">
+        <span>🔗 Matched Pairs</span>
+        <span style="font-size:11px;font-weight:400;opacity:0.9;">— Edit Delivery Note Qty before posting</span>
+      </div>
+      <div style="overflow-x:auto;overflow-y:auto;max-height:300px;">
+        <table class="matched-table" id="matchedTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Mat. Code</th>
+              <th>Short Text (Inv)</th>
+              <th>Short Text (PO)</th>
+              <th>HSN/SAC</th>
+              <th>Qty</th>
+              <th>Delivery Note Qty <span class="req">*</span></th>
+              <th>Rate</th>
+              <th>Amount</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="matchedBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-group" style="margin-top:18px;">
+    <label>Text <span style="font-size:11px;color:#888;">(Remarks)</span></label>
+    <input type="text" id="migoRemarks" class="form-input"
+           value="{{ migo_data.get('migo_remarks', '') if migo_data else '' }}"
+           {% if step_locked %}disabled{% endif %}>
+  </div>
+
+  <div id="migo103Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+  <div class="action-buttons">
+    <button type="button" id="migo103Btn" class="btn btn-primary" onclick="submitMigo103()"
+        {% if history and history.migo_103 %}style="background:#00b894;"{% endif %}>
+        {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
+    </button>
+  </div>
+</div>
+
+<!-- Compare Documents Modal -->
+<div class="compare-modal" id="compareModal">
+  <div class="compare-box">
+    <div class="compare-header">
+      <h3>🔍 Compare Documents Side-by-Side</h3>
+      <button class="compare-close" onclick="closeCompareModal()">✕</button>
+    </div>
+    <div class="compare-tabs">
+      <button class="compare-tab active" id="cmpTabInv" onclick="switchCompareTab('invoice')" {% if not invoice_data %}disabled{% endif %}>📄 Invoice</button>
+      <button class="compare-tab" id="cmpTabEway" onclick="switchCompareTab('ewaybill')" {% if not ewaybill_data %}disabled{% endif %}>🚚 E-Way Bill</button>
+      <button class="compare-tab" id="cmpTabLr" onclick="switchCompareTab('lr')" {% if not lr_data %}disabled{% endif %}>📦 LR</button>
+    </div>
+    <div class="compare-content">
+      <iframe id="compareFrame" class="compare-iframe" src=""></iframe>
+    </div>
+  </div>
+</div>
+
+{% set inv_url = url_for('view_document', doctype='invoice', filename=invoice_data['filename']) if invoice_data and invoice_data.get('filename') else '' %}
+{% set eway_url = url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) if ewaybill_data and ewaybill_data.get('filename') else '' %}
+{% set lr_url = url_for('view_document', doctype='lr', filename=lr_data['filename']) if lr_data and lr_data.get('filename') else '' %}
+
+
+<script>
+
+
+const POST_LOCKED_103 = {{ 'true' if post_locked else 'false' }};
+// const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+
+(function() {
+  const pd = document.getElementById('migoPostDate');
+  if (pd && !pd.value) pd.value = new Date().toISOString().split('T')[0];
+})();
+
+// ============================================================
+// Compare Documents Modal
+// ============================================================
+const COMPARE_URLS = {
+  invoice:  '{{ inv_url }}' || null,
+  ewaybill: '{{ eway_url }}' || null,
+  lr:       '{{ lr_url }}' || null
+};
+
+function openCompareModal() {
+  const first = COMPARE_URLS.invoice || COMPARE_URLS.ewaybill || COMPARE_URLS.lr;
+  if (!first) {
+    alert('No documents available to compare.');
+    return;
+  }
+  if (COMPARE_URLS.invoice) switchCompareTab('invoice');
+  else if (COMPARE_URLS.ewaybill) switchCompareTab('ewaybill');
+  else switchCompareTab('lr');
+  document.getElementById('compareModal').classList.add('show');
+}
+
+function closeCompareModal() {
+  document.getElementById('compareModal').classList.remove('show');
+  document.getElementById('compareFrame').src = '';
+}
+
+function switchCompareTab(type) {
+  document.getElementById('cmpTabInv').classList.toggle('active', type === 'invoice');
+  document.getElementById('cmpTabEway').classList.toggle('active', type === 'ewaybill');
+  document.getElementById('cmpTabLr').classList.toggle('active', type === 'lr');
+  const url = COMPARE_URLS[type];
+  if (url) document.getElementById('compareFrame').src = url;
+}
+
+// ============================================================
+// Pair-marking state
+// ============================================================
+let _nextPairNum = 1;
+
+function onInvPairClick(btn) {
+  const current = btn.getAttribute('data-pair');
+  if (current) {
+    btn.setAttribute('data-pair', '');
+    btn.textContent = '';
+    btn.classList.remove('paired-inv');
+  } else {
+    btn.setAttribute('data-pair', _nextPairNum);
+    btn.textContent = _nextPairNum;
+    btn.classList.add('paired-inv');
+    _nextPairNum++;
+  }
+  _updateMatchHint();
+}
+
+function onPoPairClick(btn) {
+  const current = btn.getAttribute('data-pair');
+  if (current) {
+    btn.setAttribute('data-pair', '');
+    btn.textContent = '';
+    btn.classList.remove('paired-po');
+  } else {
+    // Find lowest unpaired number on invoice side that isn't yet on PO side
+    const invPairs = _getPairs('inv');
+    const poPairs = _getPairs('po');
+    let next = null;
+    for (const n of invPairs.sort((a,b) => a-b)) {
+      if (!poPairs.includes(n)) { next = n; break; }
+    }
+    if (next === null) next = _nextPairNum++;
+    btn.setAttribute('data-pair', next);
+    btn.textContent = next;
+    btn.classList.add('paired-po');
+  }
+  _updateMatchHint();
+}
+
+function _getPairs(side) {
+  const sel = side === 'inv' ? '.pair-btn-inv' : '.pair-btn-po';
+  return Array.from(document.querySelectorAll(sel))
+    .map(b => b.getAttribute('data-pair'))
+    .filter(v => v && v !== '')
+    .map(v => parseInt(v));
+}
+
+function _updateMatchHint() {
+  const invPairs = _getPairs('inv');
+  const poPairs  = _getPairs('po');
+
+  // Count matches: pairs that exist on both sides
+  let valid = 0, incomplete = 0;
+  const allNums = new Set([...invPairs, ...poPairs]);
+  allNums.forEach(n => {
+    const onInv = invPairs.includes(n);
+    const onPo  = poPairs.includes(n);
+    if (onInv && onPo) valid++;
+    else incomplete++;
+  });
+
+  const hint = document.getElementById('matchHint');
+  if (valid === 0 && incomplete === 0) {
+    hint.textContent = 'No pairs marked yet';
+    hint.classList.remove('ready');
+  } else if (incomplete === 0) {
+    hint.textContent = `✓ ${valid} pair(s) ready to confirm`;
+    hint.classList.add('ready');
+  } else {
+    hint.textContent = `${valid} complete, ${incomplete} incomplete (need both sides)`;
+    hint.classList.remove('ready');
+  }
+}
+
+// ============================================================
+// Auto-Pair (smart matching using config thresholds)
+// ============================================================
+const AUTO_PAIR_MIN = {{ config.AUTO_PAIR_MIN_MATCHES if config and config.AUTO_PAIR_MIN_MATCHES else 3 }};
+const AUTO_PAIR_AMT_TOL = {{ config.AUTO_PAIR_AMOUNT_TOLERANCE if config and config.AUTO_PAIR_AMOUNT_TOLERANCE else 5 }};
+
+function autoPair() {
+  resetAllMatches();
+
+  const invRows = document.querySelectorAll('#invoiceItemsBody tr');
+  const poRows  = document.querySelectorAll('#poItemsBody tr');
+
+  const invData = Array.from(invRows).map(r => {
+    const inputs = r.querySelectorAll('input[type="text"]');
+    return {
+      el:            r.querySelector('.pair-btn-inv'),
+      material_code: (inputs[0]?.value || '').trim(),
+      short_text:    (inputs[1]?.value || '').trim(),
+      quantity:      (inputs[2]?.value || '').trim(),
+      rate:          (inputs[3]?.value || '').trim(),
+      amount:        (inputs[4]?.value || '').trim(),
+      hsn_sac:       (inputs[5]?.value || '').trim(),
+    };
+  });
+
+  const poData = Array.from(poRows).map(r => {
+    const cells = r.querySelectorAll('td');
+    return {
+      el:            r.querySelector('.pair-btn-po'),
+      material_code: (cells[2]?.textContent || '').trim(),
+      short_text:    (cells[3]?.textContent || '').trim(),
+      quantity:      (cells[4]?.textContent || '').trim(),
+      rate:          (cells[5]?.textContent || '').trim(),
+      amount:        (cells[6]?.textContent || '').trim(),
+      hsn_sac:       (cells[7]?.textContent || '').trim(),
+    };
+  });
+
+  let pairCounter = 1;
+  const usedPo = new Set();
+
+  invData.forEach(inv => {
+    if (!inv.el) return;
+    let bestPo = null;
+    let bestScore = 0;
+
+    poData.forEach((po, idx) => {
+      if (usedPo.has(idx) || !po.el) return;
+      let score = 0;
+
+      // Exact matches only — no tolerance
+      if (inv.hsn_sac  && po.hsn_sac  && inv.hsn_sac  === po.hsn_sac)  score++;
+      if (inv.rate     && po.rate     && inv.rate     === po.rate)     score++;
+      if (inv.amount   && po.amount   && inv.amount   === po.amount)   score++;
+      if (inv.quantity && po.quantity && inv.quantity === po.quantity) score++;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestPo = idx;
+      }
+    });
+
+    if (bestScore >= AUTO_PAIR_MIN && bestPo !== null) {
+      inv.el.setAttribute('data-pair', pairCounter);
+      inv.el.textContent = pairCounter;
+      inv.el.classList.add('paired-inv');
+
+      poData[bestPo].el.setAttribute('data-pair', pairCounter);
+      poData[bestPo].el.textContent = pairCounter;
+      poData[bestPo].el.classList.add('paired-po');
+
+      usedPo.add(bestPo);
+      pairCounter++;
+    }
+  });
+
+  _nextPairNum = pairCounter;
+  _updateMatchHint();
+}
+
+// function autoPair() {
+//   resetAllMatches();
+
+//   const invRows = document.querySelectorAll('#invoiceItemsBody tr');
+//   const poRows  = document.querySelectorAll('#poItemsBody tr');
+
+//   const invData = Array.from(invRows).map(r => {
+//     const inputs = r.querySelectorAll('input[type="text"]');
+//     return {
+//       el: r.querySelector('.pair-btn-inv'),
+//       material_code: (inputs[0]?.value || '').trim(),
+//       short_text:    (inputs[1]?.value || '').trim(),
+//       quantity:      _toNum(inputs[2]?.value),
+//       rate:          _toNum(inputs[3]?.value),
+//       amount:        _toNum(inputs[4]?.value),
+//       hsn_sac:       (inputs[5]?.value || '').trim(),
+//     };
+//   });
+
+//   const poData = Array.from(poRows).map(r => {
+//     const cells = r.querySelectorAll('td');
+//     return {
+//       el: r.querySelector('.pair-btn-po'),
+//       material_code: (cells[2]?.textContent || '').trim(),
+//       short_text:    (cells[3]?.textContent || '').trim(),
+//       quantity:      _toNum(cells[4]?.textContent),
+//       rate:          _toNum(cells[5]?.textContent),
+//       amount:        _toNum(cells[6]?.textContent),
+//       hsn_sac:       (cells[7]?.textContent || '').trim(),
+//     };
+//   });
+
+//   let pairCounter = 1;
+//   const usedPo = new Set();
+
+//   invData.forEach(inv => {
+//     let bestPo = null;
+//     let bestScore = 0;
+
+//     poData.forEach((po, idx) => {
+//       if (usedPo.has(idx)) return;
+//       let score = 0;
+//       if (inv.material_code && po.material_code && inv.material_code.toLowerCase() === po.material_code.toLowerCase()) score++;
+//       if (inv.hsn_sac && po.hsn_sac && inv.hsn_sac === po.hsn_sac) score++;
+//       if (!isNaN(inv.quantity) && !isNaN(po.quantity) && inv.quantity === po.quantity) score++;
+//       if (!isNaN(inv.amount) && !isNaN(po.amount) && _amountWithinTolerance(inv.amount, po.amount)) score++;
+//       if (score > bestScore) {
+//         bestScore = score;
+//         bestPo = idx;
+//       }
+//     });
+
+//     if (bestScore >= AUTO_PAIR_MIN && bestPo !== null) {
+//       inv.el.setAttribute('data-pair', pairCounter);
+//       inv.el.textContent = pairCounter;
+//       inv.el.classList.add('paired-inv');
+
+//       poData[bestPo].el.setAttribute('data-pair', pairCounter);
+//       poData[bestPo].el.textContent = pairCounter;
+//       poData[bestPo].el.classList.add('paired-po');
+
+//       usedPo.add(bestPo);
+//       pairCounter++;
+//     }
+//   });
+
+//   _nextPairNum = pairCounter;
+//   _updateMatchHint();
+// }
+
+// function _toNum(v) {
+//   if (v === null || v === undefined) return NaN;
+//   return parseFloat(String(v).replace(/[^\d.-]/g, ''));
+// }
+
+// function _amountWithinTolerance(a, b) {
+//   if (a === 0 && b === 0) return true;
+//   const tolerance = Math.max(Math.abs(a), Math.abs(b)) * (AUTO_PAIR_AMT_TOL / 100);
+//   return Math.abs(a - b) <= tolerance;
+// }
+
+// ============================================================
+// Confirm Matches → Build Matched Pairs Section
+// ============================================================
+function confirmMatches() {
+  const invRows = document.querySelectorAll('#invoiceItemsBody tr');
+  const poRows  = document.querySelectorAll('#poItemsBody tr');
+
+  const invByPair = {};
+  const poByPair  = {};
+
+  invRows.forEach(r => {
+    const btn = r.querySelector('.pair-btn-inv');
+    const pair = btn.getAttribute('data-pair');
+    if (pair) {
+      const inputs = r.querySelectorAll('input[type="text"]');
+      invByPair[pair] = {
+        material_code: inputs[0]?.value || '',
+        short_text:    inputs[1]?.value || '',
+        quantity:      inputs[2]?.value || '',
+        rate:          inputs[3]?.value || '',
+        amount:        inputs[4]?.value || '',
+        hsn_sac:       inputs[5]?.value || '',
+      };
+    }
+  });
+
+  poRows.forEach(r => {
+    const btn = r.querySelector('.pair-btn-po');
+    const pair = btn.getAttribute('data-pair');
+    if (pair) {
+      const cells = r.querySelectorAll('td');
+      poByPair[pair] = {
+        material_code: cells[2]?.textContent.trim() || '',
+        short_text:    cells[3]?.textContent.trim() || '',
+        quantity:      cells[4]?.textContent.trim() || '',
+        rate:          cells[5]?.textContent.trim() || '',
+        amount:        cells[6]?.textContent.trim() || '',
+        hsn_sac:       cells[7]?.textContent.trim() || '',
+      };
+    }
+  });
+
+  // Find incomplete pairs
+  const allPairs = new Set([...Object.keys(invByPair), ...Object.keys(poByPair)]);
+  const incomplete = [];
+  allPairs.forEach(p => {
+    if (!invByPair[p] || !poByPair[p]) {
+      // For incomplete, still include if at least invoice side present
+      if (!invByPair[p]) incomplete.push(p);
+    }
+  });
+
+  if (incomplete.length > 0) {
+    if (!confirm(`${incomplete.length} pair(s) have only PO side marked (no Invoice). Proceed anyway?`)) return;
+  }
+
+  if (allPairs.size === 0) {
+    alert('No pairs to confirm. Click circles in both tables first.');
+    return;
+  }
+
+  // Render matched pairs
+  const tbody = document.getElementById('matchedBody');
+  tbody.innerHTML = '';
+
+  const sortedPairs = Array.from(allPairs).map(p => parseInt(p)).sort((a,b) => a-b);
+  let displayNum = 1;
+
+  sortedPairs.forEach(pair => {
+    const inv = invByPair[pair] || {};
+    const po  = poByPair[pair] || {};
+
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-pair', pair);
+    tr.innerHTML = `
+      <td style="font-weight:600;color:#7c3aed;">${displayNum}</td>
+      <td>${_esc(inv.material_code || po.material_code)}</td>
+      <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
+      <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
+      <td>${_esc(inv.hsn_sac || po.hsn_sac)}</td>
+      <td><input type="text" class="form-input" value="${_esc(inv.quantity || po.quantity)}" style="width:70px;"></td>
+      <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" style="width:70px;"></td>
+      <td><input type="text" class="form-input" value="${_esc(inv.rate || po.rate)}" style="width:80px;"></td>
+      <td><input type="text" class="form-input" value="${_esc(inv.amount || po.amount)}" style="width:90px;"></td>
+      <td><button type="button" class="btn-unmatch" onclick="unmatchPair(this, '${pair}')">↩ Undo</button></td>
+    `;
+    tbody.appendChild(tr);
+    displayNum++;
+  });
+
+  document.getElementById('matchedSection').style.display = 'block';
+  document.getElementById('matchedSection').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function unmatchPair(btn, pairNum) {
+  document.querySelectorAll('.pair-btn-inv, .pair-btn-po').forEach(b => {
+    if (b.getAttribute('data-pair') === pairNum) {
+      b.setAttribute('data-pair', '');
+      b.textContent = '';
+      b.classList.remove('paired-inv', 'paired-po');
+    }
+  });
+  btn.closest('tr').remove();
+  if (document.querySelectorAll('#matchedBody tr').length === 0) {
+    document.getElementById('matchedSection').style.display = 'none';
+  }
+  _updateMatchHint();
+}
+
+function resetAllMatches() {
+  document.querySelectorAll('.pair-btn-inv, .pair-btn-po').forEach(b => {
+    b.setAttribute('data-pair', '');
+    b.textContent = '';
+    b.classList.remove('paired-inv', 'paired-po');
+  });
+  document.getElementById('matchedBody').innerHTML = '';
+  document.getElementById('matchedSection').style.display = 'none';
+  _nextPairNum = 1;
+  _updateMatchHint();
+}
+
+function _esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ============================================================
+// Submit MIGO 103
+// ============================================================
+function _collectMigoItems() {
+  const items = [];
+  const matchedRows = document.querySelectorAll('#matchedBody tr');
+
+  if (matchedRows.length > 0) {
+    matchedRows.forEach((row, idx) => {
+      const inputs = row.querySelectorAll('input[type="text"]');
+      const cells  = row.querySelectorAll('td');
+      items.push({
+        line:          idx + 1,
+        material_code: cells[1]?.textContent.trim() || '',
+        short_text:    cells[2]?.textContent.trim() || '',
+        hsn_sac:       cells[4]?.textContent.trim() || '',
+        qty_expected:  inputs[0]?.value || '',
+        qty_actual:    inputs[1]?.value || '',  // delivery note qty
+        rate:          inputs[2]?.value || '',
+        amount:        inputs[3]?.value || '',
+        batch:         '',
+      });
+    });
+    return items;
+  }
+
+  // Fallback — no matches; use raw invoice rows
+  document.querySelectorAll('#invoiceItemsBody tr').forEach((row, idx) => {
+    const inputs = row.querySelectorAll('input[type="text"]');
+    if (inputs.length >= 6) {
+      items.push({
+        line:          idx + 1,
+        material_code: inputs[0]?.value || '',
+        short_text:    inputs[1]?.value || '',
+        qty_expected:  inputs[2]?.value || '',
+        qty_actual:    inputs[2]?.value || '',
+        rate:          inputs[3]?.value || '',
+        amount:        inputs[4]?.value || '',
+        hsn_sac:       inputs[5]?.value || '',
+        batch:         '',
+      });
+    }
+  });
+  return items;
+}
+
+function validateMigo103() {
+  let valid = true;
+  const fields = [
+    { id:'migoPoNumber', errId:'err_migoPoNumber' },
+    { id:'migoDocDate', errId:'err_migoDocDate' },
+    { id:'migoPostDate', errId:'err_migoPostDate' },
+    { id:'migoDeliveryNote', errId:'err_migoDeliveryNote' },
+    { id:'migoHeaderText', errId:'err_migoHeaderText' },
+  ];
+  fields.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el) el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  fields.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el && !el.value.trim()) {
+      el.classList.add('field-error');
+      if (err) err.classList.add('show');
+      valid = false;
+    }
+  });
+
+  const matchedQtys = document.querySelectorAll('.matched-dn-qty');
+  if (matchedQtys.length === 0) {
+    valid = false;
+    alert('Confirm at least one matched pair before posting.');
+  }
+  return valid;
+}
+
+function submitMigo103() {
+  if (POST_LOCKED_103 && STEP_LOCKS_ENABLED) {
+    alert('⏸ Gate In must be completed before posting MIGO 103.');
+    return;
+  }
+  if (!validateMigo103()) return;
+  const historyId = parseInt(document.getElementById('history_id_migo').value);
+  if (!historyId) { alert('History ID missing.'); return; }
+  showConfirm(
+    'Confirm MIGO 103 Posting',
+    'You are about to post MIGO 103 (Goods Receipt into Blocked Stock) to SAP. Make sure all line items and quantities are correct.',
+    () => _doSubmitMigo103(historyId)
+  );
+}
+
+function _doSubmitMigo103(historyId) {
+  const payload = {
+    history_id:       historyId,
+    purchaseOrder:    document.getElementById('migoPoNumber').value,
+    migoPoNumber:     document.getElementById('migoPoNumber').value,
+    migoDocDate:      document.getElementById('migoDocDate').value,
+    migoPostDate:     document.getElementById('migoPostDate').value,
+    migoDeliveryNote: document.getElementById('migoDeliveryNote').value,
+    migoBillOfLading: document.getElementById('migoBillOfLading').value,
+    migoGRSlipNo:     document.getElementById('migoGRSlipNo').value,
+    migoHeaderText:   document.getElementById('migoHeaderText').value,
+    migoRemarks:      document.getElementById('migoRemarks').value,
+    items_data:       _collectMigoItems()
+  };
+
+  const btn      = document.getElementById('migo103Btn');
+  const statusEl = document.getElementById('migo103Status');
+
+  submitAndPoll('/api/run_migo_103', payload, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `✓ MIGO 103 posted! Material Doc: ${result.material_doc_number || '—'}`;
+      btn.textContent        = '✓ MIGO 103 Done';
+      btn.style.background   = '#00b894';
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+</script>

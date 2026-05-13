@@ -1,6 +1,11 @@
 """
 database/db_operations.py — Core database operations for history and documents.
 All functions use the shared connection pool.
+
+v4 changes:
+- Removed: lock_record, unlock_record, unlock_stale_locks
+- Added: set_approval_status, set_hold_status, set_ocr_status,
+        increment_ocr_retry, get_ocr_failed_path
 """
 
 import json
@@ -26,9 +31,6 @@ def create_history_record(
     mail_subject: Optional[str] = None,
     mail_received_at: Optional[datetime] = None
 ) -> Optional[int]:
-    """
-    Create a new history record. Returns the new history ID.
-    """
     sql = """
         INSERT INTO history (
             invoice_number, ewaybill_number, lr_number,
@@ -53,9 +55,6 @@ def create_history_record(
 
 
 def get_history_by_id(history_id: int) -> Optional[dict]:
-    """
-    Fetch a single history record by ID.
-    """
     sql = "SELECT * FROM history WHERE id = %s"
     try:
         with get_connection() as conn:
@@ -69,10 +68,6 @@ def get_history_by_id(history_id: int) -> Optional[dict]:
 
 
 def get_history_details_by_id(history_id: int) -> dict:
-    """
-    Fetch history with all associated document data.
-    Returns dict with keys: history, invoice_data, ewaybill_data, lr_data
-    """
     result = {
         "history": None,
         "invoice_data": None,
@@ -111,10 +106,6 @@ def get_history_details_by_id(history_id: int) -> dict:
 
 
 def get_all_history() -> list:
-    """
-    Fetch all history records with computed status for the history page.
-    Most recent first.
-    """
     sql = """
         SELECT
             h.id,
@@ -129,7 +120,12 @@ def get_all_history() -> list:
             h.miro,
             h.gate_in_number,
             h.material_doc_number,
-            h.locked_by,
+            h.approval_status,
+            h.approval_by,
+            h.approval_at,
+            h.hold_reason,
+            h.ocr_status,
+            h.ocr_retry_count,
             h.created_at,
             h.mail_received_at,
             CASE
@@ -160,10 +156,6 @@ def update_history_step(
     step: str,
     generated_number: Optional[str] = None
 ) -> bool:
-    """
-    Mark a workflow step as done and optionally store the SAP-generated number.
-    step must be one of: gate_in, migo_103, migo_105, miro
-    """
     now = datetime.now()
     valid_steps = {
         "gate_in":   ("gate_in",  "gatein_done_at",   "gate_in_number"),
@@ -204,105 +196,120 @@ def update_history_step(
 
 
 # ============================================================
-# RECORD LOCKING
+# APPROVAL WORKFLOW
 # ============================================================
 
-def lock_record(history_id: int, username: str) -> dict:
-    """
-    Attempt to lock a history record for editing.
-    Returns {'success': True} or {'success': False, 'locked_by': username}
-    """
-    try:
-        with get_connection() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                # Check current lock state
-                cur.execute(
-                    "SELECT locked_by, locked_at FROM history WHERE id = %s FOR UPDATE",
-                    (history_id,)
-                )
-                row = cur.fetchone()
-                if not row:
-                    return {"success": False, "error": "Record not found"}
-
-                current_lock = row["locked_by"]
-
-                # Already locked by someone else
-                if current_lock and current_lock != username:
-                    return {
-                        "success": False,
-                        "locked_by": current_lock,
-                        "message": f"Record is currently being edited by {current_lock}"
-                    }
-
-                # Lock it
-                cur.execute(
-                    "UPDATE history SET locked_by = %s, locked_at = %s WHERE id = %s",
-                    (username, datetime.now(), history_id)
-                )
-                logger.info(f"Record {history_id} locked by {username}")
-                return {"success": True}
-    except Exception as e:
-        logger.error(f"Failed to lock record {history_id}: {e}")
-        return {"success": False, "error": str(e)}
-
-
-def unlock_record(history_id: int, username: str) -> bool:
-    """
-    Release the lock on a history record.
-    """
+def set_approval_status(history_id: int, approved_by: str) -> bool:
+    """Mark a record as approved by a user."""
     sql = """
         UPDATE history
-        SET locked_by = NULL, locked_at = NULL
-        WHERE id = %s AND locked_by = %s
+        SET approval_status = 'approved',
+            approval_by     = %s,
+            approval_at     = %s,
+            hold_reason     = NULL,
+            updated_at      = CURRENT_TIMESTAMP
+        WHERE id = %s
     """
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (history_id, username))
-                logger.info(f"Record {history_id} unlocked by {username}")
+                cur.execute(sql, (approved_by, datetime.now(), history_id))
+                logger.info(f"Record {history_id} approved by {approved_by}")
                 return True
     except Exception as e:
-        logger.error(f"Failed to unlock record {history_id}: {e}")
+        logger.error(f"Failed to approve record {history_id}: {e}")
         return False
 
 
-def unlock_stale_locks(minutes: int = 60) -> int:
-    """
-    Release locks older than `minutes` minutes (handles crashed sessions).
-    Returns number of locks released.
-    """
+def set_hold_status(history_id: int, held_by: str, reason: str) -> bool:
+    """Place a record on hold with a reason."""
     sql = """
         UPDATE history
-        SET locked_by = NULL, locked_at = NULL
-        WHERE locked_at < NOW() - INTERVAL '%s minutes'
-        AND locked_by IS NOT NULL
+        SET approval_status = 'hold',
+            approval_by     = %s,
+            approval_at     = %s,
+            hold_reason     = %s,
+            updated_at      = CURRENT_TIMESTAMP
+        WHERE id = %s
     """
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (minutes,))
-                count = cur.rowcount
-                if count > 0:
-                    logger.warning(f"Released {count} stale lock(s) older than {minutes} minutes.")
+                cur.execute(sql, (held_by, datetime.now(), reason, history_id))
+                logger.info(f"Record {history_id} put on hold by {held_by}: {reason}")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to hold record {history_id}: {e}")
+        return False
+
+
+# ============================================================
+# OCR STATUS TRACKING
+# ============================================================
+
+def set_ocr_status(history_id: int, status: str, failed_path: Optional[str] = None) -> bool:
+    """Update OCR status: 'success' or 'failed'."""
+    sql = """
+        UPDATE history
+        SET ocr_status      = %s,
+            ocr_failed_path = %s,
+            updated_at      = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (status, failed_path, history_id))
+                logger.info(f"Record {history_id} ocr_status set to {status}")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to update ocr_status for {history_id}: {e}")
+        return False
+
+
+def increment_ocr_retry(history_id: int) -> int:
+    """Increment ocr_retry_count, return new count."""
+    sql = """
+        UPDATE history
+        SET ocr_retry_count = ocr_retry_count + 1,
+            updated_at      = CURRENT_TIMESTAMP
+        WHERE id = %s
+        RETURNING ocr_retry_count
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (history_id,))
+                count = cur.fetchone()[0]
+                logger.info(f"Record {history_id} OCR retry count: {count}")
                 return count
     except Exception as e:
-        logger.error(f"Failed to release stale locks: {e}")
+        logger.error(f"Failed to increment retry count for {history_id}: {e}")
         return 0
 
 
+def get_ocr_failed_path(history_id: int) -> Optional[str]:
+    """Get the failed folder path for a record (used for retry)."""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ocr_failed_path FROM history WHERE id = %s", (history_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception as e:
+        logger.error(f"Failed to fetch ocr_failed_path for {history_id}: {e}")
+        return None
+
+
 # ============================================================
-# INVOICE — SAVE / UPDATE
+# INVOICE / EWAYBILL / LR — SAVE / UPDATE
 # ============================================================
 
 def save_invoice_to_db(history_id: int, data: dict) -> bool:
-    """
-    Insert or update invoice_data for a given history_id.
-    """
-    hsn = data.get("hsn_details") or data.get("hsn_details")
+    hsn = data.get("hsn_details")
     if isinstance(hsn, (list, dict)):
         hsn = json.dumps(hsn)
 
-    check_sql = "SELECT id FROM invoice_data WHERE id = %s"
     insert_sql = """
         INSERT INTO invoice_data (
             id, filename, invoice_number, invoice_date, po_number,
@@ -331,45 +338,44 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             invoice_date = EXCLUDED.invoice_date,
             po_number = EXCLUDED.po_number,
             buyer_name = EXCLUDED.buyer_name,
+            buyer_address = EXCLUDED.buyer_address,
+            buyer_gstin = EXCLUDED.buyer_gstin,
+            ship_to_name = EXCLUDED.ship_to_name,
+            ship_to_address = EXCLUDED.ship_to_address,
+            ship_to_state = EXCLUDED.ship_to_state,
+            ship_to_code = EXCLUDED.ship_to_code,
+            bill_to_state = EXCLUDED.bill_to_state,
+            bill_to_code = EXCLUDED.bill_to_code,
             seller_name = EXCLUDED.seller_name,
+            seller_address = EXCLUDED.seller_address,
             seller_gstin = EXCLUDED.seller_gstin,
-            grand_total = EXCLUDED.grand_total,
+            company_pan = EXCLUDED.company_pan,
+            payment_terms = EXCLUDED.payment_terms,
+            amount_in_words = EXCLUDED.amount_in_words,
+            total_taxable_amount = EXCLUDED.total_taxable_amount,
+            cgst_rate = EXCLUDED.cgst_rate,
+            cgst_amount = EXCLUDED.cgst_amount,
+            sgst_rate = EXCLUDED.sgst_rate,
+            sgst_amount = EXCLUDED.sgst_amount,
+            igst_rate = EXCLUDED.igst_rate,
+            igst_amount = EXCLUDED.igst_amount,
             total_tax_amount = EXCLUDED.total_tax_amount,
+            total_amount = EXCLUDED.total_amount,
+            grand_total = EXCLUDED.grand_total,
             hsn_details = EXCLUDED.hsn_details,
             updated_at = CURRENT_TIMESTAMP
     """
     values = (
         history_id,
-        data.get("filename"),
-        data.get("invoice_number"),
-        data.get("invoice_date"),
-        data.get("po_number"),
-        data.get("buyer_name"),
-        data.get("buyer_address"),
-        data.get("buyer_gstin"),
-        data.get("ship_to_name"),
-        data.get("ship_to_address"),
-        data.get("ship_to_state"),
-        data.get("ship_to_code"),
-        data.get("bill_to_state"),
-        data.get("bill_to_code"),
-        data.get("seller_name"),
-        data.get("seller_address"),
-        data.get("seller_gstin"),
-        data.get("company_pan"),
-        data.get("payment_terms"),
-        data.get("amount_in_words"),
-        data.get("total_taxable_amount"),
-        data.get("cgst_rate"),
-        data.get("cgst_amount"),
-        data.get("sgst_rate"),
-        data.get("sgst_amount"),
-        data.get("igst_rate"),
-        data.get("igst_amount"),
-        data.get("total_tax_amount"),
-        data.get("total_amount"),
-        data.get("grand_total"),
-        hsn
+        data.get("filename"), data.get("invoice_number"), data.get("invoice_date"), data.get("po_number"),
+        data.get("buyer_name"), data.get("buyer_address"), data.get("buyer_gstin"),
+        data.get("ship_to_name"), data.get("ship_to_address"), data.get("ship_to_state"), data.get("ship_to_code"),
+        data.get("bill_to_state"), data.get("bill_to_code"),
+        data.get("seller_name"), data.get("seller_address"), data.get("seller_gstin"),
+        data.get("company_pan"), data.get("payment_terms"), data.get("amount_in_words"),
+        data.get("total_taxable_amount"), data.get("cgst_rate"), data.get("cgst_amount"),
+        data.get("sgst_rate"), data.get("sgst_amount"), data.get("igst_rate"), data.get("igst_amount"),
+        data.get("total_tax_amount"), data.get("total_amount"), data.get("grand_total"), hsn
     )
     try:
         with get_connection() as conn:
@@ -383,9 +389,6 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
 
 
 def save_ewaybill_to_db(history_id: int, data: dict) -> bool:
-    """
-    Insert or update ewaybill_data for a given history_id.
-    """
     sql = """
         INSERT INTO ewaybill_data (
             id, filename, ewaybill_number, generated_date, validity_date,
@@ -403,36 +406,40 @@ def save_ewaybill_to_db(history_id: int, data: dict) -> bool:
             %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
+            filename = EXCLUDED.filename,
             ewaybill_number = EXCLUDED.ewaybill_number,
+            generated_date = EXCLUDED.generated_date,
+            validity_date = EXCLUDED.validity_date,
+            invoice_number = EXCLUDED.invoice_number,
+            invoice_date = EXCLUDED.invoice_date,
+            po_number = EXCLUDED.po_number,
+            goods_description = EXCLUDED.goods_description,
+            hsn_code = EXCLUDED.hsn_code,
+            quantity = EXCLUDED.quantity,
+            value_of_goods = EXCLUDED.value_of_goods,
+            dispatch_from = EXCLUDED.dispatch_from,
+            dispatch_to = EXCLUDED.dispatch_to,
+            total_taxable_amount = EXCLUDED.total_taxable_amount,
+            total_invoice_amount = EXCLUDED.total_invoice_amount,
+            transport_mode = EXCLUDED.transport_mode,
             vehicle_number = EXCLUDED.vehicle_number,
             transporter_name = EXCLUDED.transporter_name,
-            quantity = EXCLUDED.quantity,
-            goods_description = EXCLUDED.goods_description,
+            transporter_gstin = EXCLUDED.transporter_gstin,
+            transport_doc_no = EXCLUDED.transport_doc_no,
+            transport_doc_date = EXCLUDED.transport_doc_date,
             updated_at = CURRENT_TIMESTAMP
     """
     values = (
-        history_id,
-        data.get("filename"),
-        data.get("ewaybill_number"),
-        data.get("generated_date"),
-        data.get("validity_date"),
-        data.get("invoice_number"),
-        data.get("invoice_date"),
-        data.get("po_number"),
-        data.get("goods_description"),
-        data.get("hsn_code"),
-        data.get("quantity"),
-        data.get("value_of_goods"),
-        data.get("dispatch_from"),
-        data.get("dispatch_to"),
-        data.get("total_taxable_amount"),
-        data.get("total_invoice_amount"),
-        data.get("transport_mode"),
-        data.get("vehicle_number"),
-        data.get("transporter_name"),
-        data.get("transporter_gstin"),
-        data.get("transport_doc_no"),
-        data.get("transport_doc_date")
+        history_id, data.get("filename"), data.get("ewaybill_number"),
+        data.get("generated_date"), data.get("validity_date"),
+        data.get("invoice_number"), data.get("invoice_date"), data.get("po_number"),
+        data.get("goods_description"), data.get("hsn_code"),
+        data.get("quantity"), data.get("value_of_goods"),
+        data.get("dispatch_from"), data.get("dispatch_to"),
+        data.get("total_taxable_amount"), data.get("total_invoice_amount"),
+        data.get("transport_mode"), data.get("vehicle_number"),
+        data.get("transporter_name"), data.get("transporter_gstin"),
+        data.get("transport_doc_no"), data.get("transport_doc_date")
     )
     try:
         with get_connection() as conn:
@@ -446,9 +453,6 @@ def save_ewaybill_to_db(history_id: int, data: dict) -> bool:
 
 
 def save_lr_to_db(history_id: int, data: dict) -> bool:
-    """
-    Insert or update lr_data for a given history_id.
-    """
     sql = """
         INSERT INTO lr_data (
             id, filename, lr_number, lr_date, consignor_name,
@@ -462,28 +466,28 @@ def save_lr_to_db(history_id: int, data: dict) -> bool:
             %s, %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
+            filename = EXCLUDED.filename,
             lr_number = EXCLUDED.lr_number,
+            lr_date = EXCLUDED.lr_date,
+            consignor_name = EXCLUDED.consignor_name,
+            consignee_name = EXCLUDED.consignee_name,
             vehicle_number = EXCLUDED.vehicle_number,
-            transporter_name = EXCLUDED.transporter_name,
             material_description = EXCLUDED.material_description,
+            quantity = EXCLUDED.quantity,
+            weight = EXCLUDED.weight,
+            delivery_address = EXCLUDED.delivery_address,
+            from_location = EXCLUDED.from_location,
+            to_location = EXCLUDED.to_location,
+            transporter_name = EXCLUDED.transporter_name,
+            freight_amount = EXCLUDED.freight_amount,
             updated_at = CURRENT_TIMESTAMP
     """
     values = (
-        history_id,
-        data.get("filename"),
-        data.get("lr_number"),
-        data.get("lr_date"),
-        data.get("consignor_name"),
-        data.get("consignee_name"),
-        data.get("vehicle_number"),
-        data.get("material_description"),
-        data.get("quantity"),
-        data.get("weight"),
-        data.get("delivery_address"),
-        data.get("from_location"),
-        data.get("to_location"),
-        data.get("transporter_name"),
-        data.get("freight_amount")
+        history_id, data.get("filename"), data.get("lr_number"), data.get("lr_date"),
+        data.get("consignor_name"), data.get("consignee_name"), data.get("vehicle_number"),
+        data.get("material_description"), data.get("quantity"), data.get("weight"),
+        data.get("delivery_address"), data.get("from_location"), data.get("to_location"),
+        data.get("transporter_name"), data.get("freight_amount")
     )
     try:
         with get_connection() as conn:
@@ -497,7 +501,7 @@ def save_lr_to_db(history_id: int, data: dict) -> bool:
 
 
 # ============================================================
-# HISTORY SEARCH — with filters and pagination
+# HISTORY SEARCH
 # ============================================================
 
 def get_history_search(
@@ -508,14 +512,9 @@ def get_history_search(
     page: int = 1,
     per_page: int = 10
 ) -> dict:
-    """
-    Search history with text, status, date range filters and pagination.
-    Returns {records, total, page, per_page, total_pages}
-    """
     conditions = []
     params = []
 
-    # Text search across invoice, ewaybill, lr, po, gate in number
     if search:
         conditions.append("""(
             COALESCE(inv.invoice_number, h.invoice_number, '') ILIKE %s OR
@@ -527,7 +526,6 @@ def get_history_search(
         like = f"%{search}%"
         params.extend([like, like, like, like, like])
 
-    # Status filter
     if status == "pending":
         conditions.append("h.gate_in = 0")
     elif status == "in_progress":
@@ -535,7 +533,6 @@ def get_history_search(
     elif status == "completed":
         conditions.append("h.miro = 1")
 
-    # Date range filter
     if date_from:
         conditions.append("h.created_at::date >= %s")
         params.append(date_from)
@@ -563,6 +560,7 @@ def get_history_search(
             COALESCE(h.po_number, inv.po_number)              AS po_number,
             h.gate_in, h.migo_103, h.migo_105, h.miro,
             h.gate_in_number, h.material_doc_number,
+            h.approval_status, h.ocr_status,
             h.created_at,
             CASE
                 WHEN h.miro = 1     THEN 'MIRO Done'
@@ -596,7 +594,7 @@ def get_history_search(
                     "total": total,
                     "page": page,
                     "per_page": per_page,
-                    "total_pages": max(1, -(-total // per_page))  # ceiling division
+                    "total_pages": max(1, -(-total // per_page))
                 }
     except Exception as e:
         logger.error(f"History search failed: {e}")
@@ -604,13 +602,10 @@ def get_history_search(
 
 
 # ============================================================
-# TODAY'S COUNTS — for dashboard summary cards
+# TODAY'S COUNTS
 # ============================================================
 
 def get_today_counts() -> dict:
-    """
-    Returns count of records created today broken down by status.
-    """
     sql = """
         SELECT
             COUNT(*)                                         AS total,

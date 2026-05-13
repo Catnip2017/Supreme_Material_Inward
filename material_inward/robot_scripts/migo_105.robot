@@ -11,7 +11,8 @@ Library           Collections
 # ${MATERIAL_DOC_NUMBER}    ${EMPTY}
 ${MATERIAL_DOC_NUMBER}    5000060194
 ${STORAGE_LOCATION}       ${EMPTY}
-${BATCH}                  ${EMPTY}
+# ${BATCH}                  ${EMPTY}
+${ITEMS_JSON_BATCH}       ${EMPTY}
 ${VENDOR_INVOICE}         ${EMPTY}
 ${REMARKS}    ${EMPTY}
 
@@ -63,31 +64,17 @@ Fill MIGO 105 And Post
     ${storage_clean}=     Clean Value    ${STORAGE_LOCATION}
     ${invoice_clean}=     Clean Value    ${VENDOR_INVOICE}
     ${batch_clean}=       Clean Value    ${BATCH}
+    # Decode per-line batch JSON
+    ${items}=    Evaluate
+    ...    __import__('json').loads(__import__('base64').b64decode('${ITEMS_JSON_BATCH}').decode()) if '${ITEMS_JSON_BATCH}' else []
     # ${rem_clean}=         Clean Value    ${REMARKS}    # ADD HERE
 
-    # # --- Parse items ---
-    # ${items}=    Evaluate    __import__('json').loads('${ITEMS_JSON}'.replace("'", '"'))
-    # ${total}=    Get Length    ${items}
-    # Log To Console    Total line items: ${total}
 
     # --- Step 1: Navigate to MIGO ---
     Run Transaction    MIGO
     Sleep    3s
     Dismiss Any Popup
 
-    # # --- Step 2: Enter mat doc number ---
-    # # A05 + Material Document are auto-set by SAP when opening /omigo
-    # ${firstline}=    Set Variable
-    # ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011
-
-    # Set Focus     ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/txtGODYNPRO-MAT_DOC
-    # Input Text    ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/txtGODYNPRO-MAT_DOC
-    # ...    ${mat_doc_clean}
-    # # ...    5000060194
-
-    # Send VKey    0
-    # Sleep    3s
-    # Dismiss Any Popup
 
     # --- Step 2: Force A05 + enter mat doc ---
     ${firstline}=    Set Variable
@@ -113,22 +100,23 @@ Fill MIGO 105 And Post
     ${det_base}=    Set Variable
     ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMDETAIL:SAPLMIGO:0301/subSUB_DETAIL:SAPLMIGO:0300
 
+    # Decode per-line batch JSON
+    ${items}=    Evaluate
+    ...    __import__('json').loads(__import__('base64').b64decode('${ITEMS_JSON_BATCH}').decode()) if '${ITEMS_JSON_BATCH}' else []
+
     ${line_num}=    Set Variable    1
 
     WHILE    True
-        # Navigate to line
         Input Text      ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num}
         Click Element   ${det_base}/btnOK_LOCATE
         Sleep    1s
         Dismiss Any Popup
 
-        # Check if line loaded — if Where tab not present, no more lines
         ${current_line}=    Run Keyword And Ignore Error
         ...    Get Value    ${det_base}/txtGODYNPRO-DETAIL_ZEILE
 
         ${actual_line}=    Clean Value    ${current_line}[1]
 
-        # If SAP didn't move to requested line — we're past the last line
         IF    '${actual_line}' != '${line_num}'    BREAK
 
         # Where tab — fill storage location
@@ -143,15 +131,22 @@ Fill MIGO 105 And Post
         Sleep    1s
         Dismiss Any Popup
 
-    # --- Step 5: Remarks ---
-      
-        # Batch tab — only if batch provided
-        IF    '${batch_clean}' != ''
+        # Find batch for this specific line number
+        ${batch_for_line}=    Set Variable    ${EMPTY}
+        FOR    ${item}    IN    @{items}
+            ${item_line}=    Get From Dictionary    ${item}    line    default=0
+            IF    ${item_line} == ${line_num}
+                ${batch_for_line}=    Get From Dictionary    ${item}    batch    default=${EMPTY}
+                BREAK
+            END
+        END
+
+        IF    '${batch_for_line}' != ''
             Click Element    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_BATCH
             Sleep    1s
             Input Text
             ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_BATCH/ssubSUB_TS_GOITEM_BATCH:SAPLMIGO:0335/ctxtGOITEM-CHARG
-            ...    ${batch_clean}
+            ...    ${batch_for_line}
             Send VKey    0
             Sleep    0.5s
             Dismiss Any Popup
@@ -203,17 +198,32 @@ Fill MIGO 105 And Post
     # Click Element    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/btnMIGO_OK_GO
     # Sleep    3s
     # Dismiss Any Popup
-    # ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
-    # Log To Console    Final Status Message: ${status_msg}
-    # @{matches}=    Get Regexp Matches    ${status_msg}    \\d{8,12}
-    # IF    len($matches) == 0
-    #     RETURN    MANUAL_CHECK_REQUIRED
-    # END
-    # RETURN    ${matches}[0]
+#    ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
+#     @{matches}=    Get Regexp Matches    ${status_msg}    \\d{8,12}
+#     IF    len($matches) == 0
+#         Log To Console    RESULT:MIRO_DOC_NUMBER:MANUAL_CHECK_REQUIRED
+#         RETURN    MANUAL_CHECK_REQUIRED
+#     END
+#     Log To Console    RESULT:MIRO_DOC_NUMBER:${matches}[0]
+#     RETURN    ${matches}[0]
 
     Log To Console    DRY RUN — Post button not clicked
     RETURN    DRY_RUN
 
+
+Read Status Bar With Retry
+    [Arguments]    ${expected_pattern}=\\d{4,}
+    ${msg}=    Set Variable    ${EMPTY}
+    FOR    ${attempt}    IN RANGE    1    6
+        ${msg}=    Get Value    wnd[0]/sbar
+        Log    Status bar attempt ${attempt}: "${msg}"    level=INFO
+        ${matched}=    Run Keyword And Return Status
+        ...    Should Match Regexp    ${msg}    ${expected_pattern}
+        IF    ${matched}    RETURN    ${msg}
+        Sleep    1s
+    END
+    Log    Status bar check timed out. Last: "${msg}"    level=WARN
+    RETURN    ${msg}
 
 Clean Value
     [Arguments]    ${raw_value}

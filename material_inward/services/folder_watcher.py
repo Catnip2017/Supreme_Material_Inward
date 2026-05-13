@@ -1,44 +1,50 @@
 """
-services/folder_watcher.py — Watch a local folder for incoming invoice PDFs.
+services/folder_watcher.py — Watch a local folder for incoming PDFs.
 
-Naming convention:
-    VendorName_INV2024001_invoice.pdf
-    VendorName_INV2024001_eway.pdf
-    VendorName_INV2024001_lr.pdf
-
-Group key = everything before the doc type keyword (e.g. VendorName_INV2024001).
-After OCR, batch folder moves to processed/<invoice_number>/.
-
-Set INTAKE_METHOD=folder in .env to activate.
-Mail poller kept intact — switch INTAKE_METHOD=mail to revert.
+v4 changes:
+- New folder structure: incoming/grouped/, ocr_done/, failed/
+- Loose files in incoming/ root → moved into grouped/<group_key>/
+- All 3 docs (invoice + eway + lr) required before OCR runs
+- After OCR success → group folder moved to ocr_done/<invoice_number>/
+- After OCR failure → group folder moved to failed/<group_key>_<timestamp>/
+- 60-day orphan cleanup: incomplete groups in grouped/ moved to failed/orphan_*
+- ocr_status set on history record
 """
 
 import os
 import time
 import shutil
 import threading
+from datetime import datetime, timedelta
 
 from config.config import config
 from config.logger import get_logger
-from database.connection import init_pool
 from database.db_operations import (
     create_history_record, save_invoice_to_db,
-    save_ewaybill_to_db, save_lr_to_db
+    save_ewaybill_to_db, save_lr_to_db,
+    set_ocr_status
 )
 from database.gatein_operations import upsert_gatein_entry, map_ocr_to_gatein
 from database.migo_operations import upsert_migo_entry, map_ocr_to_migo
 from database.miro_operations import upsert_miro_entry, map_ocr_to_miro
 from services.extract import process_document
+from services.mail_service import send_ocr_failure_alert
 
 logger = get_logger(__name__)
 
 WATCH_FOLDER     = os.getenv("WATCH_FOLDER", r"C:\material_inward\incoming")
-PROCESSED_FOLDER = os.path.join(WATCH_FOLDER, "processed")
-FAILED_FOLDER    = os.path.join(WATCH_FOLDER, "failed")
+GROUPED_FOLDER   = os.path.join(WATCH_FOLDER, "grouped")
+OCR_DONE_FOLDER  = os.path.join(os.path.dirname(WATCH_FOLDER), "ocr_done")
+FAILED_FOLDER    = os.path.join(os.path.dirname(WATCH_FOLDER), "failed")
 
-# How long a file must be unmodified before we consider it fully uploaded
-STABLE_SECONDS = 60
+STABLE_SECONDS = 60      # File must be unmodified this long before being touched
+ORPHAN_DAYS    = 60      # Incomplete groups in grouped/ deleted after this many days
+POLL_INTERVAL  = 30      # Watcher cycle interval
 
+
+# ============================================================
+# UTILITIES
+# ============================================================
 
 def _detect_doc_type(filename: str):
     name = filename.lower()
@@ -50,8 +56,8 @@ def _detect_doc_type(filename: str):
 
 def _get_group_key(filename: str) -> str:
     """
-    Extract group key = everything before the doc type keyword.
-    VendorName_INV2024001_invoice.pdf → VendorName_INV2024001
+    Group key = everything before the doc type keyword.
+    VendorName_INV2024001_invoice.pdf → vendorname_inv2024001
     """
     name_lower = filename.lower()
     for keyword in [config.INVOICE_KEYWORD, config.EWAYBILL_KEYWORD, config.LR_KEYWORD]:
@@ -62,147 +68,231 @@ def _get_group_key(filename: str) -> str:
 
 
 def _is_stable(file_path: str) -> bool:
-    """File must not have been modified in last STABLE_SECONDS."""
-    modified_ago = time.time() - os.path.getmtime(file_path)
-    return modified_ago >= STABLE_SECONDS
+    try:
+        modified_ago = time.time() - os.path.getmtime(file_path)
+        return modified_ago >= STABLE_SECONDS
+    except Exception:
+        return False
 
 
-def _group_files(folder: str) -> dict:
-    """
-    Scan folder, group PDFs by prefix key.
-    Only include groups where ALL files present are stable.
-    Returns: {"VendorName_INV2024001": {"invoice": path, "eway": path, "lr": path}}
-    """
-    groups = {}
-    for filename in os.listdir(folder):
-        if not filename.lower().endswith(".pdf"):
+def _ensure_dirs():
+    for folder in [WATCH_FOLDER, GROUPED_FOLDER, OCR_DONE_FOLDER, FAILED_FOLDER]:
+        os.makedirs(folder, exist_ok=True)
+
+
+# ============================================================
+# STEP 1: SWEEP LOOSE FILES INTO GROUPED/
+# ============================================================
+
+def _sweep_loose_files():
+    """Move stable loose files in WATCH_FOLDER root into grouped/<group_key>/."""
+    try:
+        for filename in os.listdir(WATCH_FOLDER):
+            file_path = os.path.join(WATCH_FOLDER, filename)
+            if not os.path.isfile(file_path):
+                continue  # skip subfolders
+            if not filename.lower().endswith(".pdf"):
+                continue
+
+            doc_type = _detect_doc_type(filename)
+            if not doc_type:
+                logger.warning(f"Unrecognized filename in incoming: {filename}")
+                continue
+
+            if not _is_stable(file_path):
+                continue  # still being copied
+
+            group_key = _get_group_key(filename)
+            group_folder = os.path.join(GROUPED_FOLDER, group_key)
+            os.makedirs(group_folder, exist_ok=True)
+
+            dest_path = os.path.join(group_folder, filename)
+            try:
+                shutil.move(file_path, dest_path)
+                logger.info(f"Grouped: {filename} → {group_key}/")
+            except Exception as e:
+                logger.error(f"Failed to move {filename} into group: {e}")
+    except Exception as e:
+        logger.error(f"Loose file sweep error: {e}")
+
+
+# ============================================================
+# STEP 2: PROCESS GROUPS THAT HAVE ALL 3 DOCS
+# ============================================================
+
+def _process_complete_groups():
+    """Find groups with all 3 docs present and stable, then run OCR."""
+    if not os.path.exists(GROUPED_FOLDER):
+        return
+
+    for group_key in os.listdir(GROUPED_FOLDER):
+        group_folder = os.path.join(GROUPED_FOLDER, group_key)
+        if not os.path.isdir(group_folder):
             continue
-        doc_type = _detect_doc_type(filename)
-        if not doc_type:
+
+        # Map files in group by doc type
+        files_by_type = {}
+        all_stable = True
+
+        for filename in os.listdir(group_folder):
+            if not filename.lower().endswith(".pdf"):
+                continue
+            file_path = os.path.join(group_folder, filename)
+            doc_type = _detect_doc_type(filename)
+            if not doc_type:
+                continue
+            files_by_type[doc_type] = file_path
+            if not _is_stable(file_path):
+                all_stable = False
+
+        # Require ALL 3 doc types
+        if not all_stable:
             continue
-        file_path = os.path.join(folder, filename)
-        key = _get_group_key(filename)
-        if key not in groups:
-            groups[key] = {"files": {}, "stable": True}
-        groups[key]["files"][doc_type] = file_path
-        # If any file in group is not stable, skip whole group this cycle
-        if not _is_stable(file_path):
-            groups[key]["stable"] = False
+        if not all(t in files_by_type for t in ["invoice", "ewaybill", "lr"]):
+            continue
 
-    # Return only stable groups that have at least an invoice
-    return {
-        key: data["files"]
-        for key, data in groups.items()
-        if data["stable"] and "invoice" in data["files"]
-    }
+        logger.info(f"Group ready for OCR: {group_key}")
+        _process_batch(group_key, group_folder, files_by_type)
 
 
-def _process_batch(group_key: str, batch: dict) -> None:
-    """
-    Run OCR on a batch of files, save to DB, move to processed/<invoice_number>/.
-    """
+def _process_batch(group_key: str, group_folder: str, files_by_type: dict):
+    """Run OCR on a complete group, save to DB, move files appropriately."""
     history_id = create_history_record()
     if not history_id:
         logger.error(f"Failed to create history record for group: {group_key}")
         return
 
-    os.makedirs(PROCESSED_FOLDER, exist_ok=True)
-    os.makedirs(FAILED_FOLDER, exist_ok=True)
-
     extracted = {"invoice": None, "ewaybill": None, "lr": None}
-    processed_files = []
-    failed_files = []
+    ocr_succeeded = True
+    error_detail = None
 
-    for doc_type, file_path in batch.items():
+    for doc_type, file_path in files_by_type.items():
         filename = os.path.basename(file_path)
         safe_name = f"h{history_id}_{filename}"
-        dest = os.path.join(config.UPLOAD_FOLDER, safe_name)
+        upload_dest = os.path.join(config.UPLOAD_FOLDER, safe_name)
 
         try:
-            shutil.copy2(file_path, dest)
-            data = process_document(doc_type, dest, safe_name)
+            shutil.copy2(file_path, upload_dest)
+            data = process_document(doc_type, upload_dest, safe_name)
             if data:
                 data["filename"] = safe_name
                 extracted[doc_type] = data
-                processed_files.append(file_path)
                 logger.info(f"OCR OK: {doc_type} → history_id={history_id}")
             else:
-                failed_files.append(file_path)
-                logger.warning(f"OCR empty: {doc_type} for group={group_key}")
+                ocr_succeeded = False
+                error_detail = f"OCR returned no data for {doc_type}"
+                logger.warning(error_detail)
+                break
         except Exception as e:
-            failed_files.append(file_path)
-            logger.error(f"OCR error {doc_type} group={group_key}: {e}")
+            ocr_succeeded = False
+            error_detail = f"OCR exception for {doc_type}: {e}"
+            logger.error(error_detail, exc_info=True)
+            break
 
-    # Save to DB
-    if extracted["invoice"]:
-        save_invoice_to_db(history_id, extracted["invoice"])
-    if extracted["ewaybill"]:
-        save_ewaybill_to_db(history_id, extracted["ewaybill"])
-    if extracted["lr"]:
-        save_lr_to_db(history_id, extracted["lr"])
+    if ocr_succeeded:
+        # Save extracted data to DB
+        if extracted["invoice"]:
+            save_invoice_to_db(history_id, extracted["invoice"])
+        if extracted["ewaybill"]:
+            save_ewaybill_to_db(history_id, extracted["ewaybill"])
+        if extracted["lr"]:
+            save_lr_to_db(history_id, extracted["lr"])
 
-    inv  = extracted["invoice"]
-    eway = extracted["ewaybill"]
-    lr   = extracted["lr"]
-    upsert_gatein_entry(history_id, map_ocr_to_gatein(inv, eway, lr))
-    upsert_migo_entry(history_id, map_ocr_to_migo(inv, eway, lr))
-    upsert_miro_entry(history_id, map_ocr_to_miro(inv, eway, lr))
+        inv  = extracted["invoice"]
+        eway = extracted["ewaybill"]
+        lr   = extracted["lr"]
+        upsert_gatein_entry(history_id, map_ocr_to_gatein(inv, eway, lr))
+        upsert_migo_entry(history_id, map_ocr_to_migo(inv, eway, lr))
+        upsert_miro_entry(history_id, map_ocr_to_miro(inv, eway, lr))
 
-    # Determine destination folder name — use invoice number if extracted
-    invoice_number = (inv or {}).get("invoice_number", "")
-    safe_name = "".join(c for c in invoice_number if c.isalnum() or c in "-_")
-    if not safe_name:
-        safe_name = f"history_{history_id}"
+        # Move group folder to ocr_done/<invoice_number>/
+        invoice_number = (inv or {}).get("invoice_number", "")
+        safe_inv = "".join(c for c in invoice_number if c.isalnum() or c in "-_") or f"history_{history_id}"
 
-    # Move processed files to processed/<invoice_number>/
-    dest_folder = os.path.join(PROCESSED_FOLDER, safe_name)
-    if os.path.exists(dest_folder):
-        dest_folder = f"{dest_folder}_{history_id}"
-    os.makedirs(dest_folder, exist_ok=True)
+        dest_folder = os.path.join(OCR_DONE_FOLDER, safe_inv)
+        if os.path.exists(dest_folder):
+            dest_folder = f"{dest_folder}_{history_id}"
 
-    for file_path in processed_files:
         try:
-            shutil.move(file_path, os.path.join(dest_folder, os.path.basename(file_path)))
+            shutil.move(group_folder, dest_folder)
+            set_ocr_status(history_id, "success")
+            logger.info(f"Batch complete — history_id={history_id} → ocr_done/{safe_inv}")
         except Exception as e:
-            logger.error(f"Failed to move processed file {file_path}: {e}")
+            logger.error(f"Could not move group folder to ocr_done: {e}")
+            set_ocr_status(history_id, "success", failed_path=group_folder)
 
-    # Move failed files to failed/<invoice_number>/
-    if failed_files:
-        fail_folder = os.path.join(FAILED_FOLDER, safe_name)
-        if os.path.exists(fail_folder):
-            fail_folder = f"{fail_folder}_{history_id}"
-        os.makedirs(fail_folder, exist_ok=True)
-        for file_path in failed_files:
-            try:
-                shutil.move(file_path, os.path.join(fail_folder, os.path.basename(file_path)))
-            except Exception as e:
-                logger.error(f"Failed to move failed file {file_path}: {e}")
+    else:
+        # OCR failed — move group to failed/<group_key>_<timestamp>/
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fail_dest = os.path.join(FAILED_FOLDER, f"{group_key}_{timestamp}")
+        try:
+            shutil.move(group_folder, fail_dest)
+            set_ocr_status(history_id, "failed", failed_path=fail_dest)
+            logger.warning(f"OCR failed for group {group_key} → moved to failed/")
 
-    logger.info(f"Batch complete — history_id={history_id} → processed/{safe_name}")
+            inv = extracted.get("invoice") or {}
+            send_ocr_failure_alert(
+                history_id=history_id,
+                invoice_number=inv.get("invoice_number"),
+                error_detail=error_detail
+            )
+        except Exception as e:
+            logger.error(f"Could not move failed group to failed/: {e}")
+            set_ocr_status(history_id, "failed", failed_path=group_folder)
 
 
-def _poll_loop(interval: int = 30) -> None:
-    """Poll WATCH_FOLDER every interval seconds."""
+# ============================================================
+# STEP 3: ORPHAN CLEANUP
+# ============================================================
+
+def _cleanup_orphans():
+    """Move groups in grouped/ older than ORPHAN_DAYS to failed/orphan_<group>/."""
+    if not os.path.exists(GROUPED_FOLDER):
+        return
+
+    cutoff = datetime.now() - timedelta(days=ORPHAN_DAYS)
+
+    for group_key in os.listdir(GROUPED_FOLDER):
+        group_folder = os.path.join(GROUPED_FOLDER, group_key)
+        if not os.path.isdir(group_folder):
+            continue
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(group_folder))
+            if mtime < cutoff:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                fail_dest = os.path.join(FAILED_FOLDER, f"orphan_{group_key}_{timestamp}")
+                shutil.move(group_folder, fail_dest)
+                logger.warning(f"Orphan group cleaned: {group_key} (older than {ORPHAN_DAYS}d) → failed/orphan_*")
+        except Exception as e:
+            logger.error(f"Orphan cleanup failed for {group_key}: {e}")
+
+
+# ============================================================
+# MAIN POLL LOOP
+# ============================================================
+
+def _poll_loop(interval: int = POLL_INTERVAL):
     logger.info(f"Folder watcher started — watching: {WATCH_FOLDER}")
-    os.makedirs(WATCH_FOLDER, exist_ok=True)
+    _ensure_dirs()
+
+    last_orphan_check = time.time()
+
     while True:
         try:
-            groups = _group_files(WATCH_FOLDER)
-            for group_key, batch in groups.items():
-                logger.info(f"Processing group: {group_key} — {list(batch.keys())}")
-                _process_batch(group_key, batch)
+            _sweep_loose_files()
+            _process_complete_groups()
+
+            # Run orphan cleanup once a day
+            if time.time() - last_orphan_check > 86400:
+                _cleanup_orphans()
+                last_orphan_check = time.time()
+
         except Exception as e:
-            logger.error(f"Folder watcher error: {e}")
+            logger.error(f"Folder watcher cycle error: {e}", exc_info=True)
         time.sleep(interval)
 
 
 def start_folder_watcher() -> threading.Thread:
-    """Start folder watcher as a background daemon thread."""
-    t = threading.Thread(
-        target=_poll_loop,
-        args=(30,),
-        daemon=True,
-        name="FolderWatcher"
-    )
+    t = threading.Thread(target=_poll_loop, daemon=True, name="FolderWatcher")
     t.start()
     return t

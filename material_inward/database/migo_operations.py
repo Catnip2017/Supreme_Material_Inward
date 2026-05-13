@@ -1,6 +1,10 @@
 """
 database/migo_operations.py — MIGO 103 and MIGO 105 operations.
-Both steps share one migo_entries table row per history_id.
+
+v4 changes:
+- map_ocr_to_migo: drops 'material' and 'mat_short_text' (duplicates),
+  uses single 'short_text' field
+- qty_actual JSON key kept for robot compatibility (UI renames the column header only)
 """
 
 import json
@@ -14,22 +18,7 @@ from config.logger import get_logger
 logger = get_logger(__name__)
 
 
-def _clean_ocr(value) -> str:
-    """Convert None, 'None', 'N/A', null etc to empty string."""
-    if value is None:
-        return ""
-    val = str(value).strip()
-    if val.lower() in {"none", "null", "n/a", "na", "-", "--", "not available", "not found", ""}:
-        return ""
-    return val
-
-
-
 def upsert_migo_entry(history_id: int, data: dict) -> bool:
-    """
-    Insert or update migo_entries for a given history_id.
-    Called after OCR for pre-filling and when user saves the MIGO 103 form.
-    """
     items = data.get("items_data") or data.get("items") or []
     if isinstance(items, (list, dict)):
         items = json.dumps(items)
@@ -85,10 +74,6 @@ def update_migo_103_rf_result(
     status: str = "success",
     error_message: Optional[str] = None
 ) -> bool:
-    """
-    Store the SAP-generated Material Document Number after MIGO 103 RF execution.
-    This number is then pre-filled into the MIGO 105 form.
-    """
     sql = """
         UPDATE migo_entries
         SET material_doc_number  = %s,
@@ -117,8 +102,9 @@ def update_migo_103_rf_result(
 
 def save_migo_105_fields(history_id: int, data: dict) -> bool:
     """
-    Save MIGO 105 specific fields (storage location, batch, vendor invoice detail).
-    Called when user saves the MIGO 105 form before RF execution.
+    Save MIGO 105 specific header fields.
+    Per-line batches now live inside items_data (updated by upsert_migo_entry).
+    Global migo_105_batch column kept for legacy but unused by new flow.
     """
     sql = """
         UPDATE migo_entries
@@ -146,14 +132,58 @@ def save_migo_105_fields(history_id: int, data: dict) -> bool:
         return False
 
 
+def update_migo_105_items_with_batches(history_id: int, batches_by_line: list) -> bool:
+    """
+    Update items_data JSONB to include per-line batch values entered in MIGO 105 form.
+    batches_by_line: [{"line": 1, "batch": "..."}, {"line": 2, "batch": "..."}, ...]
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT items_data FROM migo_entries WHERE history_id = %s",
+                    (history_id,)
+                )
+                row = cur.fetchone()
+                if not row or not row.get("items_data"):
+                    logger.warning(f"No items_data found for history_id {history_id}")
+                    return False
+
+                items = row["items_data"]
+                if isinstance(items, str):
+                    items = json.loads(items)
+                if not isinstance(items, list):
+                    return False
+
+                # Build a map of line -> batch from the input
+                batch_map = {}
+                for b in batches_by_line:
+                    line_num = b.get("line")
+                    if line_num is not None:
+                        batch_map[int(line_num)] = b.get("batch", "")
+
+                # Apply batches to existing items
+                for item in items:
+                    line_num = item.get("line")
+                    if line_num is not None and int(line_num) in batch_map:
+                        item["batch"] = batch_map[int(line_num)]
+
+                cur.execute(
+                    "UPDATE migo_entries SET items_data = %s, updated_at = CURRENT_TIMESTAMP WHERE history_id = %s",
+                    (json.dumps(items), history_id)
+                )
+                logger.info(f"Per-line batches saved for history_id {history_id}")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to update batches for history_id {history_id}: {e}")
+        return False
+
+
 def update_migo_105_rf_result(
     history_id: int,
     status: str = "success",
     error_message: Optional[str] = None
 ) -> bool:
-    """
-    Record the outcome of MIGO 105 RF execution.
-    """
     sql = """
         UPDATE migo_entries
         SET migo_105_rf_status   = %s,
@@ -174,10 +204,6 @@ def update_migo_105_rf_result(
 
 
 def get_migo_entry(history_id: int) -> Optional[dict]:
-    """
-    Fetch the migo_entries record for a given history_id.
-    Parses items_data JSON automatically.
-    """
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -200,6 +226,7 @@ def get_migo_entry(history_id: int) -> Optional[dict]:
         return None
 
 
+
 def map_ocr_to_migo(
     invoice_data: Optional[dict],
     ewaybill_data: Optional[dict],
@@ -207,7 +234,14 @@ def map_ocr_to_migo(
 ) -> dict:
     """
     Map OCR-extracted data to MIGO 103 form fields.
-    Gate In number (migo_header_text) is filled in later after Gate In completes.
+
+    Per-line items use clean schema:
+      - material_code: SAP material code from invoice
+      - short_text: human-readable description (consolidated; no more 'material'/'mat_short_text')
+      - hsn_sac
+      - qty_expected, qty_actual (UI shows qty_actual as "Delivery Note Qty")
+      - rate, amount
+      - batch: empty by default; filled in MIGO 105
     """
     data = {}
 
@@ -216,7 +250,6 @@ def map_ocr_to_migo(
         data["migoPostDate"]     = datetime.now().strftime("%Y-%m-%d")
         data["migoDeliveryNote"] = invoice_data.get("invoice_number") or ""
 
-    # PO number — fallback across all three documents
     data["migoPoNumber"] = (
         (invoice_data.get("po_number") if invoice_data else "") or
         (ewaybill_data.get("po_number") if ewaybill_data else "") or
@@ -231,7 +264,6 @@ def map_ocr_to_migo(
     if ewaybill_data:
         data["migoGRSlipNo"] = ewaybill_data.get("ewaybill_number") or ""
 
-    # Build line items from invoice HSN details
     items = []
     if invoice_data and invoice_data.get("hsn_details"):
         hsn_list = invoice_data["hsn_details"]
@@ -242,30 +274,44 @@ def map_ocr_to_migo(
                 hsn_list = []
         for idx, hsn in enumerate(hsn_list, 1):
             items.append({
-             "line":          idx,
+                "line":          idx,
                 "material_code": hsn.get("material_code") or "",
+                "short_text":    hsn.get("description") or "",
                 "hsn_sac":       hsn.get("hsn_sac") or "",
-                "material":      hsn.get("description") or "",
-                "mat_short_text": hsn.get("description") or "",
                 "qty_expected":  hsn.get("quantity") or "",
-                "qty_actual":    "",
+                "qty_actual":    hsn.get("quantity") or "",  # pre-fill = qty_expected (delivery note qty)
                 "unit":          hsn.get("unit") or "",
                 "rate":          hsn.get("rate") or "",
                 "amount":        hsn.get("taxable_value") or "",
+                "batch":         "",
             })
     elif ewaybill_data:
-      items.append({
-            "line":           1,
-            "material_code":  "",
-            "hsn_sac":        ewaybill_data.get("hsn_code") or "",
-            "material":       ewaybill_data.get("goods_description") or "",
-            "mat_short_text": ewaybill_data.get("goods_description") or "",
-            "qty_expected":   ewaybill_data.get("quantity") or "",
-            "qty_actual":     "",
-            "unit":           "",
-            "rate":           "",
-            "amount":         "",
+        items.append({
+            "line":          1,
+            "material_code": "",
+            "short_text":    ewaybill_data.get("goods_description") or "",
+            "hsn_sac":       ewaybill_data.get("hsn_code") or "",
+            "qty_expected":  ewaybill_data.get("quantity") or "",
+            "qty_actual":    ewaybill_data.get("quantity") or "",
+            "unit":          "",
+            "rate":          "",
+            "amount":        "",
+            "batch":         "",
         })
 
     data["items_data"] = items
     return data
+
+def save_miro_doc_number(history_id: int, miro_doc_number: str) -> bool:
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE migo_entries SET miro_doc_number = %s WHERE history_id = %s",
+                    (miro_doc_number, history_id)
+                )
+        logger.info(f"MIRO doc number saved for history_id={history_id}: {miro_doc_number}")
+        return True
+    except Exception as e:
+        logger.error(f"save_miro_doc_number failed: {e}")
+        return False

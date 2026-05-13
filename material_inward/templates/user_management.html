@@ -278,14 +278,16 @@
             justify-content: center;
         }
  
-        .modal-content {
-            background: white;
-            border-radius: 15px;
-            padding: 30px;
-            width: 90%;
-            max-width: 500px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-            animation: slideUp 0.3s;
+       .modal-content {
+        background: white;
+        border-radius: 15px;
+        padding: 30px;
+        width: 90%;
+        max-width: 500px;
+        max-height: 85vh;
+        overflow-y: auto;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        animation: slideUp 0.3s;
         }
  
         @keyframes slideUp {
@@ -522,49 +524,62 @@
             </table>
         </div>
     </div>
- 
-    <div id="createModal" class="modal">
+    
+        <div id="createModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 class="modal-title">Create New User</h2>
                 <button class="close-btn" onclick="closeModal('createModal')">&times;</button>
             </div>
- 
             <form id="createForm" onsubmit="handleCreateUser(event)">
-                <div class="form-group">
-                    <label>Username <span style="color:red;">*</span></label>
-                    <input type="text" id="create_username" required placeholder="Enter username">
+            <div class="form-group">
+                <label>Username <span style="color:red;">*</span></label>
+                <input type="text" id="create_username" required placeholder="Enter username">
+            </div>
+            <div class="form-group">
+                <label>Name <span style="color:red;">*</span></label>
+                <input type="text" id="create_name" required placeholder="Enter full name">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="create_email" placeholder="user@company.com (for notifications)">
+            </div>
+            <div class="form-group">
+                <label>Role <span style="color:red;">*</span></label>
+                <select id="create_role" required>
+                    <option value="">Select Role</option>
+                    <option value="Admin">Admin</option>
+                    <option value="User">User</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Step Roles (which workflow steps this user handles)</label>
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:6px;">
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="all" id="create_step_all" onchange="toggleAllSteps('create')"> All Steps</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="gate_in"> Gate In</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="migo_103"> MIGO 103</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="migo_105"> MIGO 105</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="miro"> MIRO</label>
                 </div>
- 
-                <div class="form-group">
-                    <label>Name <span style="color:red;">*</span></label>
-                    <input type="text" id="create_name" required placeholder="Enter full name">
-                </div>
- 
-                <div class="form-group">
-                    <label>Role <span style="color:red;">*</span></label>
-                    <select id="create_role" required>
-                        <option value="">Select Role</option>
-                        <option value="Admin">Admin</option>
-                        <option value="User">User</option>
-                    </select>
-                </div>
- 
-                <div class="form-group">
-                    <label>Password <span style="color:red;">*</span></label>
-                    <input type="password" id="create_password" required placeholder="Enter password">
-                </div>
- 
-                <div class="form-group">
-                    <label>Confirm Password <span style="color:red;">*</span></label>
-                    <input type="password" id="create_confirm_password" required placeholder="Confirm password">
-                    <div class="error-message" id="create_password_error">Passwords do not match!</div>
-                </div>
- 
-                <div class="modal-actions">
-                    <button type="submit" class="btn-submit">Create User</button>
-                    <button type="button" class="btn-cancel" onclick="closeModal('createModal')">Cancel</button>
-                </div>
+            </div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="create_email_notif"> Enable email notifications for this user
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Password <span style="color:red;">*</span></label>
+                <input type="password" id="create_password" required placeholder="Enter password">
+            </div>
+            <div class="form-group">
+                <label>Confirm Password <span style="color:red;">*</span></label>
+                <input type="password" id="create_confirm_password" required placeholder="Confirm password">
+                <div class="error-message" id="create_password_error">Passwords do not match!</div>
+            </div>
+           <div class="modal-actions">
+                <button type="submit" class="btn-submit">Create User</button>
+                <button type="button" class="btn-cancel" onclick="closeModal('createModal')">Cancel</button>
+            </div>
             </form>
         </div>
     </div>
@@ -577,38 +592,50 @@
             </div>
  
             <form id="editForm" onsubmit="handleEditUser(event)">
-                <input type="hidden" id="edit_username">
-                <input type="hidden" id="edit_original_role">
- 
-                <div id="admin_warning" class="warning-message" style="display:none;">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <span>Warning: Once you change this user to Admin, the role cannot be changed back!</span>
-                </div>
- 
                 <div class="form-group">
-                    <label>Username</label>
-                    <input type="text" id="edit_username_display" disabled>
+                    <label>Username <span style="color:red;">*</span></label>
+                    <input type="text" id="edit_username" required placeholder="Enter username">
                 </div>
- 
-                <div class="form-group" id="edit_role_group">
+                <div class="form-group">
+                    <label>Name <span style="color:red;">*</span></label>
+                    <input type="text" id="edit_name" required placeholder="Enter full name">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="edit_email" placeholder="user@company.com (for notifications)">
+                </div>
+                <div class="form-group">
                     <label>Role <span style="color:red;">*</span></label>
                     <select id="edit_role" required>
+                        <option value="">Select Role</option>
                         <option value="Admin">Admin</option>
                         <option value="User">User</option>
                     </select>
                 </div>
- 
                 <div class="form-group">
-                    <label>New Password <span style="color:red;">*</span></label>
-                    <input type="password" id="edit_password" required placeholder="Enter new password">
+                    <label>Step Roles (which workflow steps this user handles)</label>
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:6px;">
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="all" id="edit_step_all" onchange="toggleAllSteps('edit')"> All Steps</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="gate_in"> Gate In</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="migo_103"> MIGO 103</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="migo_105"> MIGO 105</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="miro"> MIRO</label>
+                    </div>
                 </div>
- 
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="edit_email_notif"> Edit email notifications for this user
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Password <span style="color:red;">*</span></label>
+                    <input type="password" id="edit_password" required placeholder="Enter password">
+                </div>
                 <div class="form-group">
                     <label>Confirm Password <span style="color:red;">*</span></label>
-                    <input type="password" id="edit_confirm_password" required placeholder="Confirm new password">
+                    <input type="password" id="edit_confirm_password" required placeholder="Confirm password">
                     <div class="error-message" id="edit_password_error">Passwords do not match!</div>
                 </div>
- 
                 <div class="modal-actions">
                     <button type="submit" class="btn-submit">Update User</button>
                     <button type="button" class="btn-cancel" onclick="closeModal('editModal')">Cancel</button>
@@ -662,46 +689,44 @@
  
         function openEditModal(username, role) {
             document.getElementById('edit_username').value = username;
-            document.getElementById('edit_username_display').value = username;
             document.getElementById('edit_role').value = role;
-            document.getElementById('edit_original_role').value = role;
             document.getElementById('edit_password').value = '';
             document.getElementById('edit_confirm_password').value = '';
             document.getElementById('edit_password_error').style.display = 'none';
            
-            const isCurrentUser = username === currentUsername;
-            const roleSelect = document.getElementById('edit_role');
-            const roleGroup = document.getElementById('edit_role_group');
-            const warningDiv = document.getElementById('admin_warning');
+            // const isCurrentUser = username === currentUsername;
+            // const roleSelect = document.getElementById('edit_role');
+            // const roleGroup = document.getElementById('edit_role_group');
+            // const warningDiv = document.getElementById('admin_warning');
             
-            // If current user is editing themselves, disable role change
-            if (isCurrentUser) {
-                roleSelect.disabled = true;
-                roleGroup.style.display = 'block';
-                warningDiv.style.display = 'none';
-            } 
-            // If user is already Admin, disable role change
-            else if (role === 'Admin') {
-                roleSelect.disabled = true;
-                roleGroup.style.display = 'block';
-                warningDiv.style.display = 'none';
-            } 
-            // Admin editing User - allow role change but show warning
-            else {
-                roleSelect.disabled = false;
-                roleGroup.style.display = 'block';
+            // // If current user is editing themselves, disable role change
+            // if (isCurrentUser) {
+            //     roleSelect.disabled = true;
+            //     roleGroup.style.display = 'block';
+            //     warningDiv.style.display = 'none';
+            // } 
+            // // If user is already Admin, disable role change
+            // else if (role === 'Admin') {
+            //     roleSelect.disabled = true;
+            //     roleGroup.style.display = 'block';
+            //     warningDiv.style.display = 'none';
+            // } 
+            // // Admin editing User - allow role change but show warning
+            // else {
+            //     roleSelect.disabled = false;
+            //     roleGroup.style.display = 'block';
                 
-                // Show warning when role changes to Admin
-                roleSelect.addEventListener('change', function() {
-                    if (this.value === 'Admin') {
-                        warningDiv.style.display = 'flex';
-                    } else {
-                        warningDiv.style.display = 'none';
-                    }
-                });
+            //     // Show warning when role changes to Admin
+            //     roleSelect.addEventListener('change', function() {
+            //         if (this.value === 'Admin') {
+            //             warningDiv.style.display = 'flex';
+            //         } else {
+            //             warningDiv.style.display = 'none';
+            //         }
+            //     });
                 
-                warningDiv.style.display = 'none';
-            }
+            //     warningDiv.style.display = 'none';
+            // }
            
             document.getElementById('editModal').classList.add('show');
         }
@@ -728,36 +753,32 @@
  
         async function handleCreateUser(event) {
             event.preventDefault();
- 
             const password = document.getElementById('create_password').value;
             const confirmPassword = document.getElementById('create_confirm_password').value;
- 
             if (password !== confirmPassword) {
                 document.getElementById('create_password_error').style.display = 'block';
                 return;
             }
- 
             document.getElementById('create_password_error').style.display = 'none';
- 
+
             const userData = {
                 username: document.getElementById('create_username').value,
                 name: document.getElementById('create_name').value,
+                email: document.getElementById('create_email').value,
                 role: document.getElementById('create_role').value,
+                step_roles: _collectStepRoles('create'),
+                email_notifications_enabled: document.getElementById('create_email_notif').checked,
                 password: password,
                 confirm_password: confirmPassword
             };
- 
+
             try {
                 const response = await fetch('/add_user_web', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(userData)
                 });
- 
                 const result = await response.json();
- 
                 if (result.status) {
                     alert('User created successfully!');
                     window.location.reload();
@@ -765,7 +786,7 @@
                     alert('Error: ' + result.message);
                 }
             } catch (error) {
-                alert('Error creating user: ' + error.message);
+                alert('Error: ' + error.message);
             }
         }
  
@@ -1071,5 +1092,20 @@ function toggleLocation(code, newActiveState) {
     if(d.success) location.reload();
     else alert('❌ Failed.');
   });
+}
+
+function toggleAllSteps(prefix) {
+  const allCheck = document.getElementById(prefix + '_step_all');
+  document.querySelectorAll(`input[name="${prefix}_step"]:not(#${prefix}_step_all)`).forEach(cb => {
+    cb.disabled = allCheck.checked;
+    if (allCheck.checked) cb.checked = false;
+  });
+}
+
+function _collectStepRoles(prefix) {
+  const checked = Array.from(document.querySelectorAll(`input[name="${prefix}_step"]:checked`))
+    .map(cb => cb.value);
+  if (checked.includes('all')) return 'all';
+  return checked.join(',') || 'all';
 }
 </script>

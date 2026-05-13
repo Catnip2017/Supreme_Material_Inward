@@ -1,6 +1,12 @@
 """
-services/mail_service.py — Outgoing email notifications via SMTP/Outlook.
-All notification functions are here. Add recipient emails to .env when available.
+services/mail_service.py — Outgoing email notifications.
+
+v4 changes:
+- Step-specific recipient envs: MIGO_103_OWNER_EMAIL, MIGO_105_OWNER_EMAIL
+- ADMIN_EMAIL for OCR failures
+- Each notification also fans out to per-user recipients (filtered by
+  email_notifications_enabled + step_roles)
+- No fallback chain — empty env = no email
 """
 
 import smtplib
@@ -10,6 +16,7 @@ from typing import List, Optional
 
 from config.config import config
 from config.logger import get_logger
+from database.user_operations import get_users_for_step
 
 logger = get_logger(__name__)
 
@@ -20,17 +27,13 @@ def _send_email(
     html_body: str,
     cc_addresses: Optional[List[str]] = None
 ) -> bool:
-    """
-    Internal helper — sends an HTML email via SMTP.
-    Returns True on success, False on failure.
-    """
     if not config.EMAIL_SENDER or not config.EMAIL_PASSWORD:
         logger.warning("Email sender credentials not configured. Skipping email.")
         return False
 
-    to_addresses = [a for a in to_addresses if a]
+    to_addresses = list({a for a in to_addresses if a})  # dedupe
     if not to_addresses:
-        logger.warning("No valid recipients. Skipping email.")
+        logger.info(f"No valid recipients for email '{subject}'. Skipping.")
         return False
 
     try:
@@ -61,8 +64,29 @@ def _send_email(
         return False
 
 
+def _collect_recipients(env_email: str, step_role: str) -> List[str]:
+    """
+    Build recipient list from:
+      - env-configured step owner email (if non-empty)
+      - per-user emails matching step_role + email_notifications_enabled
+    """
+    recipients = []
+    if env_email:
+        recipients.append(env_email)
+
+    try:
+        users = get_users_for_step(step_role)
+        for u in users:
+            if u.get("email"):
+                recipients.append(u["email"])
+    except Exception as e:
+        logger.warning(f"Could not fetch user-level recipients for {step_role}: {e}")
+
+    return list({r for r in recipients if r})
+
+
 # ============================================================
-# NOTIFICATION: Documents received (sent after mail poller OCR)
+# DOCUMENTS RECEIVED CONFIRMATION (sender of original mail)
 # ============================================================
 
 def send_documents_received_confirmation(
@@ -71,9 +95,6 @@ def send_documents_received_confirmation(
     po_number: Optional[str],
     history_id: int
 ) -> bool:
-    """
-    Confirmation mail sent back to the plant person after documents are processed.
-    """
     subject = f"Documents Received & Processed — Invoice {invoice_number or 'N/A'}"
     body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
@@ -87,7 +108,7 @@ def send_documents_received_confirmation(
         <tr><td style="padding: 6px 12px; font-weight: bold;">Reference ID:</td>
             <td style="padding: 6px 12px;">{history_id}</td></tr>
     </table>
-    <p>The documents are now visible in the Material Inward portal and will be processed shortly.</p>
+    <p>The documents are now visible in the Material Inward portal and are pending verification.</p>
     <p>Regards,<br><strong>Material Inward Automation System</strong></p>
     </body></html>
     """
@@ -95,7 +116,42 @@ def send_documents_received_confirmation(
 
 
 # ============================================================
-# NOTIFICATION: Gate In completed
+# APPROVAL — notify Gate In team
+# ============================================================
+
+def send_approval_notification(
+    history_id: int,
+    invoice_number: Optional[str],
+    approved_by: str
+) -> bool:
+    subject = f"Documents Approved — Ready for Gate In | Invoice {invoice_number or history_id}"
+    body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;">
+    <p>Dear Gate In Team,</p>
+    <p>Documents for the below shipment have been verified and approved.
+    Please proceed with Gate In posting.</p>
+    <table style="border-collapse:collapse;margin:16px 0;">
+        <tr style="background:#f5f5f5;">
+            <td style="padding:8px 16px;font-weight:bold;">Invoice Number:</td>
+            <td style="padding:8px 16px;">{invoice_number or 'N/A'}</td></tr>
+        <tr><td style="padding:8px 16px;font-weight:bold;">Approved By:</td>
+            <td style="padding:8px 16px;">{approved_by}</td></tr>
+        <tr style="background:#f5f5f5;">
+            <td style="padding:8px 16px;font-weight:bold;">Reference ID:</td>
+            <td style="padding:8px 16px;">{history_id}</td></tr>
+    </table>
+    <p>Regards,<br><strong>Material Inward Automation System</strong></p>
+    </body></html>
+    """
+    recipients = _collect_recipients(config.GATEIN_OWNER_EMAIL, "gate_in")
+    if not recipients:
+        logger.info("No Gate In recipients configured. Approval email skipped.")
+        return False
+    return _send_email(recipients, subject, body)
+
+
+# ============================================================
+# GATE IN COMPLETED
 # ============================================================
 
 def send_gate_in_notification(
@@ -104,15 +160,11 @@ def send_gate_in_notification(
     invoice_number: Optional[str] = None,
     po_number: Optional[str] = None
 ) -> bool:
-    """
-    Sent to Gate In owner AND MIGO owner after Gate In RF completes.
-    Gate In person gets confirmation. MIGO person gets signal to proceed.
-    """
     subject = f"Gate In Completed — GIN: {gate_in_number}"
     body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
     <p>Dear Team,</p>
-    <p>Gate In has been successfully completed in SAP. Please find the details below:</p>
+    <p>Gate In has been successfully completed in SAP.</p>
     <table style="border-collapse: collapse; margin: 16px 0;">
         <tr style="background: #f5f5f5;">
             <td style="padding: 8px 16px; font-weight: bold;">Gate In Number (GIN):</td>
@@ -133,19 +185,22 @@ def send_gate_in_notification(
             <td style="padding: 8px 16px;">{history_id}</td>
         </tr>
     </table>
-    <p><strong>MIGO Team:</strong> Gate In is complete. Please log in to the portal to proceed with MIGO posting.</p>
+    <p><strong>MIGO 103 Team:</strong> Please log in to the portal to proceed with MIGO 103 posting.</p>
     <p>Regards,<br><strong>Material Inward Automation System</strong></p>
     </body></html>
     """
-    recipients = [r for r in [config.GATEIN_OWNER_EMAIL, config.MIGO_OWNER_EMAIL] if r]
+    recipients = list(set(
+        _collect_recipients(config.GATEIN_OWNER_EMAIL, "gate_in")
+        + _collect_recipients(config.MIGO_103_OWNER_EMAIL, "migo_103")
+    ))
     if not recipients:
-        logger.warning("No Gate In / MIGO owner emails configured. Email not sent.")
+        logger.info("No Gate In/MIGO 103 recipients configured. Email skipped.")
         return False
     return _send_email(recipients, subject, body)
 
 
 # ============================================================
-# NOTIFICATION: MIGO 103 completed
+# MIGO 103 COMPLETED
 # ============================================================
 
 def send_migo_103_notification(
@@ -153,9 +208,6 @@ def send_migo_103_notification(
     history_id: int,
     invoice_number: Optional[str] = None
 ) -> bool:
-    """
-    Sent after MIGO 103 RF completes. Informs team that 105 can proceed.
-    """
     subject = f"MIGO 103 Completed — Material Doc: {material_doc_number}"
     body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
@@ -181,12 +233,19 @@ def send_migo_103_notification(
     <p>Regards,<br><strong>Material Inward Automation System</strong></p>
     </body></html>
     """
-    recipients = [r for r in [config.MIGO_OWNER_EMAIL] if r]
+    recipients = list(set(
+        _collect_recipients(config.MIGO_103_OWNER_EMAIL, "migo_103")
+        + _collect_recipients(config.MIGO_105_OWNER_EMAIL, "migo_105")
+    ))
     if not recipients:
-        logger.warning("No MIGO owner email configured. Email not sent.")
+        logger.info("No MIGO 103/105 recipients configured. Email skipped.")
         return False
     return _send_email(recipients, subject, body)
 
+
+# ============================================================
+# MIGO 105 COMPLETED
+# ============================================================
 
 def send_migo_105_notification(
     history_id: int,
@@ -211,24 +270,26 @@ def send_migo_105_notification(
     <p>Regards,<br><strong>Material Inward Automation System</strong></p>
     </body></html>
     """
-    recipients = [r for r in [config.MIGO_OWNER_EMAIL] if r]
+    recipients = list(set(
+        _collect_recipients(config.MIGO_105_OWNER_EMAIL, "migo_105")
+        + _collect_recipients(config.MIRO_OWNER_EMAIL, "miro")
+    ))
     if not recipients:
-        logger.warning("No MIGO owner email configured.")
+        logger.info("No MIGO 105/MIRO recipients configured. Email skipped.")
         return False
     return _send_email(recipients, subject, body)
 
+
 # ============================================================
-# NOTIFICATION: MIRO completed
+# MIRO COMPLETED
 # ============================================================
 
 def send_miro_completion_notification(
     history_id: int,
     invoice_number: Optional[str] = None,
-    po_number: Optional[str] = None
+    po_number: Optional[str] = None,
+    fi_doc_number: str = None
 ) -> bool:
-    """
-    Sent after MIRO RF completes. Signals end of material inward process.
-    """
     subject = f"MIRO Posted — Material Inward Complete | Invoice {invoice_number or history_id}"
     body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
@@ -247,12 +308,56 @@ def send_miro_completion_notification(
             <td style="padding: 8px 16px; font-weight: bold;">Reference ID:</td>
             <td style="padding: 8px 16px;">{history_id}</td>
         </tr>
+        <tr>
+            <td style="padding: 8px 16px; font-weight: bold;">FI Document Number:</td>
+            <td style="padding: 8px 16px;">{fi_doc_number or 'N/A'}</td>
+        </tr>
     </table>
     <p>Regards,<br><strong>Material Inward Automation System</strong></p>
     </body></html>
     """
-    recipients = [r for r in [config.MIRO_OWNER_EMAIL, config.MIGO_OWNER_EMAIL] if r]
+    recipients = list(set(
+        _collect_recipients(config.MIRO_OWNER_EMAIL, "miro")
+        + _collect_recipients(config.MIGO_103_OWNER_EMAIL, "migo_103")
+        + _collect_recipients(config.MIGO_105_OWNER_EMAIL, "migo_105")
+        + _collect_recipients(config.GATEIN_OWNER_EMAIL, "gate_in")
+    ))
     if not recipients:
-        logger.warning("No MIRO owner email configured. Email not sent.")
+        logger.info("No completion email recipients configured. Email skipped.")
         return False
     return _send_email(recipients, subject, body)
+
+
+# ============================================================
+# OCR FAILURE — admin only
+# ============================================================
+
+def send_ocr_failure_alert(
+    history_id: int,
+    invoice_number: Optional[str] = None,
+    error_detail: Optional[str] = None
+) -> bool:
+    if not config.ADMIN_EMAIL:
+        logger.info("ADMIN_EMAIL not configured — OCR failure alert skipped.")
+        return False
+
+    subject = f"[ACTION REQUIRED] OCR Failed — Reference ID {history_id}"
+    body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;">
+    <p style="color:#c0392b;font-weight:bold;">&#9888; Document OCR Processing Failed</p>
+    <p>An incoming document batch could not be processed by OCR.</p>
+    <table style="border-collapse:collapse;margin:16px 0;">
+        <tr style="background:#f5f5f5;">
+            <td style="padding:8px 16px;font-weight:bold;">Reference ID:</td>
+            <td style="padding:8px 16px;">{history_id}</td></tr>
+        <tr><td style="padding:8px 16px;font-weight:bold;">Invoice Number:</td>
+            <td style="padding:8px 16px;">{invoice_number or 'Not extracted'}</td></tr>
+        <tr style="background:#f5f5f5;">
+            <td style="padding:8px 16px;font-weight:bold;">Error:</td>
+            <td style="padding:8px 16px;font-family:monospace;">{error_detail or 'See application logs'}</td></tr>
+    </table>
+    <p><strong>Action:</strong> Please investigate via the portal. Failed documents are stored in the failed/ folder
+    and can be re-run via the "Re-run OCR" button on the record.</p>
+    </body></html>
+    """
+    return _send_email([config.ADMIN_EMAIL], subject, body)

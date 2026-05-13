@@ -31,95 +31,114 @@
     }
     .dropdown-menu a:hover { background:#1e5ca8; color:white; }
 
+    /* Bell icon */
+    .bell-wrapper { position:relative; cursor:pointer; }
+    .bell-icon {
+      width:42px; height:42px; border-radius:50%;
+      background:#f5f7fa; display:flex; align-items:center; justify-content:center;
+      transition:background .2s; color:#1e5ca8; font-size:18px;
+    }
+    .bell-icon:hover { background:#e8f0fe; }
+    .bell-badge {
+      position:absolute; top:-3px; right:-3px;
+      background:#e74c3c; color:white;
+      min-width:18px; height:18px; padding:0 5px;
+      border-radius:9px; font-size:11px; font-weight:700;
+      display:flex; align-items:center; justify-content:center;
+      border:2px solid white;
+    }
+    .bell-badge[data-count="0"] { display:none; }
+    .bell-dropdown {
+      display:none;
+      position:absolute; top:55px; right:0;
+      background:white; border-radius:10px;
+      box-shadow:0 8px 24px rgba(0,0,0,0.15);
+      width:380px; max-height:500px; overflow-y:auto;
+      z-index:999;
+    }
+    .bell-dropdown.show { display:block; }
+    .bell-header {
+      padding:14px 18px; border-bottom:1px solid #eee;
+      display:flex; justify-content:space-between; align-items:center;
+      background:#f8f9fb; border-radius:10px 10px 0 0;
+    }
+    .bell-header h3 { font-size:14px; color:#2c3e50; font-weight:700; }
+    .mark-all-read {
+      font-size:12px; color:#1e5ca8; cursor:pointer;
+      background:none; border:none; font-weight:500;
+    }
+    .mark-all-read:hover { text-decoration:underline; }
+    .bell-list { padding:0; }
+    .notif-item {
+      padding:12px 18px; border-bottom:1px solid #f0f0f0;
+      cursor:pointer; transition:background .2s;
+    }
+    .notif-item:hover { background:#f8f9fb; }
+    .notif-item:last-child { border-bottom:none; }
+    .notif-title { font-size:13px; font-weight:600; color:#2c3e50; margin-bottom:3px; }
+    .notif-msg { font-size:12px; color:#666; line-height:1.4; }
+    .notif-time { font-size:11px; color:#aaa; margin-top:4px; }
+    .notif-empty { padding:30px 18px; text-align:center; color:#999; font-size:13px; }
+
+    /* Confirmation modal */
+    .confirm-modal {
+      display:none; position:fixed; inset:0;
+      background:rgba(0,0,0,0.6); z-index:10000;
+      align-items:center; justify-content:center;
+    }
+    .confirm-modal.show { display:flex; }
+    .confirm-box {
+      background:white; border-radius:12px; padding:30px;
+      width:90%; max-width:480px;
+      box-shadow:0 10px 40px rgba(0,0,0,0.3);
+    }
+    .confirm-icon { font-size:42px; color:#f39c12; text-align:center; margin-bottom:14px; }
+    .confirm-title { font-size:18px; font-weight:700; color:#2c3e50; text-align:center; margin-bottom:10px; }
+    .confirm-msg { font-size:14px; color:#555; text-align:center; line-height:1.6; margin-bottom:24px; }
+    .confirm-actions { display:flex; gap:10px; }
+    .confirm-actions button {
+      flex:1; padding:12px; border:none; border-radius:8px;
+      font-size:14px; font-weight:600; cursor:pointer;
+    }
+    .confirm-cancel { background:#ecf0f1; color:#333; }
+    .confirm-cancel:hover { background:#d5dbdc; }
+    .confirm-yes { background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
+    .confirm-yes:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
+    /* Upload page styles */
     .upload-page {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      flex: 1;
-      padding: 40px 20px;
-      min-height: calc(100vh - 80px);
-      background: #f5f7fa;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      flex: 1; padding: 40px 20px; min-height: calc(100vh - 80px); background: #f5f7fa;
     }
     .upload-page-inner {
-      background: white;
-      border-radius: 16px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.1);
-      padding: 40px;
-      width: 100%;
-     max-width: 95%;
+      background: white; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+      padding: 40px; width: 100%; max-width: 95%;
     }
-    .upload-page-title {
-      font-size: 22px;
-      font-weight: 700;
-      color: #2c3e50;
-      margin-bottom: 8px;
-      text-align: center;
-    }
-    .upload-page-subtitle {
-      font-size: 14px;
-      color: #888;
-      text-align: center;
-      margin-bottom: 32px;
-    }
-    .upload-cards-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      margin-bottom: 28px;
-    }
+    .upload-page-title { font-size: 22px; font-weight: 700; color: #2c3e50; margin-bottom: 8px; text-align: center; }
+    .upload-page-subtitle { font-size: 14px; color: #888; text-align: center; margin-bottom: 32px; }
+    .upload-cards-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
     .upload-card {
-      background: #f8f9fb;
-      border: 2px solid #e0e7ff;
-      border-radius: 12px;
-      padding: 20px 16px;
-      text-align: center;
-      transition: all 0.2s;
+      background: #f8f9fb; border: 2px solid #e0e7ff; border-radius: 12px;
+      padding: 20px 16px; text-align: center; transition: all 0.2s;
     }
     .upload-card.has-file { border-color: #00b894; background: #ecfdf5; }
     .upload-card-icon { font-size: 32px; margin-bottom: 8px; }
     .upload-card-title { font-size: 14px; font-weight: 600; color: #333; margin-bottom: 12px; }
     .upload-card input[type="file"] { display: none; }
     .upload-card label {
-      display: inline-block;
-      padding: 8px 16px;
-      background: linear-gradient(135deg,#1e5ca8,#164a8a);
-      color: white;
-      border-radius: 6px;
-      font-size: 13px;
-      cursor: pointer;
+      display: inline-block; padding: 8px 16px;
+      background: linear-gradient(135deg,#1e5ca8,#164a8a); color: white;
+      border-radius: 6px; font-size: 13px; cursor: pointer;
     }
     .upload-card label:hover { opacity: 0.9; }
-    .upload-card .file-name {
-      margin-top: 8px;
-      font-size: 12px;
-      color: #00b894;
-      font-weight: 600;
-      min-height: 18px;
-      word-break: break-all;
-    }
+    .upload-card .file-name { margin-top: 8px; font-size: 12px; color: #00b894; font-weight: 600; min-height: 18px; word-break: break-all; }
     .process-btn {
-      width: 100%;
-      padding: 16px;
-      background: linear-gradient(135deg,#00b894,#00cec9);
-      color: white;
-      border: none;
-      border-radius: 10px;
-      font-size: 16px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: 0.3s;
+      width: 100%; padding: 16px; background: linear-gradient(135deg,#00b894,#00cec9); color: white;
+      border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; transition: 0.3s;
     }
     .process-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
     .process-btn:disabled { background: #ccc; cursor: not-allowed; }
-    .upload-status {
-      margin-top: 16px;
-      padding: 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      text-align: center;
-      display: none;
-    }
+    .upload-status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 14px; text-align: center; display: none; }
   </style>
 </head>
 <body>
@@ -128,10 +147,10 @@
   <div class="main-content full-width">
 
     <div class="top-bar">
-    <div style="display:flex;align-items:center;gap:12px;">
-      <img src="/static/spl-new-logo.png" style="height:38px;width:auto;"
-          onerror="this.src='/static/SPL_Logo.png';this.style.height='38px';">
-    </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <img src="/static/spl-new-logo.png" style="height:38px;width:auto;"
+             onerror="this.src='/static/SPL_Logo.png';this.style.height='38px';">
+      </div>
       <h2>Material Inward Process</h2>
       <div style="display:flex;gap:15px;align-items:center;">
         {% if from_history %}
@@ -140,6 +159,25 @@
           ← Back to History
         </button>
         {% endif %}
+
+        {% if enable_inapp_notifications %}
+        <div class="bell-wrapper" id="bellWrapper">
+          <div class="bell-icon" onclick="toggleBell(event)">
+            <i class="fas fa-bell"></i>
+            <span class="bell-badge" id="bellBadge" data-count="0">0</span>
+          </div>
+          <div class="bell-dropdown" id="bellDropdown">
+            <div class="bell-header">
+              <h3>Notifications</h3>
+              <button class="mark-all-read" onclick="markAllRead()">Mark all read</button>
+            </div>
+            <div class="bell-list" id="bellList">
+              <div class="notif-empty">No notifications</div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
         <div class="user-menu">
           <div class="user-profile" onclick="toggleDropdown(event)">
             {{ current_role[0] if current_role else 'U' }}
@@ -159,13 +197,16 @@
     {% if from_history %}
     <!-- NAV TABS -->
     <div class="nav-tabs">
-      <button class="nav-tab active" onclick="switchTab('extracted')">Extracted Data</button>
-      <button class="nav-tab" onclick="switchTab('documents')">Documents</button>
+      <button class="nav-tab active" onclick="switchTab('documents')">Documents</button>
+      <button class="nav-tab" onclick="switchTab('extracted')">Extracted Data</button>
       {% if is_step_enabled('gate_in') %}
       <button class="nav-tab" onclick="switchTab('gateIn')">Gate In</button>
       {% endif %}
-      {% if is_step_enabled('migo') %}
-      <button class="nav-tab" onclick="switchTab('migo')">MIGO</button>
+      {% if is_step_enabled('migo_103') %}
+      <button class="nav-tab" onclick="switchTab('migo103')">MIGO 103</button>
+      {% endif %}
+      {% if is_step_enabled('migo_105') %}
+      <button class="nav-tab" onclick="switchTab('migo105')">MIGO 105</button>
       {% endif %}
       {% if is_step_enabled('miro') %}
       <button class="nav-tab" onclick="switchTab('miro')">MIRO</button>
@@ -176,17 +217,20 @@
     </div>
 
     <div class="tab-content-wrapper">
-      <div id="extractedTab" class="tab-pane active">
-        {% include 'tabs/extracted_data.html' %}
-      </div>
-      <div id="documentsTab" class="tab-pane">
-        {% include 'tabs/documents.html' %}
-      </div>
+    <div id="documentsTab" class="tab-pane active">
+      {% include 'tabs/documents.html' %}
+    </div>
+    <div id="extractedTab" class="tab-pane">
+      {% include 'tabs/extracted_data.html' %}
+    </div>
       {% if is_step_enabled('gate_in') %}
       <div id="gateInTab" class="tab-pane">{% include 'tabs/gate_in.html' %}</div>
       {% endif %}
-      {% if is_step_enabled('migo') %}
-      <div id="migoTab" class="tab-pane">{% include 'tabs/migo.html' %}</div>
+      {% if is_step_enabled('migo_103') %}
+      <div id="migo103Tab" class="tab-pane">{% include 'tabs/migo_103.html' %}</div>
+      {% endif %}
+      {% if is_step_enabled('migo_105') %}
+      <div id="migo105Tab" class="tab-pane">{% include 'tabs/migo_105.html' %}</div>
       {% endif %}
       {% if is_step_enabled('miro') %}
       <div id="miroTab" class="tab-pane">{% include 'tabs/miro.html' %}</div>
@@ -197,7 +241,7 @@
     </div>
 
     {% elif is_admin or allow_user_upload %}
-    <!-- UPLOAD PAGE — centered horizontal layout -->
+    <!-- UPLOAD PAGE -->
     <div class="upload-page">
       <div class="upload-page-inner">
         <div class="upload-page-title">📄 Upload Documents</div>
@@ -243,25 +287,80 @@
   </div>
 </div>
 
+<!-- Reusable confirmation modal (used by all SAP-trigger buttons) -->
+<div class="confirm-modal" id="confirmModal">
+  <div class="confirm-box">
+    <div class="confirm-icon">⚠</div>
+    <div class="confirm-title" id="confirmTitle">Confirm SAP Posting</div>
+    <div class="confirm-msg" id="confirmMsg">
+      You are about to post to SAP. This will run the SAP automation and cannot be undone from the portal.
+    </div>
+    <div class="confirm-actions">
+      <button class="confirm-cancel" onclick="closeConfirm()">Cancel</button>
+      <button class="confirm-yes" id="confirmYesBtn">Yes, Post to SAP</button>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 <script src="{{ url_for('static', filename='js/rf_poller.js') }}"></script>
 {% if from_history %}
 <script src="{{ url_for('static', filename='js/tabs/extracted_data.js') }}"></script>
 {% endif %}
 
+{% if enable_inapp_notifications %}
+<script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+{% endif %}
+
 <script>
 function toggleDropdown(event) {
   event.stopPropagation();
   document.getElementById("userDropdown").classList.toggle("show");
+  const bd = document.getElementById("bellDropdown");
+  if (bd) bd.classList.remove("show");
 }
+
+function toggleBell(event) {
+  event.stopPropagation();
+  const bd = document.getElementById("bellDropdown");
+  if (bd) bd.classList.toggle("show");
+  document.getElementById("userDropdown").classList.remove("show");
+}
+
 document.addEventListener("click", function(e) {
-  const menu = document.querySelector(".user-menu");
-  if (menu && !menu.contains(e.target)) {
+  const um = document.querySelector(".user-menu");
+  if (um && !um.contains(e.target)) {
     document.getElementById("userDropdown").classList.remove("show");
+  }
+  const bw = document.getElementById("bellWrapper");
+  if (bw && !bw.contains(e.target)) {
+    const bd = document.getElementById("bellDropdown");
+    if (bd) bd.classList.remove("show");
   }
 });
 
-// Upload page functions
+// Confirmation modal helper — used by all SAP-trigger buttons
+let _confirmCallback = null;
+function showConfirm(title, message, onYes) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent = message;
+  _confirmCallback = onYes;
+  document.getElementById('confirmModal').classList.add('show');
+}
+function closeConfirm() {
+  document.getElementById('confirmModal').classList.remove('show');
+  _confirmCallback = null;
+}
+document.getElementById('confirmYesBtn').onclick = function() {
+  if (_confirmCallback) {
+    const cb = _confirmCallback;
+    _confirmCallback = null;
+    document.getElementById('confirmModal').classList.remove('show');
+    cb();
+  }
+};
+
+// Upload page logic
 const selectedFiles = { invoice: null, ewaybill: null, lr: null };
 
 function handleUploadSelect(type, input) {
@@ -311,6 +410,7 @@ async function processAllDocs() {
     btn.textContent = '⚡ Process All Documents';
   }
 }
+const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 </script>
 </body>
 </html>
