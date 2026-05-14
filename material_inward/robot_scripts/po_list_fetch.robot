@@ -17,13 +17,15 @@ ${ME2N_VENDOR_FIELD}    wnd[0]/usr/txtP_NAME1
 ${RESULT_TABLE}         wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell/shellcont[1]/shell
 ${COL_PO_NUMBER}        EBELN
 ${COL_OPEN_QTY}         WTLIEF
-
+ 
 
 *** Test Cases ***
 Execute PO List Fetch
     [Setup]    Initialize SAP And Login
     ${po_list}=    FetchOpenPOs
     Log To Console    RESULT:PO_LIST:${po_list}
+    ${po_str}=    Evaluate    str($po_list)
+    Log To Console    RESULT:PO_LIST:${po_str}
     Sleep    2s
     [Teardown]    Close SAP Session
 
@@ -40,7 +42,7 @@ Initialize SAP And Login
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Sleep    2s
     Start Process    ${LOGON_PATH}
-    Sleep    5s
+    Sleep    8s
 
     Connect To Session
     Open Connection    ${CONN_NAME}
@@ -65,6 +67,7 @@ FetchOpenPOs
     ${clean_name}=    Sanitize Vendor Name    ${VENDOR_NAME}
     Log To Console    Searching ME2N for vendor: *${clean_name}*
 
+    Log To Console    SAP LOGIN DONE — starting ME2N
     Run Transaction    ME2N
     Sleep    3s
     Dismiss Any Popup

@@ -553,8 +553,10 @@ function _escHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-document.addEventListener('click', function(e) {
-  const wrap = document.querySelector('.po-field-wrap');
-  if (wrap && !wrap.contains(e.target)) closePoDropdown();
-});
+// document.addEventListener('click', function(e) {
+//   const wrap = document.querySelector('.po-field-wrap');
+//   if (wrap && !wrap.contains(e.target)) closePoDropdown();
+// });
+// Remove the auto-close listener entirely
+// Users close via the ✕ button or by selecting a PO
 </script>

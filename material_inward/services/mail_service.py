@@ -249,7 +249,8 @@ def send_migo_103_notification(
 
 def send_migo_105_notification(
     history_id: int,
-    invoice_number: Optional[str] = None
+    invoice_number: Optional[str] = None,
+    migo_105_doc: Optional[str] = None
 ) -> bool:
     subject = f"MIGO 105 Complete — Material Released | History {history_id}"
     body = f"""
@@ -262,6 +263,10 @@ def send_migo_105_notification(
             <td style="padding:8px 16px;">{invoice_number or 'N/A'}</td>
         </tr>
         <tr>
+            <td style="padding:8px 16px;font-weight:bold;">MIGO 105 Document:</td>
+            <td style="padding:8px 16px;">{migo_105_doc or 'N/A'}</td>
+        </tr>
+        <tr style="background:#f5f5f5;">
             <td style="padding:8px 16px;font-weight:bold;">Reference ID:</td>
             <td style="padding:8px 16px;">{history_id}</td>
         </tr>
@@ -278,7 +283,6 @@ def send_migo_105_notification(
         logger.info("No MIGO 105/MIRO recipients configured. Email skipped.")
         return False
     return _send_email(recipients, subject, body)
-
 
 # ============================================================
 # MIRO COMPLETED

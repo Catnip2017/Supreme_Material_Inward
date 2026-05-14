@@ -158,6 +158,14 @@
 }
 .po-fetched { background:#d1fae5; color:#065f46; }
 .po-pending { background:#fef3c7; color:#92400e; }
+
+.drag-handle {
+  cursor: grab; color: #aaa; font-size: 16px; padding: 0 6px;
+  user-select: none;
+}
+.drag-handle:active { cursor: grabbing; }
+.matched-table tr.dragging { opacity: 0.4; }
+.matched-table tr.drag-over { border-top: 2px solid #7c3aed; }
 </style>
 
 <div class="content-card">
@@ -299,6 +307,9 @@
               </tr>
               {% endfor %}
             </tbody>
+            <div style="margin-top:8px;">
+            <button type="button" class="btn-row-add" onclick="addInvoiceRow()">➕ Add Line Item</button>
+          </div>
           </table>
         </div>
       </div>
@@ -344,6 +355,7 @@
     <div class="match-controls">
       <button type="button" class="btn-auto-pair" onclick="autoPair()" {% if step_locked %}disabled{% endif %}>🪄 Auto-Pair</button>
       <button type="button" class="btn-match" id="confirmMatchBtn" onclick="confirmMatches()" {% if step_locked %}disabled{% endif %}>🔗 Confirm Matches</button>
+      <button type="button" id="confirmSingleBtn" class="btn-match" onclick="confirmSingleInvoiceLine()" style="background:#e67e22;display:none;">✓ Add Without PO Match</button>
       <button type="button" class="btn-reset" onclick="resetAllMatches()" {% if step_locked %}disabled{% endif %}>🗑 Reset All</button>
       <span class="match-hint" id="matchHint">No pairs marked yet</span>
     </div>
@@ -358,6 +370,7 @@
         <table class="matched-table" id="matchedTable">
           <thead>
             <tr>
+              <th style="width:30px;"></th>  <!-- drag handle -->
               <th>#</th>
               <th>Mat. Code</th>
               <th>Short Text (Inv)</th>
@@ -462,82 +475,141 @@ function switchCompareTab(type) {
 }
 
 // ============================================================
-// Pair-marking state
+// Pair-marking state — clean two-sided selection
 // ============================================================
-let _nextPairNum = 1;
+let _selectedInvRow = null;   // currently selected invoice row index
+let _selectedPoRow  = null;   // currently selected PO row index
+let _pairCounter    = 1;
+let _pairs          = [];     // [{invIdx, poIdx, pairNum}]
 
 function onInvPairClick(btn) {
-  const current = btn.getAttribute('data-pair');
-  if (current) {
-    btn.setAttribute('data-pair', '');
-    btn.textContent = '';
-    btn.classList.remove('paired-inv');
-  } else {
-    btn.setAttribute('data-pair', _nextPairNum);
-    btn.textContent = _nextPairNum;
-    btn.classList.add('paired-inv');
-    _nextPairNum++;
+  const rowIdx = parseInt(btn.closest('tr').getAttribute('data-idx'));
+  const existingPair = _pairs.find(p => p.invIdx === rowIdx);
+
+  if (existingPair) {
+    // Already paired — unpair it
+    _removePair(existingPair.pairNum);
+    return;
   }
+
+  // Deselect previous pending selection
+  if (_selectedInvRow !== null) {
+    const prevBtn = document.querySelector(`#invoiceItemsBody tr[data-idx="${_selectedInvRow}"] .pair-btn-inv`);
+    if (prevBtn && !_pairs.find(p => p.invIdx === _selectedInvRow)) {
+      prevBtn.classList.remove('paired-inv');
+      prevBtn.textContent = '';
+    }
+  }
+
+  _selectedInvRow = rowIdx;
+  btn.classList.add('paired-inv');
+  btn.textContent = '✓';
+
+  _tryFormPair();
   _updateMatchHint();
 }
 
 function onPoPairClick(btn) {
-  const current = btn.getAttribute('data-pair');
-  if (current) {
-    btn.setAttribute('data-pair', '');
-    btn.textContent = '';
-    btn.classList.remove('paired-po');
-  } else {
-    // Find lowest unpaired number on invoice side that isn't yet on PO side
-    const invPairs = _getPairs('inv');
-    const poPairs = _getPairs('po');
-    let next = null;
-    for (const n of invPairs.sort((a,b) => a-b)) {
-      if (!poPairs.includes(n)) { next = n; break; }
-    }
-    if (next === null) next = _nextPairNum++;
-    btn.setAttribute('data-pair', next);
-    btn.textContent = next;
-    btn.classList.add('paired-po');
+  const rowIdx = parseInt(btn.closest('tr').getAttribute('data-idx'));
+  const existingPair = _pairs.find(p => p.poIdx === rowIdx);
+
+  if (existingPair) {
+    _removePair(existingPair.pairNum);
+    return;
   }
+
+  if (_selectedPoRow !== null) {
+    const prevBtn = document.querySelector(`#poItemsBody tr[data-idx="${_selectedPoRow}"] .pair-btn-po`);
+    if (prevBtn && !_pairs.find(p => p.poIdx === _selectedPoRow)) {
+      prevBtn.classList.remove('paired-po');
+      prevBtn.textContent = '';
+    }
+  }
+
+  _selectedPoRow = rowIdx;
+  btn.classList.add('paired-po');
+  btn.textContent = '✓';
+
+  _tryFormPair();
+  _updateMatchHint();
+}
+
+function _tryFormPair() {
+  if (_selectedInvRow === null || _selectedPoRow === null) return;
+
+  const pairNum = _pairCounter++;
+  _pairs.push({ invIdx: _selectedInvRow, poIdx: _selectedPoRow, pairNum });
+
+  // Update invoice button
+  const invBtn = document.querySelector(`#invoiceItemsBody tr[data-idx="${_selectedInvRow}"] .pair-btn-inv`);
+  if (invBtn) { invBtn.textContent = pairNum; invBtn.setAttribute('data-pair', pairNum); }
+
+  // Update PO button
+  const poBtn = document.querySelector(`#poItemsBody tr[data-idx="${_selectedPoRow}"] .pair-btn-po`);
+  if (poBtn) { poBtn.textContent = pairNum; poBtn.setAttribute('data-pair', pairNum); }
+
+  _selectedInvRow = null;
+  _selectedPoRow  = null;
+}
+
+function _removePair(pairNum) {
+  _pairs = _pairs.filter(p => p.pairNum !== pairNum);
+
+  document.querySelectorAll('.pair-btn-inv, .pair-btn-po').forEach(b => {
+    if (parseInt(b.getAttribute('data-pair')) === pairNum) {
+      b.setAttribute('data-pair', '');
+      b.textContent = '';
+      b.classList.remove('paired-inv', 'paired-po');
+    }
+  });
   _updateMatchHint();
 }
 
 function _getPairs(side) {
-  const sel = side === 'inv' ? '.pair-btn-inv' : '.pair-btn-po';
-  return Array.from(document.querySelectorAll(sel))
-    .map(b => b.getAttribute('data-pair'))
-    .filter(v => v && v !== '')
-    .map(v => parseInt(v));
+  return _pairs.map(p => p.pairNum);
 }
 
 function _updateMatchHint() {
-  const invPairs = _getPairs('inv');
-  const poPairs  = _getPairs('po');
-
-  // Count matches: pairs that exist on both sides
-  let valid = 0, incomplete = 0;
-  const allNums = new Set([...invPairs, ...poPairs]);
-  allNums.forEach(n => {
-    const onInv = invPairs.includes(n);
-    const onPo  = poPairs.includes(n);
-    if (onInv && onPo) valid++;
-    else incomplete++;
-  });
-
   const hint = document.getElementById('matchHint');
-  if (valid === 0 && incomplete === 0) {
-    hint.textContent = 'No pairs marked yet';
+  const singleBtn = document.getElementById('confirmSingleBtn');
+
+  if (_pairs.length === 0 && _selectedInvRow === null && _selectedPoRow === null) {
+    hint.textContent = 'Click a circle on each side to mark a pair';
     hint.classList.remove('ready');
-  } else if (incomplete === 0) {
-    hint.textContent = `✓ ${valid} pair(s) ready to confirm`;
+    singleBtn.style.display = 'none';
+  } else if (_selectedInvRow !== null && _selectedPoRow === null) {
+    hint.textContent = 'Invoice line selected — click a PO circle to pair, or add without PO match';
+    hint.classList.remove('ready');
+    singleBtn.style.display = 'inline-block';
+  } else if (_selectedPoRow !== null && _selectedInvRow === null) {
+    hint.textContent = 'PO line selected — click an invoice circle to pair';
+    hint.classList.remove('ready');
+    singleBtn.style.display = 'none';
+  } else if (_selectedInvRow !== null && _selectedPoRow !== null) {
+    hint.textContent = 'Both sides selected — click Confirm Matches';
     hint.classList.add('ready');
+    singleBtn.style.display = 'none';
   } else {
-    hint.textContent = `${valid} complete, ${incomplete} incomplete (need both sides)`;
-    hint.classList.remove('ready');
+    hint.textContent = `✓ ${_pairs.length} pair(s) ready to confirm`;
+    hint.classList.add('ready');
+    singleBtn.style.display = 'none';
   }
 }
 
+function confirmSingleInvoiceLine() {
+  if (_selectedInvRow === null) return;
+  const pairNum = _pairCounter++;
+  _pairs.push({ invIdx: _selectedInvRow, poIdx: null, pairNum });
+
+  const invBtn = document.querySelector(`#invoiceItemsBody tr[data-idx="${_selectedInvRow}"] .pair-btn-inv`);
+  if (invBtn) {
+    invBtn.textContent = pairNum;
+    invBtn.setAttribute('data-pair', pairNum);
+  }
+
+  _selectedInvRow = null;
+  _updateMatchHint();
+}
 // ============================================================
 // Auto-Pair (smart matching using config thresholds)
 // ============================================================
@@ -579,7 +651,7 @@ function autoPair() {
   let pairCounter = 1;
   const usedPo = new Set();
 
-  invData.forEach(inv => {
+  invData.forEach((inv, i) => {
     if (!inv.el) return;
     let bestPo = null;
     let bestScore = 0;
@@ -601,17 +673,19 @@ function autoPair() {
     });
 
     if (bestScore >= AUTO_PAIR_MIN && bestPo !== null) {
-      inv.el.setAttribute('data-pair', pairCounter);
-      inv.el.textContent = pairCounter;
-      inv.el.classList.add('paired-inv');
+    const pairNum = _pairCounter++;
+    _pairs.push({ invIdx: i, poIdx: bestPo, pairNum });
 
-      poData[bestPo].el.setAttribute('data-pair', pairCounter);
-      poData[bestPo].el.textContent = pairCounter;
-      poData[bestPo].el.classList.add('paired-po');
+    inv.el.setAttribute('data-pair', pairNum);
+    inv.el.textContent = pairNum;
+    inv.el.classList.add('paired-inv');
 
-      usedPo.add(bestPo);
-      pairCounter++;
-    }
+    poData[bestPo].el.setAttribute('data-pair', pairNum);
+    poData[bestPo].el.textContent = pairNum;
+    poData[bestPo].el.classList.add('paired-po');
+
+    usedPo.add(bestPo);
+  }
   });
 
   _nextPairNum = pairCounter;
@@ -703,78 +777,55 @@ function autoPair() {
 // Confirm Matches → Build Matched Pairs Section
 // ============================================================
 function confirmMatches() {
-  const invRows = document.querySelectorAll('#invoiceItemsBody tr');
-  const poRows  = document.querySelectorAll('#poItemsBody tr');
-
-  const invByPair = {};
-  const poByPair  = {};
-
-  invRows.forEach(r => {
-    const btn = r.querySelector('.pair-btn-inv');
-    const pair = btn.getAttribute('data-pair');
-    if (pair) {
-      const inputs = r.querySelectorAll('input[type="text"]');
-      invByPair[pair] = {
-        material_code: inputs[0]?.value || '',
-        short_text:    inputs[1]?.value || '',
-        quantity:      inputs[2]?.value || '',
-        rate:          inputs[3]?.value || '',
-        amount:        inputs[4]?.value || '',
-        hsn_sac:       inputs[5]?.value || '',
-      };
-    }
-  });
-
-  poRows.forEach(r => {
-    const btn = r.querySelector('.pair-btn-po');
-    const pair = btn.getAttribute('data-pair');
-    if (pair) {
-      const cells = r.querySelectorAll('td');
-      poByPair[pair] = {
-        material_code: cells[2]?.textContent.trim() || '',
-        short_text:    cells[3]?.textContent.trim() || '',
-        quantity:      cells[4]?.textContent.trim() || '',
-        rate:          cells[5]?.textContent.trim() || '',
-        amount:        cells[6]?.textContent.trim() || '',
-        hsn_sac:       cells[7]?.textContent.trim() || '',
-      };
-    }
-  });
-
-  // Find incomplete pairs
-  const allPairs = new Set([...Object.keys(invByPair), ...Object.keys(poByPair)]);
-  const incomplete = [];
-  allPairs.forEach(p => {
-    if (!invByPair[p] || !poByPair[p]) {
-      // For incomplete, still include if at least invoice side present
-      if (!invByPair[p]) incomplete.push(p);
-    }
-  });
-
-  if (incomplete.length > 0) {
-    if (!confirm(`${incomplete.length} pair(s) have only PO side marked (no Invoice). Proceed anyway?`)) return;
-  }
-
-  if (allPairs.size === 0) {
-    alert('No pairs to confirm. Click circles in both tables first.');
+  if (_pairs.length === 0) {
+    alert('No pairs to confirm. Click circles on both invoice and PO sides.');
     return;
   }
 
-  // Render matched pairs
   const tbody = document.getElementById('matchedBody');
-  tbody.innerHTML = '';
+  // tbody.innerHTML = '';
 
-  const sortedPairs = Array.from(allPairs).map(p => parseInt(p)).sort((a,b) => a-b);
-  let displayNum = 1;
+  const existingPairNums = new Set(
+    Array.from(tbody.querySelectorAll('tr'))
+      .map(r => parseInt(r.getAttribute('data-pair')))
+  );
 
-  sortedPairs.forEach(pair => {
-    const inv = invByPair[pair] || {};
-    const po  = poByPair[pair] || {};
+  _pairs
+  .filter(pair => !existingPairNums.has(pair.pairNum))
+  .sort((a, b) => a.pairNum - b.pairNum)
+  .forEach((pair, idx) => {
+    const invRow = document.querySelector(`#invoiceItemsBody tr[data-idx="${pair.invIdx}"]`);
 
-    const tr = document.createElement('tr');
-    tr.setAttribute('data-pair', pair);
+    const poRow = pair.poIdx !== null
+      ? document.querySelector(`#poItemsBody tr[data-idx="${pair.poIdx}"]`)
+      : null;
+
+    const invInputs = invRow ? invRow.querySelectorAll('input[type="text"]') : [];
+    const poCells   = poRow  ? poRow.querySelectorAll('td') : [];
+
+    const inv = {
+      material_code: invInputs[0]?.value || '',
+      short_text:    invInputs[1]?.value || '',
+      quantity:      invInputs[2]?.value || '',
+      rate:          invInputs[3]?.value || '',
+      amount:        invInputs[4]?.value || '',
+      hsn_sac:       invInputs[5]?.value || '',
+    };
+    const po = {
+      material_code: poCells[2]?.textContent.trim() || '',
+      short_text:    poCells[3]?.textContent.trim() || '',
+      quantity:      poCells[4]?.textContent.trim() || '',
+      rate:          poCells[5]?.textContent.trim() || '',
+      amount:        poCells[6]?.textContent.trim() || '',
+      hsn_sac:       poCells[7]?.textContent.trim() || '',
+    };
+
+   const tr = document.createElement('tr');
+    tr.setAttribute('data-pair', pair.pairNum);
+
     tr.innerHTML = `
-      <td style="font-weight:600;color:#7c3aed;">${displayNum}</td>
+      <td class="drag-handle" draggable="true">⠿</td>
+      <td style="font-weight:600;color:#7c3aed;">${idx + 1}</td>
       <td>${_esc(inv.material_code || po.material_code)}</td>
       <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
       <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
@@ -783,32 +834,31 @@ function confirmMatches() {
       <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" style="width:70px;"></td>
       <td><input type="text" class="form-input" value="${_esc(inv.rate || po.rate)}" style="width:80px;"></td>
       <td><input type="text" class="form-input" value="${_esc(inv.amount || po.amount)}" style="width:90px;"></td>
-      <td><button type="button" class="btn-unmatch" onclick="unmatchPair(this, '${pair}')">↩ Undo</button></td>
+      <td><button type="button" class="btn-unmatch" onclick="unmatchPair(this, ${pair.pairNum})">↩ Undo</button></td>
     `;
-    tbody.appendChild(tr);
-    displayNum++;
+      tbody.appendChild(tr);
   });
-
+  _renumberMatchedRows();
   document.getElementById('matchedSection').style.display = 'block';
   document.getElementById('matchedSection').scrollIntoView({behavior:'smooth', block:'center'});
+  initDragDrop();
+
 }
 
 function unmatchPair(btn, pairNum) {
-  document.querySelectorAll('.pair-btn-inv, .pair-btn-po').forEach(b => {
-    if (b.getAttribute('data-pair') === pairNum) {
-      b.setAttribute('data-pair', '');
-      b.textContent = '';
-      b.classList.remove('paired-inv', 'paired-po');
-    }
-  });
+  _removePair(pairNum);
   btn.closest('tr').remove();
   if (document.querySelectorAll('#matchedBody tr').length === 0) {
     document.getElementById('matchedSection').style.display = 'none';
   }
-  _updateMatchHint();
 }
 
 function resetAllMatches() {
+  _pairs = [];
+  _selectedInvRow = null;
+  _selectedPoRow  = null;
+  _pairCounter    = 1;
+
   document.querySelectorAll('.pair-btn-inv, .pair-btn-po').forEach(b => {
     b.setAttribute('data-pair', '');
     b.textContent = '';
@@ -816,13 +866,69 @@ function resetAllMatches() {
   });
   document.getElementById('matchedBody').innerHTML = '';
   document.getElementById('matchedSection').style.display = 'none';
-  _nextPairNum = 1;
   _updateMatchHint();
+}
+
+function addInvoiceRow() {
+  const tbody = document.getElementById('invoiceItemsBody');
+  const idx = tbody.rows.length;
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-idx', idx);
+  tr.innerHTML = `
+    <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)"></button></td>
+    <td style="color:#888;font-size:11px;">${idx + 1}</td>
+    <td><input type="text" class="form-input" placeholder="Mat. Code"></td>
+    <td><input type="text" class="form-input" placeholder="Short Text"></td>
+    <td><input type="text" class="form-input" placeholder="Qty"></td>
+    <td><input type="text" class="form-input" placeholder="Rate"></td>
+    <td><input type="text" class="form-input" placeholder="Amount"></td>
+    <td><input type="text" class="form-input" placeholder="HSN/SAC"></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function initDragDrop() {
+  const tbody = document.getElementById('matchedBody');
+  let dragRow = null;
+
+  tbody.addEventListener('dragstart', e => {
+    dragRow = e.target.closest('tr');
+    dragRow.classList.add('dragging');
+  });
+  tbody.addEventListener('dragend', e => {
+    e.target.closest('tr').classList.remove('dragging');
+    document.querySelectorAll('#matchedBody tr').forEach(r => r.classList.remove('drag-over'));
+    _renumberMatchedRows();
+  });
+  tbody.addEventListener('dragover', e => {
+    e.preventDefault();
+    const target = e.target.closest('tr');
+    if (target && target !== dragRow) {
+      document.querySelectorAll('#matchedBody tr').forEach(r => r.classList.remove('drag-over'));
+      target.classList.add('drag-over');
+    }
+  });
+  tbody.addEventListener('drop', e => {
+    e.preventDefault();
+    const target = e.target.closest('tr');
+    if (target && target !== dragRow) {
+      tbody.insertBefore(dragRow, target);
+    }
+  });
+}
+
+function _renumberMatchedRows() {
+  document.querySelectorAll('#matchedBody tr').forEach((row, idx) => {
+    const numCell = row.querySelectorAll('td')[1]; // second td is the number
+    if (numCell) numCell.textContent = idx + 1;
+  });
 }
 
 function _esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+
 
 // ============================================================
 // Submit MIGO 103

@@ -155,22 +155,18 @@ def _process_migo_105(history_id: int, payload: dict) -> dict:
 
     result = execute_migo_105_sap(payload)
     if result.get("success"):
-        miro_doc = result.get("miro_doc_number", "")  # ADD THIS
+        migo_105_doc = result.get("miro_doc_number", "")
         update_migo_105_rf_result(history_id, status="success")
         update_history_step(history_id, "migo_105")
-
-        if miro_doc:
-            from database.migo_operations import save_miro_doc_number
-            save_miro_doc_number(history_id, miro_doc)
-            logger.info(f"MIGO 105 — MIRO doc number saved: {miro_doc}")
 
         details = get_history_details_by_id(history_id)
         inv = details.get("invoice_data") or {}
         send_migo_105_notification(
             history_id=history_id,
-            invoice_number=inv.get("invoice_number")
+            invoice_number=inv.get("invoice_number"),
+            migo_105_doc=migo_105_doc
         )
-        logger.info(f"MIGO 105 complete — history_id={history_id}")
+        logger.info(f"MIGO 105 complete — history_id={history_id} doc={migo_105_doc}")
     else:
         update_migo_105_rf_result(history_id, status="failed", error_message=result.get("error"))
     return result
@@ -179,19 +175,18 @@ def _process_migo_105(history_id: int, payload: dict) -> dict:
 def _process_miro(history_id: int, payload: dict) -> dict:
     result = execute_miro_sap(payload)
     if result.get("success"):
+        fi_doc = result.get("fi_doc_number", "")
         update_miro_rf_result(history_id, status="success")
         update_history_step(history_id, "miro")
-
         details = get_history_details_by_id(history_id)
         inv = details.get("invoice_data") or {}
-        fi_doc = result.get("fi_doc_number")   
         send_miro_completion_notification(
             history_id=history_id,
             invoice_number=inv.get("invoice_number"),
             po_number=inv.get("po_number"),
-            fi_doc_number=fi_doc 
+            fi_doc_number=fi_doc
         )
-        logger.info(f"MIRO complete — history_id={history_id}")
+        logger.info(f"MIRO complete — history_id={history_id} FI_DOC={fi_doc}")
     else:
         update_miro_rf_result(history_id, status="failed", error_message=result.get("error"))
     return result

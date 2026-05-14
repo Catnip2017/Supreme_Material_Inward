@@ -106,7 +106,7 @@ def _run_rf_script(
     variables: dict,
     timeout_seconds: int = 120
 ) -> dict:
-    if "po_fetch" in script_name:
+    if script_name == "po_fetch.robot":
         _force_kill_sap()
     _wake_sap_session()
 
@@ -194,6 +194,8 @@ def _extract_marked_value(output: str, marker: str) -> Optional[str]:
 
 def execute_gate_in_sap(data: dict) -> dict:
     cleaned = _clean_dict(data, ["challanQty", "numPersons"])
+    challan_raw = cleaned.get("challanNo", "")
+    challan_numeric = re.sub(r'[^0-9]', '', challan_raw)
 
     variables = {
         "VENDOR_NAME":    cleaned.get("vendorName", ""),
@@ -204,7 +206,8 @@ def execute_gate_in_sap(data: dict) -> dict:
         "CONTAINER_NO":   cleaned.get("containerNo", ""),
         "CATEGORY":       cleaned.get("category", ""),
         "MATERIAL":       cleaned.get("material", ""),
-        "CHALLAN_NO":     cleaned.get("challanNo", ""),
+        # "CHALLAN_NO":     cleaned.get("challanNo", ""),
+        "CHALLAN_NO": challan_numeric, 
         "CHALLAN_QTY":    cleaned.get("challanQty", ""),
         "BOE_NO":         cleaned.get("boeNo", ""),
         "PURCHASE_ORDER": cleaned.get("purchaseOrder", ""),
@@ -333,23 +336,17 @@ def execute_migo_105_sap(data: dict) -> dict:
 # ============================================================
 
 def execute_miro_sap(data: dict) -> dict:
-    cleaned = _clean_dict(data, ["miroReference", "invoice_number"])
-
     variables = {
-        "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
-        "POSTING_DATE":        _to_sap_date(datetime.now().strftime("%Y-%m-%d")),
-        "REFERENCE_NUMBER":    cleaned.get("miroReference", "") or cleaned.get("invoice_number", ""),
-        "INVOICE_DATE":        _to_sap_date(data.get("miroInvoiceDate", "")),
-        "PO_NUMBER":           data.get("miroPurchaseOrder", ""),
+        "REFERENCE_NUMBER": data.get("miroReference", ""),
+        "INVOICE_DATE":     _to_sap_date(data.get("miroInvoiceDate", "")),
+        "PO_NUMBER":        data.get("miroPurchaseOrder", ""),
+        "POSTING_DATE":     _to_sap_date(datetime.now().strftime("%Y-%m-%d")),
     }
-
     result = _run_rf_script("miro.robot", variables, timeout_seconds=300)
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-    # Capture FI document number from status bar output
     fi_doc = _extract_marked_value(result["output"], "FI_DOC_NUMBER")
     return {"success": True, "error": None, "fi_doc_number": fi_doc or ""}
-
 
 # ============================================================
 # PO FETCH

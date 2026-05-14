@@ -856,33 +856,21 @@ def run_miro():
     if not allowed:
         return jsonify({"success": False, "error": reason}), 400
 
-    # In run_miro route, replace the material_doc fetch block with:
-    migo_entry = get_migo_entry(history_id)
-    miro_doc = (migo_entry or {}).get("miro_doc_number") or ""
-    material_doc = (migo_entry or {}).get("material_doc_number") or history.get("material_doc_number") or ""
-
-    if not miro_doc:
-        return jsonify({
-            "success": False,
-            "error": "MIRO Document Number missing — ensure MIGO 105 completed successfully."
-        }), 400
-
+    upsert_miro_entry(history_id, data)
     details = get_history_details_by_id(history_id)
     inv = details.get("invoice_data") or {}
     invoice_number = inv.get("invoice_number") or data.get("miroReference") or ""
 
     rf_payload = {
-        "material_doc_number": miro_doc,
-        "miroReference":       invoice_number,
-        "miroInvoiceDate":     data.get("miroInvoiceDate"),
-        "miroPurchaseOrder":   data.get("miroPurchaseOrder") or inv.get("po_number", ""),
+        "miroReference":     invoice_number,
+        "miroInvoiceDate":   data.get("miroInvoiceDate") or inv.get("invoice_date") or "",
+        "miroPurchaseOrder": data.get("miroPurchaseOrder") or inv.get("po_number") or "",
     }
 
     job_id = enqueue_rf_job(history_id, "miro", rf_payload)
     if not job_id:
         return jsonify({"success": False, "error": "MIRO already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
-
 
 # ============================================================
 # DATA FETCH
