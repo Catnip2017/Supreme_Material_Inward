@@ -193,10 +193,10 @@ Fill MIGO 103 And Post
         Sleep    0.5s
     END
     # --- Step 5: Post ---
-    Log To Console    DRY RUN — Skipping post button click
-    Log    RESULT:MATERIAL_DOC_NUMBER:DRY_RUN    level=INFO    # ADD THIS
+    # Log To Console    DRY RUN — Skipping post button click
+    # Log    RESULT:MATERIAL_DOC_NUMBER:DRY_RUN    level=INFO    # ADD THIS
 
-    RETURN    DRY_RUN
+    # RETURN    DRY_RUN
 
     Set Focus        wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/btnMIGO_OK_GO
     Click Element    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/btnMIGO_OK_GO
@@ -257,10 +257,12 @@ Dismiss Any Popup
     END
 
 
-Close SAP Session
-    Log    Execution finished. Session kept open.
-    RETURN
+# Close SAP Session
+#     # Log    Execution finished. Session kept open.
+#     # RETURN
 
+Close SAP Session
+    Log    Closing SAP session...
     Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
     Run Keyword And Ignore Error    Send VKey     wnd[0]    0
     Sleep    2s

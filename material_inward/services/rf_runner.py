@@ -85,9 +85,45 @@ def _force_kill_sap() -> None:
 
 def _wake_sap_session() -> None:
     """
-    TODO: Add tscon command here when available (RDP session wake).
+    Wake RDP session and ensure display is active before SAP launches.
+    Calls the same sequence used by the standalone wake script.
     """
-    pass
+    import ctypes
+    import subprocess as sp
+
+    # Step 1: Prevent sleep
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000003)
+
+    # Step 2: tscon via scheduled task
+    try:
+        result = sp.run(
+            ["schtasks", "/Run", "/TN", "PrepareSAPGui"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            logger.info("PrepareSAPGui triggered.")
+            time.sleep(6)
+        else:
+            logger.warning(f"PrepareSAPGui failed: {result.stderr.strip()}")
+    except Exception as e:
+        logger.warning(f"PrepareSAPGui call failed (non-fatal): {e}")
+
+    # Step 3: Simulate mouse movement to wake display
+    try:
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+        pt = POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        ctypes.windll.user32.SetCursorPos(pt.x + 1, pt.y)
+        time.sleep(0.1)
+        ctypes.windll.user32.SetCursorPos(pt.x, pt.y)
+        logger.info("Mouse activity simulated — display active.")
+    except Exception as e:
+        logger.warning(f"Mouse simulation failed (non-fatal): {e}")
+
+    # Step 4: Final wait for display to fully render
+    time.sleep(3)
+    logger.info("Session wake sequence complete.")
 
 
 def _to_sap_date(date_str: str) -> str:
@@ -223,12 +259,29 @@ def execute_gate_in_sap(data: dict) -> dict:
         return {"success": False, "error": result["error"], "gate_in_number": None}
 
     gin = _extract_marked_value(result["output"], "GATE_IN_NUMBER")
+    sap_msg = _extract_marked_value(result["output"], "GATE_IN_STATUS_MSG") or "No status bar message captured"
+
+    
     if not gin:
         return {
             "success": False,
             "error": "Gate In posted but Gate In Number not captured from SAP status bar.",
             "gate_in_number": None
         }
+
+    # ── FIX: MANUAL_CHECK_REQUIRED means SAP didn't return a number ──
+    if gin == "MANUAL_CHECK_REQUIRED":
+        return {
+            "success": False,
+            "error": (
+                f"Gate In submitted but no GIN captured. "
+                f"SAP status bar said: '{sap_msg}'. "
+                f"Check SAP manually (TCODE: zmmtmn)."
+            ),
+            "gate_in_number": None
+        }
+    # ─────────────────────────────────────────────────────────────────
+
     return {"success": True, "gate_in_number": gin, "error": None}
 
 
@@ -325,10 +378,25 @@ def execute_migo_105_sap(data: dict) -> dict:
     result = _run_rf_script("migo_105.robot", variables, timeout_seconds=300)
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-    
-    # ADD THIS:
+
     miro_doc = _extract_marked_value(result["output"], "MIRO_DOC_NUMBER")
-    return {"success": True, "error": None, "miro_doc_number": miro_doc or ""}
+    
+    # ── FIX: MIGO 105 does generate a doc — missing means it didn't post ──
+    if not miro_doc:
+        logger.error(
+            "MIGO 105 robot completed but no document number captured. "
+            f"Check robot log: {result.get('output_dir')}"
+        )
+        return {
+            "success": False,
+            "error": (
+                "MIGO 105 ran but did not capture a document number from SAP. "
+                "Check SAP manually and robot logs."
+            )
+        }
+    # ─────────────────────────────────────────────────────────────────
+
+    return {"success": True, "error": None, "miro_doc_number": miro_doc}
 
 
 # ============================================================
@@ -345,9 +413,26 @@ def execute_miro_sap(data: dict) -> dict:
     result = _run_rf_script("miro.robot", variables, timeout_seconds=300)
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-    fi_doc = _extract_marked_value(result["output"], "FI_DOC_NUMBER")
-    return {"success": True, "error": None, "fi_doc_number": fi_doc or ""}
 
+    fi_doc = _extract_marked_value(result["output"], "FI_DOC_NUMBER")
+
+    # ── FIX: treat missing FI_DOC_NUMBER as failure ──────────────────
+    if not fi_doc:
+        logger.error(
+            f"MIRO robot completed but FI_DOC_NUMBER not found in output. "
+            f"SAP may not have posted. Check robot logs at: {result.get('output_dir')}"
+        )
+        return {
+            "success": False,
+            "error": (
+                "MIRO robot ran but did not capture a document number from SAP. "
+                "The document may not have been posted. "
+                "Check SAP manually and the robot log for details."
+            )
+        }
+    # ─────────────────────────────────────────────────────────────────
+
+    return {"success": True, "error": None, "fi_doc_number": fi_doc}
 # ============================================================
 # PO FETCH
 # ============================================================

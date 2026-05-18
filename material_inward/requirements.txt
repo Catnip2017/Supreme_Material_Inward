@@ -65,3 +65,4 @@ tzdata==2026.1
 urllib3==2.6.3
 Werkzeug==3.1.8
 zope.interface==8.3
+waitress==3.0.2

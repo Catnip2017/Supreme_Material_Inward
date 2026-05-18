@@ -289,8 +289,8 @@ Dismiss Any Popup
 
 
 Close SAP Session
-    Log    PO fetch finished. Session kept open.
-    RETURN
+    # Log    PO fetch finished. Session kept open.
+    # RETURN
 
     Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
     Run Keyword And Ignore Error    Send VKey     wnd[0]    0

@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS po_line_items (
     po_qty          VARCHAR(30),
     unit            VARCHAR(20),
     delivery_date   VARCHAR(20),
+    amount          VARCHAR(30),
+    rate            VARCHAR(30),
+    hsn_sac         VARCHAR(30,)    
     fetched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

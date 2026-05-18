@@ -9,6 +9,7 @@ v4 changes:
 - After OCR failure → group folder moved to failed/<group_key>_<timestamp>/
 - 60-day orphan cleanup: incomplete groups in grouped/ moved to failed/orphan_*
 - ocr_status set on history record
+
 """
 
 import os
@@ -37,8 +38,8 @@ GROUPED_FOLDER   = os.path.join(WATCH_FOLDER, "grouped")
 OCR_DONE_FOLDER  = os.path.join(os.path.dirname(WATCH_FOLDER), "ocr_done")
 FAILED_FOLDER    = os.path.join(os.path.dirname(WATCH_FOLDER), "failed")
 
-STABLE_SECONDS = 60      # File must be unmodified this long before being touched
-ORPHAN_DAYS    = 60      # Incomplete groups in grouped/ deleted after this many days
+STABLE_SECONDS = 30      # File must be unmodified this long before being touched
+ORPHAN_DAYS    = 60      #Must match DB_RETENTION_DAYS in app.py cleanup
 POLL_INTERVAL  = 30      # Watcher cycle interval
 
 
@@ -246,7 +247,12 @@ def _process_batch(group_key: str, group_folder: str, files_by_type: dict):
 # ============================================================
 
 def _cleanup_orphans():
-    """Move groups in grouped/ older than ORPHAN_DAYS to failed/orphan_<group>/."""
+    """
+    Move incomplete groups in grouped/ older than ORPHAN_DAYS to failed/orphan_*.
+    These are groups that never got all 3 docs (invoice + eway + lr).
+    We do NOT call set_ocr_status here — if a history record existed for this
+    group it was already cleaned by the DB retention job.
+    """
     if not os.path.exists(GROUPED_FOLDER):
         return
 
@@ -260,13 +266,19 @@ def _cleanup_orphans():
             mtime = datetime.fromtimestamp(os.path.getmtime(group_folder))
             if mtime < cutoff:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                fail_dest = os.path.join(FAILED_FOLDER, f"orphan_{group_key}_{timestamp}")
+                fail_dest = os.path.join(
+                    FAILED_FOLDER, f"orphan_{group_key}_{timestamp}"
+                )
                 shutil.move(group_folder, fail_dest)
-                logger.warning(f"Orphan group cleaned: {group_key} (older than {ORPHAN_DAYS}d) → failed/orphan_*")
+                logger.warning(
+                    f"Orphan group cleaned: {group_key} "
+                    f"({ORPHAN_DAYS}d old) → {fail_dest}"
+                )
+                # NOTE: No set_ocr_status call here intentionally.
+                # group folders in grouped/ never had a history record
+                # created for them yet (OCR never ran — they were incomplete).
         except Exception as e:
             logger.error(f"Orphan cleanup failed for {group_key}: {e}")
-
-
 # ============================================================
 # MAIN POLL LOOP
 # ============================================================
@@ -279,9 +291,18 @@ def _poll_loop(interval: int = POLL_INTERVAL):
 
     while True:
         try:
-            _sweep_loose_files()
-            _process_complete_groups()
+            # Guard: if watch folder is a network drive that went offline
+            if not os.path.exists(WATCH_FOLDER):
+                logger.error(
+                    f"Watch folder not accessible: {WATCH_FOLDER} — "
+                    f"Z: drive may be disconnected. Retrying in {interval}s."
+                )
+                time.sleep(interval)
+                continue
 
+            _sweep_loose_files()           # ← was missing
+            _process_complete_groups()
+            
             # Run orphan cleanup once a day
             if time.time() - last_orphan_check > 86400:
                 _cleanup_orphans()

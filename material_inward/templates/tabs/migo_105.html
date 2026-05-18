@@ -16,10 +16,10 @@
 
 .matched-105 {
   margin-top:18px;
-  border:2px solid #6c5ce7; border-radius:8px; overflow:hidden;
+  border:2px solid #1e5ca8; border-radius:8px; overflow:hidden;
 }
 .matched-105-header {
-  background:#6c5ce7; color:#fff;
+  background:#1e5ca8; color:#fff;
   padding:9px 16px; font-weight:700; font-size:13px;
 }
 .matched-105-table { width:100%; border-collapse:collapse; font-size:12px; }
@@ -34,10 +34,10 @@
 }
 .matched-105-table input.batch-input {
   width:140px; padding:5px 8px; font-size:12px;
-  border:1.5px solid #c5b9f5; border-radius:5px;
+  border:1.5px solid #c5d8f8; border-radius:5px;
 }
 .matched-105-table input.batch-input:focus {
-  outline:none; border-color:#6c5ce7;
+  outline:none; border-color:#1e5ca8;
 }
 </style>
 
@@ -65,13 +65,26 @@
 <div class="gate-banner unlocked">✓ <strong>MIGO 103 Done</strong> — Ready for MIGO 105 posting.</div>
 {% endif %}
 
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
+
   <input type="hidden" id="history_id_migo105" value="{{ history_id or '' }}">
 
   <div class="form-group">
     <label>Material Document Number <span style="font-size:11px;color:#1e5ca8;">(auto-filled from MIGO 103)</span></label>
-    <input type="text" id="materialDocNumber105" class="form-input readonly-field"
-           value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
-           readonly>
+    <input type="text" id="materialDocNumber105" class="form-input"
+       value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
+       placeholder="Material document number from MIGO 103">
   </div>
 
   <div class="form-row">
@@ -124,17 +137,16 @@
 
   <div class="action-buttons">
     <button type="button" id="migo105Btn" class="btn btn-primary" onclick="submitMigo105()"
-       
-            style="{% if history and history.migo_105 %}background:#00b894;{% else %}background:#6c5ce7;{% endif %}">
-      {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
-    </button>
+        style="{% if history and history.migo_105 %}background:#00b894;{% else %}background:#1e5ca8;{% endif %};padding:10px 20px;font-size:14px;font-weight:600;min-width:160px;">
+  {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
+</button>
   </div>
 </div>
 
 
 <script>
 const POST_LOCKED_105 = {{ 'true' if post_locked else 'false' }};
-// const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+
 
 const HISTORY_ID_105 = {{ history_id|tojson }};
 const MIGO_105_LOCKED = false;
@@ -249,6 +261,7 @@ function _doSubmitMigo105() {
     vendorInvoiceDetail: document.getElementById('vendorInvoiceDetail105').value,
     remarks105:          document.getElementById('remarks105').value,
     line_batches:        _collectBatchesByLine(),
+    material_doc_number_override: document.getElementById('materialDocNumber105').value.trim(),
   };
 
   const btn      = document.getElementById('migo105Btn');

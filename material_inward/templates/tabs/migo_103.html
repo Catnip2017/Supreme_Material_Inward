@@ -47,7 +47,7 @@
 }
 .compare-close:hover { color:#e74c3c; }
 .btn-compare {
-  background:linear-gradient(135deg,#9b59b6,#8e44ad); color:white;
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white;
   border:none; padding:10px 20px; border-radius:8px;
   font-size:13px; font-weight:600; cursor:pointer;
 }
@@ -101,10 +101,10 @@
 .pair-btn.paired-inv { border-color:#1e5ca8; background:#1e5ca8; color:white; }
 .pair-btn.paired-po  { border-color:#00b894; background:#00b894; color:white; }
 
-.match-controls {
+/* .match-controls {
   display:flex; align-items:center; justify-content:center;
   margin-top:14px; gap:12px; flex-wrap:wrap;
-}
+} */
 .btn-match, .btn-auto-pair, .btn-reset {
   border:none; padding:8px 22px; border-radius:6px; cursor:pointer;
   font-weight:600; font-size:13px; transition:.2s;
@@ -112,8 +112,8 @@
 .btn-match { background:#1e5ca8; color:#fff; }
 .btn-match:hover:not(:disabled) { background:#154a8a; }
 .btn-match:disabled { background:#b0bec5; cursor:not-allowed; }
-.btn-auto-pair { background:#9b59b6; color:white; }
-.btn-auto-pair:hover { background:#8e44ad; }
+.btn-auto-pair { background:#1e5ca8; color:white; }
+.btn-auto-pair:hover { background:#164a8a; }
 .btn-reset { background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; }
 .btn-reset:hover { background:#fecaca; }
 
@@ -125,12 +125,12 @@
 /* Matched pairs table */
 .matched-section {
   margin-top:18px;
-  border:2px solid #7c3aed; border-radius:8px; overflow:hidden;
+  border:2px solid #1e5ca8; border-radius:8px; overflow:hidden;
   animation:fadeIn .3s ease;
 }
 @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
 .matched-section-header {
-  background:#7c3aed; color:#fff;
+  background:#1e5ca8; color:#fff;
   padding:9px 16px; font-weight:700; font-size:13px;
   display:flex; align-items:center; justify-content:space-between;
 }
@@ -190,6 +190,19 @@
 <div class="gate-banner">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 103.</div>
 {% else %}
 <div class="gate-banner unlocked">✓ <strong>Gate In Done</strong> — Ready for MIGO 103 posting.</div>
+{% endif %}
+
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
 {% endif %}
 
   <input type="hidden" id="history_id_migo" value="{{ history_id or '' }}">
@@ -307,9 +320,7 @@
               </tr>
               {% endfor %}
             </tbody>
-            <div style="margin-top:8px;">
-            <button type="button" class="btn-row-add" onclick="addInvoiceRow()">➕ Add Line Item</button>
-          </div>
+            
           </table>
         </div>
       </div>
@@ -352,13 +363,29 @@
       </div>
     </div>
 
-    <div class="match-controls">
-      <button type="button" class="btn-auto-pair" onclick="autoPair()" {% if step_locked %}disabled{% endif %}>🪄 Auto-Pair</button>
-      <button type="button" class="btn-match" id="confirmMatchBtn" onclick="confirmMatches()" {% if step_locked %}disabled{% endif %}>🔗 Confirm Matches</button>
+  <div style="position:relative;margin-top:14px;">
+    
+    <!-- Add Line Item — extreme left -->
+    <button type="button" class="btn-row-add" onclick="addInvoiceRow()"
+            style="position:absolute;left:0;top:50%;transform:translateY(-50%);">
+      ➕ Add Line Item
+    </button>
+
+    <!-- Center buttons -->
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
+      <button type="button" class="btn-auto-pair" onclick="autoPair()">🪄 Auto-Pair</button>
+      <button type="button" class="btn-match" id="confirmMatchBtn" onclick="confirmMatches()">🔗 Confirm Matches</button>
       <button type="button" id="confirmSingleBtn" class="btn-match" onclick="confirmSingleInvoiceLine()" style="background:#e67e22;display:none;">✓ Add Without PO Match</button>
-      <button type="button" class="btn-reset" onclick="resetAllMatches()" {% if step_locked %}disabled{% endif %}>🗑 Reset All</button>
-      <span class="match-hint" id="matchHint">No pairs marked yet</span>
+      <button type="button" class="btn-reset" onclick="resetAllMatches()">🗑 Reset All</button>
     </div>
+
+    <!-- Hint text — extreme right -->
+    <span class="match-hint" id="matchHint"
+          style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:12px;color:#888;">
+      No pairs marked yet
+    </span>
+
+  </div>
 
     <!-- Matched pairs section -->
     <div class="matched-section" id="matchedSection" style="display:none;">
@@ -433,7 +460,6 @@
 
 
 const POST_LOCKED_103 = {{ 'true' if post_locked else 'false' }};
-// const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 (function() {
   const pd = document.getElementById('migoPostDate');
@@ -616,22 +642,32 @@ function confirmSingleInvoiceLine() {
 const AUTO_PAIR_MIN = {{ config.AUTO_PAIR_MIN_MATCHES if config and config.AUTO_PAIR_MIN_MATCHES else 3 }};
 const AUTO_PAIR_AMT_TOL = {{ config.AUTO_PAIR_AMOUNT_TOLERANCE if config and config.AUTO_PAIR_AMOUNT_TOLERANCE else 5 }};
 
+
 function autoPair() {
   resetAllMatches();
 
   const invRows = document.querySelectorAll('#invoiceItemsBody tr');
   const poRows  = document.querySelectorAll('#poItemsBody tr');
 
+  function norm(v) {
+    if (!v) return '';
+    return String(v)
+      .trim()
+      .replace(/,/g, '')
+      .split(/\s+/)[0]       // "20 EA" → "20"
+      .replace(/\.0+$/, '')  // "6000.00" → "6000"
+      .toLowerCase();
+  }
+
   const invData = Array.from(invRows).map(r => {
     const inputs = r.querySelectorAll('input[type="text"]');
     return {
       el:            r.querySelector('.pair-btn-inv'),
-      material_code: (inputs[0]?.value || '').trim(),
-      short_text:    (inputs[1]?.value || '').trim(),
-      quantity:      (inputs[2]?.value || '').trim(),
-      rate:          (inputs[3]?.value || '').trim(),
-      amount:        (inputs[4]?.value || '').trim(),
-      hsn_sac:       (inputs[5]?.value || '').trim(),
+      material_code: norm(inputs[0]?.value),
+      hsn_sac:       norm(inputs[5]?.value),
+      quantity:      norm(inputs[2]?.value),
+      rate:          norm(inputs[3]?.value),
+      amount:        norm(inputs[4]?.value),
     };
   });
 
@@ -639,58 +675,151 @@ function autoPair() {
     const cells = r.querySelectorAll('td');
     return {
       el:            r.querySelector('.pair-btn-po'),
-      material_code: (cells[2]?.textContent || '').trim(),
-      short_text:    (cells[3]?.textContent || '').trim(),
-      quantity:      (cells[4]?.textContent || '').trim(),
-      rate:          (cells[5]?.textContent || '').trim(),
-      amount:        (cells[6]?.textContent || '').trim(),
-      hsn_sac:       (cells[7]?.textContent || '').trim(),
+      material_code: norm(cells[2]?.textContent),
+      hsn_sac:       norm(cells[7]?.textContent),
+      quantity:      norm(cells[4]?.textContent),
+      rate:          norm(cells[5]?.textContent),
+      amount:        norm(cells[6]?.textContent),
     };
   });
 
-  let pairCounter = 1;
-  const usedPo = new Set();
+  let usedPo = new Set();
 
   invData.forEach((inv, i) => {
     if (!inv.el) return;
-    let bestPo = null;
-    let bestScore = 0;
 
     poData.forEach((po, idx) => {
       if (usedPo.has(idx) || !po.el) return;
-      let score = 0;
 
-      // Exact matches only — no tolerance
-      if (inv.hsn_sac  && po.hsn_sac  && inv.hsn_sac  === po.hsn_sac)  score++;
-      if (inv.rate     && po.rate     && inv.rate     === po.rate)     score++;
-      if (inv.amount   && po.amount   && inv.amount   === po.amount)   score++;
-      if (inv.quantity && po.quantity && inv.quantity === po.quantity) score++;
+      // ALL FOUR must match — AND logic
+      const hsnMatch      = inv.hsn_sac  && po.hsn_sac  && inv.hsn_sac  === po.hsn_sac;
+      const rateMatch     = inv.rate     && po.rate     && inv.rate     === po.rate;
+      const qtyMatch      = inv.quantity && po.quantity && inv.quantity === po.quantity;
+      const amountMatch   = inv.amount   && po.amount   && inv.amount   === po.amount;
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestPo = idx;
+      if (hsnMatch && rateMatch && qtyMatch && amountMatch) {
+        const pairNum = _pairCounter++;
+        _pairs.push({ invIdx: i, poIdx: idx, pairNum });
+
+        inv.el.setAttribute('data-pair', pairNum);
+        inv.el.textContent = pairNum;
+        inv.el.classList.add('paired-inv');
+
+        po.el.setAttribute('data-pair', pairNum);
+        po.el.textContent = pairNum;
+        po.el.classList.add('paired-po');
+
+        usedPo.add(idx);
       }
     });
-
-    if (bestScore >= AUTO_PAIR_MIN && bestPo !== null) {
-    const pairNum = _pairCounter++;
-    _pairs.push({ invIdx: i, poIdx: bestPo, pairNum });
-
-    inv.el.setAttribute('data-pair', pairNum);
-    inv.el.textContent = pairNum;
-    inv.el.classList.add('paired-inv');
-
-    poData[bestPo].el.setAttribute('data-pair', pairNum);
-    poData[bestPo].el.textContent = pairNum;
-    poData[bestPo].el.classList.add('paired-po');
-
-    usedPo.add(bestPo);
-  }
   });
 
-  _nextPairNum = pairCounter;
   _updateMatchHint();
+
+  const count = _pairs.length;
+  if (count === 0) {
+    // Show exactly which fields failed per row so user knows what to fix
+    let msg = 'Auto-pair: no rows matched.\n\nAll four fields must match:\n';
+    msg += 'HSN/SAC  ✓ + Rate ✓ + Quantity ✓ + Amount ✓\n\n';
+
+    invData.forEach((inv, i) => {
+      msg += `Invoice row ${i + 1}:\n`;
+      poData.forEach((po, j) => {
+        const h = inv.hsn_sac  === po.hsn_sac  ? '✓' : `✗ (${inv.hsn_sac} vs ${po.hsn_sac})`;
+        const r = inv.rate     === po.rate     ? '✓' : `✗ (${inv.rate} vs ${po.rate})`;
+        const q = inv.quantity === po.quantity ? '✓' : `✗ (${inv.quantity} vs ${po.quantity})`;
+        const a = inv.amount   === po.amount   ? '✓' : `✗ (${inv.amount} vs ${po.amount})`;
+        msg += `  vs PO row ${j + 1}: HSN ${h} | Rate ${r} | Qty ${q} | Amt ${a}\n`;
+      });
+    });
+
+    msg += '\nUse manual pairing if values differ.';
+    alert(msg);
+  } else {
+    const hint = document.getElementById('matchHint');
+    if (hint) {
+      hint.textContent = `✓ ${count} pair(s) matched — click Confirm Matches`;
+      hint.classList.add('ready');
+    }
+  }
 }
+// function autoPair() {
+//   resetAllMatches();
+
+//   const invRows = document.querySelectorAll('#invoiceItemsBody tr');
+//   const poRows  = document.querySelectorAll('#poItemsBody tr');
+
+
+
+//   const invData = Array.from(invRows).map(r => {
+//     const inputs = r.querySelectorAll('input[type="text"]');
+//     return {
+//       el:            r.querySelector('.pair-btn-inv'),
+//       material_code: (inputs[0]?.value || '').trim(),
+//       short_text:    (inputs[1]?.value || '').trim(),
+//       quantity:      (inputs[2]?.value || '').trim(),
+//       rate:          (inputs[3]?.value || '').trim(),
+//       amount:        (inputs[4]?.value || '').trim(),
+//       hsn_sac:       (inputs[5]?.value || '').trim(),
+//     };
+//   });
+
+//   const poData = Array.from(poRows).map(r => {
+//     const cells = r.querySelectorAll('td');
+//     return {
+//       el:            r.querySelector('.pair-btn-po'),
+//       material_code: (cells[2]?.textContent || '').trim(),
+//       short_text:    (cells[3]?.textContent || '').trim(),
+//       quantity:      (cells[4]?.textContent || '').trim(),
+//       rate:          (cells[5]?.textContent || '').trim(),
+//       amount:        (cells[6]?.textContent || '').trim(),
+//       hsn_sac:       (cells[7]?.textContent || '').trim(),
+//     };
+//   });
+
+//   let pairCounter = 1;
+//   const usedPo = new Set();
+
+//   invData.forEach((inv, i) => {
+//     if (!inv.el) return;
+//     let bestPo = null;
+//     let bestScore = 0;
+
+//     poData.forEach((po, idx) => {
+//       if (usedPo.has(idx) || !po.el) return;
+//       let score = 0;
+
+//       // Exact matches only — no tolerance
+//       if (inv.hsn_sac  && po.hsn_sac  && inv.hsn_sac  === po.hsn_sac)  score++;
+//       if (inv.rate     && po.rate     && inv.rate     === po.rate)     score++;
+//       if (inv.amount   && po.amount   && inv.amount   === po.amount)   score++;
+//       if (inv.quantity && po.quantity && inv.quantity === po.quantity) score++;
+
+//       if (score > bestScore) {
+//         bestScore = score;
+//         bestPo = idx;
+//       }
+//     });
+
+//     if (bestScore >= AUTO_PAIR_MIN && bestPo !== null) {
+//     const pairNum = _pairCounter++;
+//     _pairs.push({ invIdx: i, poIdx: bestPo, pairNum });
+
+//     inv.el.setAttribute('data-pair', pairNum);
+//     inv.el.textContent = pairNum;
+//     inv.el.classList.add('paired-inv');
+
+//     poData[bestPo].el.setAttribute('data-pair', pairNum);
+//     poData[bestPo].el.textContent = pairNum;
+//     poData[bestPo].el.classList.add('paired-po');
+
+//     usedPo.add(bestPo);
+//   }
+//   });
+
+//   _nextPairNum = pairCounter;
+//   _updateMatchHint();
+// }
 
 // function autoPair() {
 //   resetAllMatches();
@@ -825,7 +954,7 @@ function confirmMatches() {
 
     tr.innerHTML = `
       <td class="drag-handle" draggable="true">⠿</td>
-      <td style="font-weight:600;color:#7c3aed;">${idx + 1}</td>
+      <td style="font-weight:600;color:#1e5ca8;">${idx + 1}</td>
       <td>${_esc(inv.material_code || po.material_code)}</td>
       <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
       <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>

@@ -121,13 +121,30 @@ def _cleanup_loop():
         time.sleep(86400)  # daily
         try:
             cleanup_old_notifications(days=7)
-            if date.today().day == 1:
-                _clear_old_records()
+
+            # Only delete records that are fully DONE (miro=1)
+            # and older than 60 days — matches folder watcher ORPHAN_DAYS
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            DELETE FROM history
+                            WHERE miro = 1
+                              AND created_at < NOW() - INTERVAL '60 days'
+                            """
+                        )
+                        deleted = cur.rowcount
+                        if deleted:
+                            logger.info(
+                                f"Cleanup: deleted {deleted} completed "
+                                f"records older than 60 days."
+                            )
+            except Exception as e:
+                logger.error(f"Record cleanup error: {e}")
+
         except Exception as e:
             logger.error(f"Cleanup loop error: {e}")
-
-
-threading.Thread(target=_cleanup_loop, daemon=True, name="DailyCleanup").start()
 
 
 # ============================================================
@@ -650,11 +667,11 @@ def api_notifications_mark_read(notif_id):
     return jsonify({"success": mark_as_read(notif_id)})
 
 
-@app.route("/api/notifications/mark_all_read", methods=["POST"])
-@api_login_required
-def api_notifications_mark_all_read():
-    count = mark_all_as_read_for_user(session.get("username"))
-    return jsonify({"success": True, "marked": count})
+# @app.route("/api/notifications/mark_all_read", methods=["POST"])
+# @api_login_required
+# def api_notifications_mark_all_read():
+#     count = mark_all_as_read_for_user(session.get("username"))
+#     return jsonify({"success": True, "marked": count})
 
 
 # ============================================================
@@ -799,7 +816,6 @@ def run_migo_103():
         return jsonify({"success": False, "error": "MIGO 103 already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
-
 @app.route("/api/run_migo_105", methods=["POST"])
 @api_login_required
 def run_migo_105():
@@ -817,27 +833,106 @@ def run_migo_105():
         return jsonify({"success": False, "error": reason}), 400
 
     migo_entry = get_migo_entry(history_id)
-    material_doc = (migo_entry or {}).get("material_doc_number") or history.get("material_doc_number")
-    if not material_doc:
-        return jsonify({"success": False, "error": "Material Doc Number missing — ensure MIGO 103 completed."}), 400
+
+    # Get mat doc — UI override takes priority over DB value
+    mat_doc = (
+        data.get("material_doc_number_override", "").strip() or
+        (migo_entry or {}).get("material_doc_number", "").strip() or
+        history.get("material_doc_number", "").strip() or
+        ""
+    )
+
+    if not mat_doc:
+        return jsonify({
+            "success": False,
+            "error": "Material Doc Number missing — ensure MIGO 103 completed."
+        }), 400
+
+    # If user typed a new mat doc, save it to DB immediately
+    if data.get("material_doc_number_override", "").strip():
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """UPDATE migo_entries 
+                           SET material_doc_number = %s, updated_at = CURRENT_TIMESTAMP
+                           WHERE history_id = %s""",
+                        (mat_doc, history_id)
+                    )
+                    cur.execute(
+                        """UPDATE history
+                           SET material_doc_number = %s, updated_at = CURRENT_TIMESTAMP
+                           WHERE id = %s""",
+                        (mat_doc, history_id)
+                    )
+            logger.info(
+                f"Material doc number manually updated for "
+                f"history_id={history_id}: {mat_doc}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to save manual mat doc override: {e}")
 
     save_migo_105_fields(history_id, data)
 
-    # Save per-line batches if provided
     line_batches = data.get("line_batches") or []
     if line_batches:
         update_migo_105_items_with_batches(history_id, line_batches)
 
     rf_payload = {
-        "material_doc_number":     material_doc,
-        "migo_105_storage_loc":    data.get("storageLocation"),
-        "migo_105_vendor_invoice": data.get("vendorInvoiceDetail"),
-        "migo_105_remarks":        data.get("remarks105"),
+        "material_doc_number":          mat_doc,
+        "material_doc_number_override": mat_doc,
+        "migo_105_storage_loc":         data.get("storageLocation"),
+        "migo_105_vendor_invoice":      data.get("vendorInvoiceDetail"),
+        "migo_105_remarks":             data.get("remarks105"),
     }
+
     job_id = enqueue_rf_job(history_id, "migo_105", rf_payload)
     if not job_id:
         return jsonify({"success": False, "error": "MIGO 105 already processing."}), 409
-    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+    return jsonify({
+        "success": True,
+        "job_id": job_id,
+        "poll_url": f"/api/queue_status/{job_id}"
+    })
+
+# @app.route("/api/run_migo_105", methods=["POST"])
+# @api_login_required
+# def run_migo_105():
+#     data = request.get_json(silent=True) or {}
+#     history_id = data.get("history_id")
+#     if not history_id:
+#         return jsonify({"success": False, "error": "Missing history_id"}), 400
+
+#     history = get_history_by_id(history_id)
+#     if not history:
+#         return jsonify({"success": False, "error": "Record not found"}), 404
+
+#     allowed, reason = _check_step_allowed(history, "migo_105")
+#     if not allowed:
+#         return jsonify({"success": False, "error": reason}), 400
+
+#     migo_entry = get_migo_entry(history_id)
+#     material_doc = (migo_entry or {}).get("material_doc_number") or history.get("material_doc_number")
+#     if not material_doc:
+#         return jsonify({"success": False, "error": "Material Doc Number missing — ensure MIGO 103 completed."}), 400
+
+#     save_migo_105_fields(history_id, data)
+
+#     # Save per-line batches if provided
+#     line_batches = data.get("line_batches") or []
+#     if line_batches:
+#         update_migo_105_items_with_batches(history_id, line_batches)
+
+#     rf_payload = {
+#         "material_doc_number":     material_doc,
+#         "migo_105_storage_loc":    data.get("storageLocation"),
+#         "migo_105_vendor_invoice": data.get("vendorInvoiceDetail"),
+#         "migo_105_remarks":        data.get("remarks105"),
+#     }
+#     job_id = enqueue_rf_job(history_id, "migo_105", rf_payload)
+#     if not job_id:
+#         return jsonify({"success": False, "error": "MIGO 105 already processing."}), 409
+#     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
 
 @app.route("/api/run_miro", methods=["POST"])

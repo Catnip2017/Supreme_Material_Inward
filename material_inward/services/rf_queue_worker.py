@@ -19,12 +19,14 @@ from database.rf_queue_operations import (
     enqueue_rf_job
 )
 from database.db_operations import update_history_step, get_history_details_by_id
-from database.gatein_operations import update_gatein_rf_result
+from database.gatein_operations import update_gatein_rf_result, get_gatein_entry
 from database.migo_operations import (
     update_migo_103_rf_result,
     update_migo_105_rf_result,
     upsert_migo_entry,
     get_migo_entry,
+   
+    
 )
 from database.miro_operations import update_miro_rf_result
 from services.rf_runner import (
@@ -62,6 +64,8 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
 
         details = get_history_details_by_id(history_id)
         inv = details.get("invoice_data") or {}
+        eway = details.get("ewaybill_data") or {}
+
         send_gate_in_notification(
             gate_in_number=gin,
             history_id=history_id,
@@ -70,37 +74,76 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
         )
         logger.info(f"Gate In complete — history_id={history_id} GIN={gin}")
 
-        # Auto-enqueue PO fetch
-        gatein_entry = details.get("gatein_data") or {}
+        # ── FIX: read from DB directly, not from details dict ──────────
+        gatein_entry = get_gatein_entry(history_id) or {}
+
         po_number = (
-            gatein_entry.get("purchase_order") or
-            payload.get("purchaseOrder") or
-            inv.get("po_number") or ""
+            gatein_entry.get("purchase_order")   or   # Gate In form value (user-entered)
+            payload.get("purchaseOrder")          or   # payload sent by frontend
+            inv.get("po_number")                  or   # from invoice OCR
+            eway.get("po_number")                 or   # from eway bill OCR
+            ""
         )
+        # ───────────────────────────────────────────────────────────────
+
         if po_number:
             po_job_id = enqueue_rf_job(
                 history_id, "po_fetch",
                 {"po_number": po_number, "history_id": history_id}
             )
             if po_job_id:
-                logger.info(f"PO fetch enqueued — history_id={history_id} job_id={po_job_id}")
+                logger.info(
+                    f"PO fetch enqueued — history_id={history_id} "
+                    f"job_id={po_job_id} po={po_number}"
+                )
+            else:
+                logger.warning(
+                    f"PO fetch already queued for history_id={history_id}"
+                )
         else:
-            logger.warning(f"No PO number found for history_id={history_id} — PO fetch skipped.")
+            logger.warning(
+                f"No PO number found for history_id={history_id} — "
+                f"gatein_entry keys: {list(gatein_entry.keys())}"
+            )
     else:
-        update_gatein_rf_result(history_id, "", status="failed", error_message=result.get("error"))
+        update_gatein_rf_result(
+            history_id, "", status="failed",
+            error_message=result.get("error")
+        )
+    # ── Notify admin that Gate In needs manual check ──
+        from database.notifications_operations import create_notification
+        create_notification(
+            history_id=history_id,
+            title="Gate In Failed — Manual Check Required",
+            message=result.get("error", "Gate In did not capture a GIN from SAP."),
+            notification_type="ocr_failed",
+            role_target="gate_in"
+        )
     return result
 
-
+# Fix:
 def _process_po_fetch(history_id: int, payload: dict) -> dict:
     result = execute_po_fetch_sap(payload)
     if result.get("success"):
         po_items = result.get("po_items", [])
         save_po_line_items(history_id, po_items)
-        logger.info(f"PO fetch complete — history_id={history_id} {len(po_items)} line(s).")
+        logger.info(
+            f"PO fetch complete — history_id={history_id} "
+            f"{len(po_items)} line(s)."
+        )
+        if not po_items:
+            # SAP returned no lines — log it clearly so user knows
+            logger.warning(
+                f"PO fetch returned 0 items for history_id={history_id} "
+                f"po={payload.get('po_number')} — PO may have no open lines."
+            )
     else:
-        logger.warning(f"PO fetch failed for history_id={history_id}: {result.get('error')}")
-    return {"success": True, "error": result.get("error")}
-
+        logger.warning(
+            f"PO fetch failed for history_id={history_id}: "
+            f"{result.get('error')}"
+        )
+    # Return actual success/failure so complete_rf_job records it correctly
+    return result
 
 def _process_po_list_fetch(history_id: int, payload: dict) -> dict:
     result = execute_po_list_fetch_sap(payload)
@@ -142,7 +185,11 @@ def _process_migo_105(history_id: int, payload: dict) -> dict:
         update_migo_105_rf_result(history_id, status="failed", error_message="No MIGO entry found")
         return {"success": False, "error": "No MIGO entry found"}
 
-    mat_doc = migo_entry.get("material_doc_number", "")
+    mat_doc = (
+        payload.get("material_doc_number_override") or  # user edited
+        migo_entry.get("material_doc_number", "") or    # from DB
+        ""
+    )
     if not mat_doc:
         logger.error(f"MIGO 105 — material_doc_number empty for history_id={history_id}")
         update_migo_105_rf_result(history_id, status="failed", error_message="No material doc from MIGO 103")
@@ -204,7 +251,11 @@ STEP_HANDLERS = {
 
 def _worker_loop() -> None:
     logger.info("RF Queue Worker started.")
-    reset_stuck_running_jobs(minutes=0)
+    reset_stuck_running_jobs(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+    logger.warning(
+    "Worker started — resetting any jobs stuck in 'running' "
+    f"longer than {STUCK_JOB_TIMEOUT_MINUTES} minutes."
+)
     last_stuck_check = datetime.now()
 
     while True:
@@ -232,8 +283,18 @@ def _worker_loop() -> None:
                 complete_rf_job(job_id, False, {"error": f"Unknown step: {step}"})
                 continue
 
-            result = handler(history_id, payload)
-            complete_rf_job(job_id, result.get("success", False), result)
+            try:
+                result = handler(history_id, payload)
+                success = result.get("success", False)
+            except Exception as e:
+                logger.error(
+                    f"Handler crashed for job_id={job_id} step={step}: {e}",
+                    exc_info=True
+                )
+                result = {"success": False, "error": str(e)}
+                success = False
+            finally:
+                complete_rf_job(job_id, success, result)
 
         except Exception as e:
             logger.error(f"Unexpected error in RF worker loop: {e}", exc_info=True)

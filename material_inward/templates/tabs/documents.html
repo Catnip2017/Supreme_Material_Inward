@@ -1,3 +1,15 @@
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
 <div class="content-card" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
   <h3 style="color: #333; margin-bottom: 20px;">📁 Original Documents</h3>
   

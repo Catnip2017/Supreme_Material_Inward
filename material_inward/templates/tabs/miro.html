@@ -40,6 +40,18 @@
 
   <form id="miroForm" novalidate>
     <input type="hidden" id="history_id_miro" value="{{ history_id or '' }}">
+    {% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
 
     <!-- <div class="form-row">
       <div class="form-group">
@@ -128,8 +140,7 @@
 
     <div class="action-buttons">
       <button type="submit" id="miroSubmitBtn" class="btn btn-primary"
-        {% if post_locked %}disabled title="Post MIGO 105 first"{% endif %}
-              {% if history and history.miro %}style="background:#00b894;"{% endif %}>
+        {% if history and history.miro %}style="background:#00b894;"{% endif %}>
         {% if history and history.miro %}✓ MIRO Posted — Complete{% else %}📮 Post MIRO{% endif %}
       </button>
     </div>
@@ -141,7 +152,6 @@
 <script>
 
 const POST_LOCKED_MIRO = {{ 'true' if post_locked else 'false' }};
-// const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 (function() {
   const el = document.getElementById('miroPostingDate');
@@ -195,37 +205,44 @@ document.getElementById('miroForm').addEventListener('submit', function(e) {
 });
 
 function _doSubmitMiro(historyId) {
-  const payload = {
+  // Safe getter — returns fallback if element is commented out or missing
+  function val(id, fallback) {
+    fallback = fallback === undefined ? '' : fallback;
+    var el = document.getElementById(id);
+    return el ? el.value : fallback;
+  }
+
+  var payload = {
     history_id:        historyId,
-    miroTransaction:   document.getElementById('miroTransaction').value,
-    miroDiffPosting:   document.getElementById('miroDiffPosting').value,
-    miroInvoiceDate:   document.getElementById('miroInvoiceDate').value,
-    miroPostingDate:   document.getElementById('miroPostingDate').value,
-    miroReference:     document.getElementById('miroReference').value,
-    miroAmount:        document.getElementById('miroAmount').value,
-    miroTaxAmount:     document.getElementById('miroTaxAmount').value,
-    miroTaxCode:       document.getElementById('miroTaxCode').value,
-    miroText:          document.getElementById('miroText').value,
-    miroPurchaseOrder: document.getElementById('miroPurchaseOrder').value,
+    miroTransaction:   val('miroTransaction', '1'),   // default: Invoice
+    miroDiffPosting:   val('miroDiffPosting', ''),
+    miroInvoiceDate:   val('miroInvoiceDate'),
+    miroPostingDate:   val('miroPostingDate'),
+    miroReference:     val('miroReference'),
+    miroAmount:        val('miroAmount'),
+    miroTaxAmount:     val('miroTaxAmount'),
+    miroTaxCode:       val('miroTaxCode', 'V0'),
+    miroText:          val('miroText', ''),
+    miroPurchaseOrder: val('miroPurchaseOrder'),
   };
 
-  const btn = document.getElementById('miroSubmitBtn');
-  const statusEl = document.getElementById('miroStatus');
+  var btn      = document.getElementById('miroSubmitBtn');
+  var statusEl = document.getElementById('miroStatus');
 
   submitAndPoll('/api/run_miro', payload, btn, {
-    onSuccess: () => {
+    onSuccess: function() {
       statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
       statusEl.textContent   = '✓ MIRO posted successfully! Process complete.';
       btn.textContent        = '✓ MIRO Posted — Complete';
       btn.style.background   = '#00b894';
     },
-    onFailure: (error) => {
+    onFailure: function(error) {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
-      statusEl.textContent   = `❌ ${error}`;
+      statusEl.textContent   = '❌ ' + error;
     },
-    onError: (error) => {
+    onError: function(error) {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
-      statusEl.textContent   = `❌ ${error}`;
+      statusEl.textContent   = '❌ ' + error;
     }
   });
 }
