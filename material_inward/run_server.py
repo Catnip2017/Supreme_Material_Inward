@@ -16,7 +16,7 @@ def get_local_ip():
         return "unknown"
 
 if __name__ == "__main__":
-    host = "0.0.0.0"
+    host = "127.0.0.1"
     port = 5003
     local_ip = get_local_ip()
     logger.info(f"Starting production server on {host}:{port}")
