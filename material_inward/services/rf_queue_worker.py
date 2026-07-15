@@ -165,16 +165,55 @@ def _process_po_list_fetch(history_id: int, payload: dict) -> dict:
 
 
 def _process_migo_103(history_id: int, payload: dict) -> dict:
+    # Look up po_flow_type / Gate-In / PO details up front now -- for
+    # "without PO" flows, zgatein_update.robot must run BEFORE migo_103.robot
+    # (backfill the PO onto the SAP Gate In record first), not after, per
+    # instruction. This used to be enqueued as a separate job AFTER a
+    # successful MIGO 103 post; it's now run synchronously first instead.
+    details      = get_history_details_by_id(history_id)
+    inv          = details.get("invoice_data") or {}
+    history_rec  = details.get("history") or {}
+    po_flow_type = (history_rec.get("po_flow_type") or "truck_with_po").strip()
+
+    if "without_po" in po_flow_type:
+        gatein_entry   = get_gatein_entry(history_id) or {}
+        gate_in_number = gatein_entry.get("gate_in_number", "")
+        po_number = (
+            payload.get("purchaseOrderNumber") or
+            payload.get("po_number")           or
+            history_rec.get("po_number")       or
+            inv.get("po_number")               or
+            ""
+        )
+        if gate_in_number and po_number:
+            zg_result = _process_update_gatein_po(
+                history_id,
+                {
+                    "gate_in_number": gate_in_number,
+                    "po_number":      po_number,
+                    "history_id":     history_id,
+                }
+            )
+            if not zg_result.get("success"):
+                error_msg = f"zgatein_update failed before MIGO 103 -- {zg_result.get('error')}"
+                logger.error(f"history_id={history_id}: {error_msg}")
+                update_migo_103_rf_result(history_id, "", status="failed", error_message=error_msg)
+                return {"success": False, "error": error_msg}
+            logger.info(
+                f"zgatein_update completed before MIGO 103 — history_id={history_id} "
+                f"GIN={gate_in_number} po={po_number}"
+            )
+        else:
+            logger.warning(
+                f"zgatein_update NOT run before MIGO 103 — history_id={history_id} "
+                f"gate_in_number={gate_in_number!r} po_number={po_number!r}"
+            )
+
     result = execute_migo_103_sap(payload)
     if result.get("success"):
         mat_doc = result["material_doc_number"]
         update_migo_103_rf_result(history_id, mat_doc, status="success")
         update_history_step(history_id, "migo_103", generated_number=mat_doc)
-
-        details    = get_history_details_by_id(history_id)
-        inv        = details.get("invoice_data") or {}
-        history_rec  = details.get("history") or {}
-        po_flow_type = (history_rec.get("po_flow_type") or "truck_with_po").strip()
 
         send_migo_103_notification(
             material_doc_number=mat_doc,
@@ -200,37 +239,6 @@ def _process_migo_103(history_id: int, payload: dict) -> dict:
                 f"PDF consolidation error for history_id={history_id}: {exc}",
                 exc_info=True
             )
-
-        # ── Without-PO flows: update the SAP Gate In entry with the PO ──
-        if "without_po" in po_flow_type:
-            gatein_entry = get_gatein_entry(history_id) or {}
-            gate_in_number = gatein_entry.get("gate_in_number", "")
-            po_number = (
-                payload.get("purchaseOrderNumber") or
-                payload.get("po_number")           or
-                history_rec.get("po_number")       or
-                inv.get("po_number")               or
-                ""
-            )
-            if gate_in_number and po_number:
-                ug_job_id = enqueue_rf_job(
-                    history_id, "update_gatein_po",
-                    {
-                        "gate_in_number": gate_in_number,
-                        "po_number":      po_number,
-                        "history_id":     history_id,
-                    }
-                )
-                if ug_job_id:
-                    logger.info(
-                        f"update_gatein_po enqueued — history_id={history_id} "
-                        f"GIN={gate_in_number} po={po_number}"
-                    )
-            else:
-                logger.warning(
-                    f"update_gatein_po NOT enqueued — history_id={history_id} "
-                    f"gate_in_number={gate_in_number!r} po_number={po_number!r}"
-                )
     else:
         update_migo_103_rf_result(history_id, "", status="failed", error_message=result.get("error"))
     return result

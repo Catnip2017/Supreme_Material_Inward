@@ -371,9 +371,15 @@ document.addEventListener("click", function(e) {
 
 // Confirmation modal helper — used by all SAP-trigger buttons
 let _confirmCallback = null;
-function showConfirm(title, message, onYes) {
+function showConfirm(title, message, onYes, yesLabel) {
+  // NOTE: the Yes button previously always said "Yes, Post to SAP" no matter
+  // which action opened the modal (its text was hardcoded in the HTML and
+  // never updated here) -- e.g. clicking "Re-run OCR" showed the SAP-posting
+  // wording. yesLabel now lets each caller set the button text to match its
+  // own action; defaults to the original text for any caller that doesn't.
   document.getElementById('confirmTitle').textContent = title;
   document.getElementById('confirmMsg').textContent = message;
+  document.getElementById('confirmYesBtn').textContent = yesLabel || 'Yes, Post to SAP';
   _confirmCallback = onYes;
   document.getElementById('confirmModal').classList.add('show');
 }

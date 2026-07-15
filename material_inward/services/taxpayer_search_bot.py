@@ -48,6 +48,10 @@ SCREENSHOT_TTL = 10 * 24 * 3600   # 10 days in seconds
 class TaxpayerSearchBot:
     URL     = "https://services.gst.gov.in/services/searchtp"
     CAP_LEN = 6   # site 2 captcha is exactly 6 chars
+    MAX_SEARCH_ATTEMPTS = 10   # hard cap -- previously unbounded (while True with
+                               # no ceiling), so a persistent failure like a
+                               # missing GSTIN input element would retry forever
+                               # (seen looping 130+ times) instead of failing cleanly.
 
     # XPATHs from gst_captcha_test.py (proven working on prod)
     GSTIN_INPUT_XPATHS = [
@@ -202,9 +206,9 @@ class TaxpayerSearchBot:
         time.sleep(3)
 
         attempt = 0
-        while True:
+        while attempt < self.MAX_SEARCH_ATTEMPTS:
             attempt += 1
-            logger.info(f"[cap] attempt {attempt}")
+            logger.info(f"[cap] attempt {attempt}/{self.MAX_SEARCH_ATTEMPTS}")
             try:
                 # Fill GSTIN
                 gstin_el = self._find(self.GSTIN_INPUT_XPATHS)
@@ -305,6 +309,16 @@ class TaxpayerSearchBot:
             except Exception as exc:
                 logger.error(f"[cap] attempt {attempt} error: {exc}", exc_info=True)
                 time.sleep(2)
+
+        # Cap reached -- previously this loop had no ceiling and would spin
+        # forever (seen looping 130+ times) when a failure was persistent
+        # rather than transient (e.g. GSTIN input never appearing). Raising
+        # here lets search()'s existing except Exception handler catch it and
+        # populate result["error"] cleanly, same as any other bot failure.
+        raise RuntimeError(
+            f"Gave up after {self.MAX_SEARCH_ATTEMPTS} attempts -- page never "
+            "reached a recognizable state (captcha/search element issue)."
+        )
 
     def _refresh_captcha(self):
         el = self._find(self.REFRESH_XPATHS)

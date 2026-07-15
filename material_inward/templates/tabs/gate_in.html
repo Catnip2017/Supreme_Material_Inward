@@ -168,14 +168,14 @@
       <div class="form-group">
         <label>Gate In Date <span class="req">*</span></label>
         <input type="date" id="gateInDate" class="form-input"
-               value="{{ gatein_data.get('gate_in_date', '') if gatein_data else '' }}"
+               value="{{ (gatein_data.get('gate_in_date') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gateInDate">Required</div>
       </div>
       <div class="form-group">
         <label>Gate In Time <span class="req">*</span></label>
         <input type="time" id="gateInTime" class="form-input"
-               value="{{ gatein_data.get('gate_in_time', '') if gatein_data else '' }}"
+               value="{{ (gatein_data.get('gate_in_time') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gateInTime">Required</div>
       </div>
@@ -187,14 +187,14 @@
       <div class="form-row">
         <div class="form-group">
           <label>Vendor Name <span class="req">*</span></label>
-          <input type="text" id="vendorName" class="form-input"
+          <input type="text" id="vendorName" class="form-input" maxlength="40"
                  value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
                  placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
           <div class="field-error-msg" id="err_vendorName">Required</div>
         </div>
         <div class="form-group">
           <label>Transporter</label>
-          <input type="text" id="transporter" class="form-input"
+          <input type="text" id="transporter" class="form-input" maxlength="40"
                  value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
                  {% if gate_in_locked %}disabled{% endif %}>
         </div>
@@ -202,10 +202,10 @@
 
       <div class="form-row">
         <div class="form-group driver-dropdown-wrap">
-          <label>Truck No <span class="req">*</span> <span class="manual-hint">Max 10 chars · auto-caps</span></label>
+          <label>Truck No <span class="req">*</span> <span class="manual-hint">Max 12 chars · auto-caps</span></label>
           <div class="vehicle-lookup-row">
-            <input type="text" id="truckNo" class="form-input"
-                   value="{{ gatein_data.get('truck_no', '') if gatein_data else '' }}"
+            <input type="text" id="truckNo" class="form-input" maxlength="12"
+                   value="{{ (gatein_data.get('truck_no') if gatein_data else '') or '' }}"
                    {% if gate_in_locked %}disabled{% endif %}>
             <button type="button" class="btn-lookup" onclick="lookupVehicle()"
                     {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch Driver</button>
@@ -215,8 +215,8 @@
         </div>
         <div class="form-group">
           <label>License No <span class="req">*</span> <span class="manual-hint">e.g. HR06 1234567890123</span></label>
-          <input type="text" id="licenseNo" class="form-input"
-                 value="{{ gatein_data.get('license_no', '') if gatein_data else '' }}"
+          <input type="text" id="licenseNo" class="form-input" maxlength="20"
+                 value="{{ (gatein_data.get('license_no') if gatein_data else '') or '' }}"
                  placeholder="e.g. HR06 1234567890123"
                  {% if gate_in_locked %}disabled{% endif %}>
           <div class="field-error-msg" id="err_licenseNo">Required</div>
@@ -226,8 +226,8 @@
       <div class="form-row">
         <div class="form-group">
           <label>Container No</label>
-          <input type="text" id="containerNo" class="form-input"
-                 value="{{ gatein_data.get('container_no', '') if gatein_data else '' }}"
+          <input type="text" id="containerNo" class="form-input" maxlength="20"
+                 value="{{ (gatein_data.get('container_no') if gatein_data else '') or '' }}"
                  {% if gate_in_locked %}disabled{% endif %}>
         </div>
       </div>
@@ -239,14 +239,14 @@
       <div class="form-row">
         <div class="form-group">
           <label>Vendor Name <span class="req">*</span></label>
-          <input type="text" id="vendorNameHand" class="form-input"
+          <input type="text" id="vendorNameHand" class="form-input" maxlength="40"
                  value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
                  placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
           <div class="field-error-msg" id="err_vendorNameHand">Required</div>
         </div>
         <div class="form-group">
           <label>Transporter</label>
-          <input type="text" id="transporterHand" class="form-input"
+          <input type="text" id="transporterHand" class="form-input" maxlength="40"
                  value="{{ (gatein_data.get('transporter') if gatein_data else '') or '' }}"
                  {% if gate_in_locked %}disabled{% endif %}>
         </div>
@@ -257,15 +257,15 @@
     <div class="form-row">
       <div class="form-group">
         <label><span id="driverNameLabelText">Driver Name</span><span class="req" id="driverNameReq"> *</span> <span class="manual-hint">Manual</span></label>
-        <input type="text" id="driverName" class="form-input"
-               value="{{ gatein_data.get('driver_name', '') if gatein_data else '' }}"
+        <input type="text" id="driverName" class="form-input" maxlength="30"
+               value="{{ (gatein_data.get('driver_name') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_driverName">Required</div>
       </div>
       <div class="form-group">
         <label>No. of Persons</label>
         <input type="number" id="numPersons" class="form-input"
-               value="{{ gatein_data.get('num_persons', '1') if gatein_data else '1' }}"
+               value="{{ (gatein_data.get('num_persons') if gatein_data else '1') or '1' }}"
                min="1" {% if gate_in_locked %}disabled{% endif %}>
       </div>
     </div>
@@ -323,7 +323,7 @@
       <div class="form-group">
         <label>Import BOE No</label>
         <input type="text" id="boeNo" class="form-input"
-               value="{{ gatein_data.get('boe_no', '') if gatein_data else '' }}"
+               value="{{ (gatein_data.get('boe_no') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
       </div>
 
@@ -359,7 +359,7 @@
       <div class="form-group">
         <label>Gate Pass No (RTGP) <span class="req">*</span></label>
         <input type="text" id="gatePassNo" class="form-input"
-               value="{{ gatein_data.get('gate_pass_no', '') if gatein_data else '' }}"
+               value="{{ (gatein_data.get('gate_pass_no') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gatePassNo">Required</div>
       </div>
@@ -367,8 +367,8 @@
 
     <div class="form-group">
       <label>Note</label>
-      <textarea id="note" class="form-textarea" rows="3"
-                {% if gate_in_locked %}disabled{% endif %}>{{ gatein_data.get('note', '') if gatein_data else '' }}</textarea>
+      <textarea id="note" class="form-textarea" rows="3" maxlength="100"
+                {% if gate_in_locked %}disabled{% endif %}>{{ (gatein_data.get('note') if gatein_data else '') or '' }}</textarea>
     </div>
 
     <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;"></div>
@@ -485,18 +485,18 @@ function validateGateIn() {
     const truckEl = document.getElementById('truckNo');
     if (truckEl) {
       const stripped = truckEl.value.replace(/\s/g, '');
-      if (stripped.length > 10) {
+      if (stripped.length > 12) {
         truckEl.classList.add('field-error');
         const errEl = document.getElementById('err_truckNo');
-        if (errEl) { errEl.textContent = 'Max 10 characters'; errEl.classList.add('show'); }
+        if (errEl) { errEl.textContent = 'Max 12 characters'; errEl.classList.add('show'); }
         valid = false;
       }
     }
     const licEl = document.getElementById('licenseNo');
-    if (licEl && licEl.value.length > 16) {
+    if (licEl && licEl.value.length > 20) {
       licEl.classList.add('field-error');
       const errEl = document.getElementById('err_licenseNo');
-      if (errEl) { errEl.textContent = 'Max 16 characters (incl. space)'; errEl.classList.add('show'); }
+      if (errEl) { errEl.textContent = 'Max 20 characters (incl. space)'; errEl.classList.add('show'); }
       valid = false;
     }
   }
@@ -519,9 +519,9 @@ function validateGateIn() {
     const stripped = this.value.replace(/\s/g, '').toUpperCase();
     this.value = stripped;
     const errEl = document.getElementById('err_truckNo');
-    if (stripped.length > 10) {
+    if (stripped.length > 12) {
       this.classList.add('field-error');
-      if (errEl) { errEl.textContent = 'Max 10 characters'; errEl.classList.add('show'); }
+      if (errEl) { errEl.textContent = 'Max 12 characters'; errEl.classList.add('show'); }
     } else if (stripped) {
       this.classList.remove('field-error');
       if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
@@ -537,9 +537,9 @@ function validateGateIn() {
     if (clean.length > 4) clean = clean.slice(0, 4) + ' ' + clean.slice(4);
     this.value = clean;
     const errEl = document.getElementById('err_licenseNo');
-    if (clean.length > 16) {
+    if (clean.length > 20) {
       this.classList.add('field-error');
-      if (errEl) { errEl.textContent = 'Max 16 characters (incl. space)'; errEl.classList.add('show'); }
+      if (errEl) { errEl.textContent = 'Max 20 characters (incl. space)'; errEl.classList.add('show'); }
     } else if (clean) {
       this.classList.remove('field-error');
       if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }

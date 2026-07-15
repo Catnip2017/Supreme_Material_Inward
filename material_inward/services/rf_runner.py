@@ -238,11 +238,24 @@ def execute_gate_in_sap(data: dict) -> dict:
     challan_numeric = re.sub(r'[^0-9]', '', challan_raw)
 
     # Hand delivery sends truckNo/licenseNo as '' (see gate_in.html) since those
-    # fields are hidden/inapplicable. SAP's ctxtP_TR_NO / txtP_DIR_LI may not
-    # accept a blank value, so substitute a fixed placeholder instead of ''.
+    # fields are hidden/inapplicable for a hand-delivered consignment (no truck
+    # involved) regardless of whether a PO exists for it.
+    # - TRUCK_NO: SAP's ctxtP_TR_NO may not accept a blank value, so this one
+    #   still substitutes a fixed placeholder instead of '' -- applies in both
+    #   hand_with_po and hand_without_po, since truck_no is blanked by
+    #   delivery type (hand vs truck), not by PO availability.
+    # - LICENSE_NO: goes in blank now -- no placeholder.
+    # - PURCHASE_ORDER: this is independent of delivery type -- a hand
+    #   delivery can still have a real PO. Blank only when "Without PO" was
+    #   actually selected (truck_without_po OR hand_without_po). Both
+    #   truck_with_po and hand_with_po send the real PO number through.
     # containerNo and everything else is left exactly as sent -- not touched.
-    truck_no_clean   = cleaned.get("truckNo", "") or "BYHAND"
-    license_no_clean = cleaned.get("licenseNo", "") or "NONE"
+    po_flow_type  = (cleaned.get("po_flow_type") or "").strip().lower()
+    is_without_po = po_flow_type.endswith("_without_po")
+
+    truck_no_clean      = cleaned.get("truckNo", "") or "BYHAND"
+    license_no_clean    = cleaned.get("licenseNo", "")
+    purchase_order_clean = "" if is_without_po else cleaned.get("purchaseOrder", "")
 
     variables = {
         "VENDOR_NAME":    cleaned.get("vendorName", ""),
@@ -254,10 +267,10 @@ def execute_gate_in_sap(data: dict) -> dict:
         "CATEGORY":       cleaned.get("category", ""),
         "MATERIAL":       cleaned.get("material", ""),
         # "CHALLAN_NO":     cleaned.get("challanNo", ""),
-        "CHALLAN_NO": challan_numeric, 
+        "CHALLAN_NO": challan_numeric,
         "CHALLAN_QTY":    cleaned.get("challanQty", ""),
         "BOE_NO":         cleaned.get("boeNo", ""),
-        "PURCHASE_ORDER": cleaned.get("purchaseOrder", ""),
+        "PURCHASE_ORDER": purchase_order_clean,
         "NUM_PERSONS":    cleaned.get("numPersons", "1"),
         "GATE_PASS_NO":   cleaned.get("gatePassNo", ""),
         "NOTE":           cleaned.get("note", ""),

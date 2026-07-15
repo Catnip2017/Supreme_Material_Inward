@@ -210,11 +210,15 @@ Clean Material
     RETURN         ${parts}[0]
  
 Clean Value
+    # NOTE: previously split on spaces and returned only the first word
+    # (parts[0]), which silently truncated any multi-word value -- e.g.
+    # "Shree Datta Services" became just "Shree". Vendor/Transporter/Truck No
+    # are legitimately multi-word, so this now only trims leading/trailing
+    # whitespace and does not drop anything after the first space.
     [Arguments]    ${raw_value}
     ${val}=        Convert To String    ${raw_value}
     ${cleaned}=    Strip String    ${val}
-    @{parts}=      Split String    ${cleaned}    ${SPACE}
-    RETURN         ${parts}[0]
+    RETURN         ${cleaned}
  
 Clean Numeric
     [Arguments]    ${raw_value}
