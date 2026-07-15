@@ -139,6 +139,32 @@
     .process-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
     .process-btn:disabled { background: #ccc; cursor: not-allowed; }
     .upload-status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 14px; text-align: center; display: none; }
+
+    /* ── Toast notifications ─────────────────────────────────────────────── */
+    #appToastContainer {
+      position:fixed; bottom:28px; right:28px; z-index:99999;
+      display:flex; flex-direction:column; gap:10px; pointer-events:none;
+    }
+    .app-toast {
+      min-width:260px; max-width:420px; padding:14px 18px;
+      border-radius:10px; font-size:13px; font-weight:500;
+      box-shadow:0 6px 24px rgba(0,0,0,0.15); pointer-events:auto;
+      display:flex; align-items:flex-start; gap:12px;
+      animation:toastIn .25s ease;
+    }
+    @keyframes toastIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+    .app-toast.success { background:#ecfdf5; color:#1a7a3c; border-left:4px solid #00b894; }
+    .app-toast.error   { background:#fff0f0; color:#c0392b; border-left:4px solid #e74c3c; }
+    .app-toast.warning { background:#fff8e1; color:#856404; border-left:4px solid #f39c12; }
+    .app-toast.info    { background:#e8f0fe; color:#1e5ca8; border-left:4px solid #1e5ca8; }
+    .app-toast-icon { font-size:17px; flex-shrink:0; margin-top:1px; }
+    .app-toast-body { flex:1; line-height:1.45; }
+    .app-toast-close {
+      flex-shrink:0; background:none; border:none; cursor:pointer;
+      font-size:16px; color:inherit; opacity:.6; padding:0 0 0 6px;
+      line-height:1;
+    }
+    .app-toast-close:hover { opacity:1; }
   </style>
 </head>
 <body>
@@ -199,6 +225,7 @@
     <div class="nav-tabs">
       <button class="nav-tab active" onclick="switchTab('documents')">Documents</button>
       <button class="nav-tab" onclick="switchTab('extracted')">Extracted Data</button>
+      <button class="nav-tab" onclick="switchTab('gstApproval')">GST Approval</button>
       {% if is_step_enabled('gate_in') %}
       <button class="nav-tab" onclick="switchTab('gateIn')">Gate In</button>
       {% endif %}
@@ -222,6 +249,9 @@
     </div>
     <div id="extractedTab" class="tab-pane">
       {% include 'tabs/extracted_data.html' %}
+    </div>
+    <div id="gstApprovalTab" class="tab-pane">
+      {% include 'tabs/gst_approval.html' %}
     </div>
       {% if is_step_enabled('gate_in') %}
       <div id="gateInTab" class="tab-pane">{% include 'tabs/gate_in.html' %}</div>
@@ -351,6 +381,23 @@ function closeConfirm() {
   document.getElementById('confirmModal').classList.remove('show');
   _confirmCallback = null;
 }
+
+// Toast notification — replaces browser alert() throughout the app
+function showToast(msg, type) {
+  type = type || 'info';
+  var icons = { success:'✓', error:'✗', warning:'⚠', info:'ℹ' };
+  var container = document.getElementById('appToastContainer');
+  var toast = document.createElement('div');
+  toast.className = 'app-toast ' + type;
+  toast.innerHTML =
+    '<span class="app-toast-icon">' + (icons[type] || 'ℹ') + '</span>' +
+    '<span class="app-toast-body">' + msg + '</span>' +
+    '<button class="app-toast-close" onclick="this.parentNode.remove()">✕</button>';
+  container.appendChild(toast);
+  setTimeout(function () { if (toast.parentNode) { toast.remove(); } }, 5000);
+}
+
+
 document.getElementById('confirmYesBtn').onclick = function() {
   if (_confirmCallback) {
     const cb = _confirmCallback;
@@ -410,7 +457,10 @@ async function processAllDocs() {
     btn.textContent = '⚡ Process All Documents';
   }
 }
-const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 </script>
+
+<!-- ── Toast container ───────────────────────────────────────────────────── -->
+<div id="appToastContainer"></div>
+
 </body>
 </html>

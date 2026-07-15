@@ -20,6 +20,7 @@ from dotenv import dotenv_values
 
 from config.config import config
 from config.logger import get_logger
+from services.robot_lock import acquire_robot_lock, release_robot_lock
 
 logger = get_logger(__name__)
 
@@ -179,6 +180,7 @@ def _run_rf_script(
 
     logger.info(f"Running RF: {script_name} | Variables: {list(variables.keys())}")
 
+    acquire_robot_lock(script_name)
     try:
         result = subprocess.run(
             cmd,
@@ -211,6 +213,8 @@ def _run_rf_script(
         msg = f"Unexpected error running '{script_name}': {e}"
         logger.error(msg, exc_info=True)
         return {"success": False, "error": msg, "output": ""}
+    finally:
+        release_robot_lock()
 
 
 def _extract_marked_value(output: str, marker: str) -> Optional[str]:
@@ -233,12 +237,19 @@ def execute_gate_in_sap(data: dict) -> dict:
     challan_raw = cleaned.get("challanNo", "")
     challan_numeric = re.sub(r'[^0-9]', '', challan_raw)
 
+    # Hand delivery sends truckNo/licenseNo as '' (see gate_in.html) since those
+    # fields are hidden/inapplicable. SAP's ctxtP_TR_NO / txtP_DIR_LI may not
+    # accept a blank value, so substitute a fixed placeholder instead of ''.
+    # containerNo and everything else is left exactly as sent -- not touched.
+    truck_no_clean   = cleaned.get("truckNo", "") or "BYHAND"
+    license_no_clean = cleaned.get("licenseNo", "") or "NONE"
+
     variables = {
         "VENDOR_NAME":    cleaned.get("vendorName", ""),
         "TRANSPORTER":    cleaned.get("transporter", ""),
-        "TRUCK_NO":       cleaned.get("truckNo", ""),
+        "TRUCK_NO":       truck_no_clean,
         "DRIVER_NAME":    cleaned.get("driverName", ""),
-        "LICENSE_NO":     cleaned.get("licenseNo", ""),
+        "LICENSE_NO":     license_no_clean,
         "CONTAINER_NO":   cleaned.get("containerNo", ""),
         "CATEGORY":       cleaned.get("category", ""),
         "MATERIAL":       cleaned.get("material", ""),
@@ -488,3 +499,50 @@ def execute_po_list_fetch_sap(data: dict) -> dict:
         return {"success": True, "po_list": po_list, "error": None}
     except json.JSONDecodeError as e:
         return {"success": False, "error": f"JSON parse failed: {e}", "po_list": []}
+
+# ============================================================
+# ZGATEIN UPDATE — update PO on an existing gate in entry
+# Called only for without_po flows after MIGO 103 completes.
+# Element paths in the robot are placeholders — SAP team must
+# provide real paths from a GUI recording of zgatein_update tcode.
+# ============================================================
+
+def execute_update_gatein_po_sap(data: dict) -> dict:
+    """
+    Run zgatein_update.robot to backfill the PO number on a
+    gate in entry that was originally created with PO = "NA".
+    """
+    gin        = str(data.get("gate_in_number", "") or "").strip()
+    po_number  = str(data.get("po_number",      "") or "").strip()
+    history_id = data.get("history_id", "")
+
+    if not gin or not po_number:
+        return {
+            "success": False,
+            "error": (
+                f"Missing gate_in_number or po_number — "
+                f"cannot run zgatein_update for history_id={history_id}"
+            )
+        }
+
+    variables = {
+        "GATE_IN_NUMBER": gin,
+        "PO_NUMBER":      po_number,
+        "HISTORY_ID":     str(history_id),
+    }
+
+    result = _run_rf_script("zgatein_update.robot", variables, timeout_seconds=180)
+    if not result["success"]:
+        return {"success": False, "error": result["error"]}
+
+    status_val = _extract_marked_value(result["output"], "GATEIN_UPDATE_STATUS")
+    if status_val and status_val.upper() == "SUCCESS":
+        return {"success": True, "error": None}
+
+    return {
+        "success": False,
+        "error": (
+            "zgatein_update robot ran but did not confirm success. "
+            f"Check robot log: {result.get('output_dir')}"
+        )
+    }

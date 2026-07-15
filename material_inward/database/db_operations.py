@@ -160,8 +160,8 @@ def update_history_step(
     valid_steps = {
         "gate_in":   ("gate_in",  "gatein_done_at",   "gate_in_number"),
         "migo_103":  ("migo_103", "migo_103_done_at", "material_doc_number"),
-        "migo_105":  ("migo_105", "migo_105_done_at", None),
-        "miro":      ("miro",     "miro_done_at",     None),
+        "migo_105":  ("migo_105", "migo_105_done_at", "migo_105_doc_number"),
+        "miro":      ("miro",     "miro_done_at",     "miro_fi_doc_number"),
     }
     if step not in valid_steps:
         logger.error(f"Invalid step '{step}' passed to update_history_step")
@@ -389,18 +389,20 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
 
 
 def save_ewaybill_to_db(history_id: int, data: dict) -> bool:
+    # v7: goods columns (goods_description, hsn_code, quantity, value_of_goods,
+    # total_taxable_amount, total_invoice_amount) are DEPRECATED — goods info
+    # now lives in invoice_data.hsn_details. Columns frozen, dropped in
+    # schema_migration_v7.sql Stage 2.
     sql = """
         INSERT INTO ewaybill_data (
             id, filename, ewaybill_number, generated_date, validity_date,
-            invoice_number, invoice_date, po_number, goods_description, hsn_code,
-            quantity, value_of_goods, dispatch_from, dispatch_to,
-            total_taxable_amount, total_invoice_amount, transport_mode,
+            invoice_number, invoice_date, po_number,
+            dispatch_from, dispatch_to, transport_mode,
             vehicle_number, transporter_name, transporter_gstin,
             transport_doc_no, transport_doc_date
         ) VALUES (
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s,
-            %s, %s, %s, %s,
+            %s, %s, %s,
             %s, %s, %s,
             %s, %s, %s,
             %s, %s
@@ -413,14 +415,8 @@ def save_ewaybill_to_db(history_id: int, data: dict) -> bool:
             invoice_number = EXCLUDED.invoice_number,
             invoice_date = EXCLUDED.invoice_date,
             po_number = EXCLUDED.po_number,
-            goods_description = EXCLUDED.goods_description,
-            hsn_code = EXCLUDED.hsn_code,
-            quantity = EXCLUDED.quantity,
-            value_of_goods = EXCLUDED.value_of_goods,
             dispatch_from = EXCLUDED.dispatch_from,
             dispatch_to = EXCLUDED.dispatch_to,
-            total_taxable_amount = EXCLUDED.total_taxable_amount,
-            total_invoice_amount = EXCLUDED.total_invoice_amount,
             transport_mode = EXCLUDED.transport_mode,
             vehicle_number = EXCLUDED.vehicle_number,
             transporter_name = EXCLUDED.transporter_name,
@@ -433,10 +429,7 @@ def save_ewaybill_to_db(history_id: int, data: dict) -> bool:
         history_id, data.get("filename"), data.get("ewaybill_number"),
         data.get("generated_date"), data.get("validity_date"),
         data.get("invoice_number"), data.get("invoice_date"), data.get("po_number"),
-        data.get("goods_description"), data.get("hsn_code"),
-        data.get("quantity"), data.get("value_of_goods"),
         data.get("dispatch_from"), data.get("dispatch_to"),
-        data.get("total_taxable_amount"), data.get("total_invoice_amount"),
         data.get("transport_mode"), data.get("vehicle_number"),
         data.get("transporter_name"), data.get("transporter_gstin"),
         data.get("transport_doc_no"), data.get("transport_doc_date")
@@ -624,3 +617,133 @@ def get_today_counts() -> dict:
     except Exception as e:
         logger.error(f"Failed to get today counts: {e}")
         return {"total": 0, "pending": 0, "in_progress": 0, "completed": 0}
+
+# ============================================================
+# DMS STATUS
+# ============================================================
+
+def set_dms_status(
+    history_id: int,
+    status: str,
+    consolidated_doc_path: Optional[str] = None
+) -> bool:
+    """
+    Update DMS staging status.
+    status: 'pending' | 'staged' | 'uploaded' | 'failed'
+    consolidated_doc_path: set once when consolidation succeeds,
+                           preserved on subsequent status updates.
+    """
+    sql = """
+        UPDATE history
+        SET dms_status            = %s,
+            dms_staged_at         = CASE WHEN %s = 'pending'
+                                         THEN CURRENT_TIMESTAMP
+                                         ELSE dms_staged_at END,
+            consolidated_doc_path = COALESCE(%s, consolidated_doc_path),
+            updated_at            = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (status, status, consolidated_doc_path, history_id))
+                logger.info(f"history_id={history_id} dms_status={status}")
+                return True
+    except Exception as e:
+        logger.error(f"set_dms_status failed for history_id={history_id}: {e}")
+        return False
+
+
+def set_po_flow_type(history_id: int, po_flow_type: str) -> bool:
+    """
+    Store the delivery type + PO availability for a history record.
+    Must be called before the gate in job is enqueued so the worker
+    can read po_flow_type when the job executes.
+
+    Values: truck_with_po | truck_without_po | hand_with_po | hand_without_po
+    """
+    valid = {
+        'truck_with_po', 'truck_without_po',
+        'hand_with_po',  'hand_without_po'
+    }
+    if po_flow_type not in valid:
+        logger.error(f"Invalid po_flow_type value: '{po_flow_type}'")
+        return False
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE history
+                       SET po_flow_type = %s, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = %s""",
+                    (po_flow_type, history_id)
+                )
+                logger.info(f"history_id={history_id} po_flow_type={po_flow_type}")
+                return True
+    except Exception as e:
+        logger.error(f"set_po_flow_type failed for history_id={history_id}: {e}")
+        return False
+
+
+def get_pending_dms_records() -> list:
+    """
+    Fetch records ready for DMS nightly scheduler.
+    Conditions: dms_status='pending', migo_103 done, consolidated file exists.
+    Used exclusively by services/dms_scheduler.py.
+    """
+    sql = """
+        SELECT
+            h.id,
+            h.gate_in_number,
+            h.material_doc_number,
+            h.consolidated_doc_path,
+            h.dms_status,
+            h.migo_103_done_at,
+            COALESCE(h.invoice_number, inv.invoice_number) AS invoice_number,
+            COALESCE(h.po_number, inv.po_number)           AS po_number,
+            inv.seller_name,
+            inv.invoice_date,
+            inv.grand_total
+        FROM history h
+        LEFT JOIN invoice_data inv ON inv.id = h.id
+        WHERE h.dms_status = 'pending'
+          AND h.migo_103   = 1
+        ORDER BY h.created_at ASC
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql)
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"get_pending_dms_records failed: {e}")
+        return []
+
+
+def get_staged_dms_records() -> list:
+    """
+    Fetch records already staged (cover page + sidecar written by
+    dms_scheduler.py) whose consolidated PDF is sitting in
+    DMS_STAGING_FOLDER, ready for dms_upload.robot to push to Contentverse.
+    Used exclusively by services/dms_upload_runner.py.
+    """
+    sql = """
+        SELECT
+            h.id,
+            h.gate_in_number,
+            h.material_doc_number,
+            h.consolidated_doc_path,
+            h.dms_status
+        FROM history h
+        WHERE h.dms_status = 'staged'
+          AND h.consolidated_doc_path IS NOT NULL
+        ORDER BY h.created_at ASC
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql)
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"get_staged_dms_records failed: {e}")
+        return []

@@ -22,6 +22,11 @@ function switchTab(tabName) {
   if (event && event.target) {
     event.target.classList.add('active');
   }
+
+  // Hook for tab-specific JS init (gst_approval.html, etc.)
+  if (typeof window._onTabSwitch === 'function') {
+    window._onTabSwitch(tabName);
+  }
 }
 
 // File upload handling

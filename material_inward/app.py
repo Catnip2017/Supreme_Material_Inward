@@ -36,8 +36,10 @@ from database.db_operations import (
     save_invoice_to_db, save_ewaybill_to_db, save_lr_to_db,
     get_history_search, get_today_counts,
     set_approval_status, set_hold_status,
-    set_ocr_status, increment_ocr_retry, get_ocr_failed_path
+    set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
+    set_dms_status, set_po_flow_type
 )
+from database.vehicle_master_operations import get_drivers_by_truck
 from database.gatein_operations import (
     upsert_gatein_entry, get_gatein_entry, map_ocr_to_gatein
 )
@@ -199,6 +201,8 @@ def _check_step_allowed(history: dict, step: str) -> tuple:
     if step == "gate_in":
         if (history.get("approval_status") or "pending") != "approved":
             return False, "Documents pending verification & approval."
+        if not history.get("gst_check"):
+            return False, "GST verification pending — approve on the GST Approval tab first."
     elif step == "migo_103":
         if not history.get("gate_in"):
             return False, "Awaiting Gate In completion."
@@ -255,9 +259,18 @@ def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: i
             _move_file(file_path, config.UPLOAD_FAILED_FOLDER)
             return False
         extracted["filename"] = filename
-        if doctype == "invoice":   save_invoice_to_db(history_id, extracted)
-        elif doctype == "ewaybill": save_ewaybill_to_db(history_id, extracted)
-        elif doctype == "lr":       save_lr_to_db(history_id, extracted)
+        if doctype == "invoice":
+            save_invoice_to_db(history_id, extracted)
+            # Auto-start GST verification as soon as invoice (seller_gstin) is saved
+            try:
+                from services.gst_runner import trigger_async as _gst_trigger
+                _gst_trigger(history_id)
+            except Exception as _gst_err:
+                logger.warning(f"GST auto-trigger failed (non-fatal): {_gst_err}")
+        elif doctype == "ewaybill":
+            save_ewaybill_to_db(history_id, extracted)
+        elif doctype == "lr":
+            save_lr_to_db(history_id, extracted)
         _move_file(file_path, config.UPLOAD_PROCESSED_FOLDER)
         return True
     except Exception as e:
@@ -790,6 +803,8 @@ def save_gatein():
         return jsonify({"success": False, "error": reason}), 400
 
     upsert_gatein_entry(history_id, data)
+    po_flow_type = (data.get("po_flow_type") or "truck_with_po").strip()
+    set_po_flow_type(history_id, po_flow_type)
     job_id = enqueue_rf_job(history_id, "gate_in", data)
     if not job_id:
         return jsonify({"success": False, "error": "Gate In already processing."}), 409
@@ -985,6 +1000,61 @@ def api_get_gatein(history_id):
 def api_get_po_data(history_id):
     items = get_po_line_items(history_id)
     return jsonify({"success": True, "data": items})
+
+
+@app.route("/api/vehicle_lookup/<truck_number>")
+@api_login_required
+def vehicle_lookup(truck_number):
+    """Look up driver details for a given truck number (vehicle master)."""
+    truck_number = truck_number.strip()
+    if not truck_number:
+        return jsonify({"success": False, "error": "Truck number required"}), 400
+    try:
+        drivers = get_drivers_by_truck(truck_number)
+        return jsonify({"success": True, "drivers": drivers, "count": len(drivers)})
+    except Exception as e:
+        logger.error(f"vehicle_lookup error truck={truck_number}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/set_po_flow_type/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_set_po_flow_type(history_id):
+    """Manually set po_flow_type on a history record (used from Gate In tab)."""
+    data = request.get_json(silent=True) or {}
+    po_flow_type = (data.get("po_flow_type") or "").strip()
+    valid = {"truck_with_po", "truck_without_po", "hand_with_po", "hand_without_po"}
+    if po_flow_type not in valid:
+        return jsonify({"success": False, "error": f"Invalid po_flow_type: {po_flow_type!r}"}), 400
+    ok = set_po_flow_type(history_id, po_flow_type)
+    if ok:
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "DB update failed"}), 500
+
+
+@app.route("/api/run_po_fetch/<int:history_id>", methods=["POST"])
+@api_login_required
+def run_po_fetch(history_id):
+    """
+    Manually enqueue a po_fetch job (ME23N by PO number).
+    Used from MIGO 103 tab for without_po flows where the user enters the PO manually.
+    """
+    data = request.get_json(silent=True) or {}
+    po_number = (data.get("po_number") or "").strip()
+    if not po_number:
+        return jsonify({"success": False, "error": "po_number required"}), 400
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    job_id = enqueue_rf_job(
+        history_id, "po_fetch",
+        {"po_number": po_number, "history_id": history_id}
+    )
+    if not job_id:
+        return jsonify({"success": False, "error": "PO fetch already in queue."}), 409
+    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
 
 @app.route("/api/run_po_list_fetch", methods=["POST"])
@@ -1205,6 +1275,130 @@ def delete_document(doctype, filename):
             logger.error(f"Failed to clear DB data: {e}")
 
     return jsonify({"success": True, "message": "Document deleted"})
+
+
+# ============================================================
+# ============================================================
+# GST APPROVAL ROUTES
+# ============================================================
+from database.gst_operations import (
+    get_gst_approval, approve_gst, hold_gst, reset_gst_for_rerun
+)
+from services.gst_runner import trigger_async, is_running
+
+
+@app.route("/api/gst/status/<int:history_id>")
+@api_login_required
+def api_gst_status(history_id):
+    """
+    Poll endpoint called every 5 s by the GST Approval tab.
+    Triggers bots on first call if not already running.
+    Returns {"status":"checking"} while bots run, then the full
+    gst_approval row (plus status="done") when complete.
+    """
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    trigger_async(history_id)
+
+    if is_running(history_id):
+        return jsonify({"status": "checking"})
+
+    row = get_gst_approval(history_id)
+    if not row:
+        return jsonify({"status": "checking"})
+
+    data = {}
+    for k, v in row.items():
+        if hasattr(v, "strftime"):
+            data[k] = v.strftime("%d-%m-%Y %H:%M")
+        else:
+            data[k] = v
+    data["status"] = "done"
+    return jsonify(data)
+
+
+@app.route("/api/gst/approve/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_gst_approve(history_id):
+    """Approve the GST verification for this record, unlocking Gate In."""
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    row = get_gst_approval(history_id)
+    if not row:
+        return jsonify({"success": False, "error": "GST check not run yet"}), 400
+    if row.get("approval_status") == "approved":
+        return jsonify({"success": False, "error": "Already approved"}), 400
+
+    user = _current_user()
+    if not approve_gst(history_id, user):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "message": "GST approved", "approval_by": user})
+
+
+@app.route("/api/gst/hold/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_gst_hold(history_id):
+    """Place the GST verification on hold. Reason is optional."""
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    row = get_gst_approval(history_id)
+    if not row:
+        return jsonify({"success": False, "error": "GST check not run yet"}), 400
+
+    body   = request.get_json(silent=True) or {}
+    reason = (body.get("reason") or "").strip()
+    user   = _current_user()
+
+    if not hold_gst(history_id, user, reason):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "message": "GST placed on hold", "held_by": user})
+
+
+@app.route("/api/gst/rerun/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_gst_rerun(history_id):
+    """
+    Re-run GST verification — resets existing results and fires bots again.
+    Used when the user suspects the extracted GSTIN was wrong.
+    """
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    if not reset_gst_for_rerun(history_id):
+        return jsonify({"success": False, "error": "DB reset failed"}), 500
+
+    trigger_async(history_id, force=True)
+    return jsonify({"success": True, "message": "GST re-verification started"})
+
+
+@app.route("/api/gst/screenshot/<int:history_id>/<portal>")
+@login_required
+def api_gst_screenshot(history_id, portal):
+    """Serve the portal screenshot PNG stored on disk."""
+    row = get_gst_approval(history_id)
+    if not row:
+        return "Not found", 404
+
+    if portal == "einvoice":
+        path = row.get("einvoice_screenshot") or ""
+    elif portal == "taxpayer":
+        path = row.get("taxpayer_screenshot") or ""
+    else:
+        return "Invalid portal", 400
+
+    if not path or not os.path.isfile(path):
+        return "Screenshot not found on disk", 404
+
+    return send_file(path, mimetype="image/png")
 
 
 # ============================================================

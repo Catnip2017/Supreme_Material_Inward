@@ -187,7 +187,7 @@ function validateMiro() {
 document.getElementById('miroForm').addEventListener('submit', function(e) {
   e.preventDefault();
   if (POST_LOCKED_MIRO && STEP_LOCKS_ENABLED) {
-    alert('⏸ MIGO 105 must be completed before posting MIRO.');
+    showToast('⏸ MIGO 105 must be completed before posting MIRO.', 'warning');
     return;
   }
   if (!validateMiro()) {
@@ -196,7 +196,7 @@ document.getElementById('miroForm').addEventListener('submit', function(e) {
     return;
   }
   const historyId = parseInt(document.getElementById('history_id_miro').value);
-  if (!historyId) { alert('History ID missing.'); return; }
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
   showConfirm(
     'Confirm MIRO Posting',
     'You are about to post MIRO (Invoice Verification) to SAP. This is the final step — make sure reference and amount are correct.',

@@ -295,7 +295,7 @@ def _poll_loop(interval: int = POLL_INTERVAL):
             if not os.path.exists(WATCH_FOLDER):
                 logger.error(
                     f"Watch folder not accessible: {WATCH_FOLDER} — "
-                    f"Z: drive may be disconnected. Retrying in {interval}s."
+                    f"NAS drive may be disconnected. Retrying in {interval}s."
                 )
                 time.sleep(interval)
                 continue

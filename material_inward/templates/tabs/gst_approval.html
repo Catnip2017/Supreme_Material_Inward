@@ -1,0 +1,580 @@
+<style>
+/* ── GST Approval tab — self-contained styles ───────────────────────────── */
+.gst-spin-wrap { text-align:center; padding:50px 20px; }
+.gst-spinner {
+  display:inline-block; width:44px; height:44px;
+  border:4px solid #e0e0e0; border-top-color:#1e5ca8;
+  border-radius:50%; animation:gst-spin .8s linear infinite;
+  margin-bottom:16px;
+}
+@keyframes gst-spin { to { transform:rotate(360deg); } }
+
+.gst-badge {
+  display:inline-block; padding:4px 14px; border-radius:20px;
+  font-size:13px; font-weight:700; letter-spacing:0.3px;
+}
+.gst-badge.enabled    { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+.gst-badge.not-enabled{ background:#fff3cd; color:#856404; border:1px solid #ffc107; }
+.gst-badge.active     { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+.gst-badge.inactive   { background:#fee;    color:#c0392b; border:1px solid #e74c3c; }
+.gst-badge.filed      { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+.gst-badge.not-filed  { background:#fee;    color:#c0392b; border:1px solid #e74c3c; }
+
+.gst-screenshot-btn {
+  background:#f0f4ff; color:#1e5ca8; border:1px solid #c5d8f8;
+  padding:5px 14px; border-radius:6px; font-size:12px; font-weight:600;
+  cursor:pointer; transition:.15s;
+}
+.gst-screenshot-btn:hover { background:#dbeafe; }
+
+.gst-section { background:white; padding:18px; border-radius:10px;
+  box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:18px; }
+.gst-section-title { color:#1e5ca8; font-size:15px; margin-bottom:14px;
+  padding-bottom:8px; border-bottom:2px solid #f0f0f0; font-weight:700;
+  display:flex; align-items:center; justify-content:space-between; }
+.gst-field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  gap:12px; margin-bottom:10px; }
+.gst-field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px;
+  border-left:3px solid #1e5ca8; }
+.gst-field-label { font-size:11px; color:#666; font-weight:600;
+  text-transform:uppercase; letter-spacing:0.4px; margin-bottom:5px; }
+.gst-field-value { font-size:13px; color:#2c3e50; font-weight:500; }
+
+/* Approval banner */
+.approval-banner { border-radius:10px; padding:14px 20px; margin-bottom:20px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:14px; }
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+.approval-banner.hold     { background:#fee;    color:#c0392b; border:1px solid #e74c3c; }
+.approval-actions { display:flex; gap:10px; }
+.btn-approve {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white;
+  border:none; padding:10px 24px; border-radius:8px; font-size:14px;
+  font-weight:600; cursor:pointer; transition:.2s;
+}
+.btn-approve:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.btn-hold {
+  background:white; color:#1e5ca8; border:2px solid #1e5ca8;
+  padding:10px 24px; border-radius:8px; font-size:14px;
+  font-weight:600; cursor:pointer; transition:.2s;
+}
+.btn-hold:hover { background:#f0f4ff; }
+
+/* Screenshot lightbox */
+.gst-lightbox { display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.82); z-index:20000;
+  align-items:center; justify-content:center; }
+.gst-lightbox.show { display:flex; }
+.gst-lightbox-inner { position:relative; max-width:90vw; max-height:90vh; }
+.gst-lightbox-inner img { max-width:100%; max-height:85vh; border-radius:8px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+.gst-lightbox-close { position:absolute; top:-14px; right:-14px;
+  background:#1e5ca8; color:white; border:none; border-radius:50%;
+  width:30px; height:30px; font-size:18px; font-weight:700;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  line-height:1; }
+
+/* Re-run confirm modal */
+.gst-rerun-modal { display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.6); z-index:15000;
+  align-items:center; justify-content:center; }
+.gst-rerun-modal.show { display:flex; }
+.gst-rerun-box { background:white; border-radius:12px; padding:30px;
+  width:90%; max-width:460px; box-shadow:0 8px 32px rgba(0,0,0,0.2); text-align:center; }
+.gst-rerun-box h3 { color:#1e5ca8; margin-bottom:10px; }
+.gst-rerun-box p { color:#555; font-size:13px; margin-bottom:22px; }
+.gst-rerun-actions { display:flex; gap:10px; }
+.gst-rerun-actions button { flex:1; padding:12px; border:none; border-radius:8px;
+  font-weight:600; font-size:14px; cursor:pointer; transition:.2s; }
+.gst-rerun-cancel  { background:#ecf0f1; color:#333; }
+.gst-rerun-cancel:hover { background:#d5dbdc; }
+.gst-rerun-confirm {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
+.gst-rerun-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
+/* Hold modal */
+.gst-hold-modal { display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.6); z-index:15000;
+  align-items:center; justify-content:center; }
+.gst-hold-modal.show { display:flex; }
+.gst-hold-box { background:white; border-radius:12px; padding:30px;
+  width:90%; max-width:500px; box-shadow:0 8px 32px rgba(0,0,0,0.2); }
+.gst-hold-box h3 { color:#1e5ca8; margin-bottom:14px; }
+.gst-hold-box textarea { width:100%; padding:12px; border:2px solid #e0e0e0;
+  border-radius:8px; font-family:inherit; font-size:14px;
+  min-height:90px; margin:10px 0 18px; box-sizing:border-box;
+  transition:.15s; }
+.gst-hold-box textarea:focus { outline:none; border-color:#1e5ca8; }
+.gst-hold-actions { display:flex; gap:10px; }
+.gst-hold-actions button { flex:1; padding:12px; border:none; border-radius:8px;
+  font-weight:600; font-size:14px; cursor:pointer; transition:.2s; }
+.gst-hold-cancel  { background:#ecf0f1; color:#333; }
+.gst-hold-cancel:hover { background:#d5dbdc; }
+.gst-hold-confirm {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white;
+}
+.gst-hold-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
+.gst-error-box { background:#fee; border:1px solid #e74c3c; border-radius:10px;
+  padding:16px 20px; margin-bottom:16px; }
+.gst-retry-btn {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; border:none;
+  padding:8px 18px; border-radius:6px; font-weight:600; cursor:pointer; margin-top:10px;
+}
+.gst-retry-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
+/* Inline notification (replaces alert() popups) */
+.gst-inline-msg { display:none; border-radius:8px; padding:12px 16px; margin-bottom:14px;
+  font-size:13px; font-weight:500; }
+.gst-inline-msg.error   { background:#fee; border:1px solid #e74c3c; color:#c0392b; }
+.gst-inline-msg.success { background:#ecfdf5; border:1px solid #00b894; color:#1a7a3c; }
+</style>
+
+<!-- history_id passed via hidden input (same pattern as gate_in.html) -->
+<input type="hidden" id="gst_history_id" value="{{ history_id or '' }}">
+
+<div class="content-card">
+  <h3>🔍 GST Verification</h3>
+  <p style="color:#666; font-size:13px; margin-bottom:12px;">
+    Automatically verifies seller GSTIN on government portals.
+    Approve to unlock <strong>Gate In</strong>.
+  </p>
+
+  {% if invoice_data %}
+  <!-- Extracted data — shown immediately from OCR, no bot needed -->
+  <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
+    <div style="font-size:11px;font-weight:700;color:#1e5ca8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">📄 Extracted Invoice Data</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">
+      {% set fields = [
+        ('Seller GSTIN',    invoice_data.get('seller_gstin')),
+        ('Seller Name',     invoice_data.get('seller_name')),
+        ('Invoice No',      invoice_data.get('invoice_number')),
+        ('Invoice Date',    invoice_data.get('invoice_date')),
+        ('Invoice Amount',  invoice_data.get('invoice_amount') or invoice_data.get('total_amount')),
+        ('Buyer Name',      invoice_data.get('buyer_name')),
+        ('Buyer GSTIN',     invoice_data.get('buyer_gstin')),
+        ('PO Number',       invoice_data.get('po_number')),
+        ('CGST',            invoice_data.get('cgst')),
+        ('SGST',            invoice_data.get('sgst')),
+        ('IGST',            invoice_data.get('igst')),
+        ('HSN / SAC',       invoice_data.get('hsn') or invoice_data.get('sac')),
+      ] %}
+      {% for label, val in fields if val %}
+      <div>
+        <span style="color:#888;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;">{{ label }}</span><br>
+        <span style="font-weight:{% if label == 'Seller GSTIN' %}700;color:#1e5ca8;font-size:14px;letter-spacing:0.5px{% else %}600;color:#2c3e50{% endif %};">{{ val }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Inline notification (replaces browser alert popups) -->
+  <div id="gstInlineMsg" class="gst-inline-msg"></div>
+
+  <!-- ── Action buttons (bottom-left style, consistent with other tabs) ── -->
+
+  <!-- ── Checking / Spinner ──────────────────────────────────────────── -->
+  <div id="gstCheckingWrap" style="display:none;">
+    <div class="gst-spin-wrap">
+      <div class="gst-spinner"></div>
+      <p style="color:#555; font-weight:500;">Verifying seller GSTIN on government portals…</p>
+      <p style="color:#999; font-size:12px; margin-top:6px;">
+        This takes 30–90 seconds. You can switch tabs and come back.
+      </p>
+    </div>
+  </div>
+
+  <!-- ── Bot error (partial / full failure) ─────────────────────────── -->
+  <div id="gstErrorWrap" style="display:none;">
+    <div class="gst-error-box">
+      <strong style="color:#c0392b;">⚠ Bot error</strong>
+      <div id="gstErrorText" style="margin-top:6px; font-size:13px; color:#333;"></div>
+      <button class="gst-retry-btn" onclick="gstRetry()">🔄 Retry</button>
+    </div>
+  </div>
+
+  <!-- ── Results ─────────────────────────────────────────────────────── -->
+  <div id="gstResultsWrap" style="display:none;">
+
+    <!-- Approval banner (rendered by JS) -->
+    <div id="gstApprovalBanner"></div>
+
+    <!-- Site 1 — E-Invoice Portal -->
+    <div class="gst-section">
+      <div class="gst-section-title">
+        <span>📋 E-Invoice Status <span style="font-size:12px; color:#888; font-weight:400;">(einvoice1.gst.gov.in)</span></span>
+        <button id="gstEinvoiceImgBtn" class="gst-screenshot-btn" onclick="gstShowScreenshot('einvoice')" style="display:none;">📷 Screenshot</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span id="gstEinvoiceStatus" class="gst-badge"></span>
+      </div>
+    </div>
+
+    <!-- Site 2 — Taxpayer Search -->
+    <div class="gst-section">
+      <div class="gst-section-title">
+        <span>🏢 Taxpayer Details <span style="font-size:12px; color:#888; font-weight:400;">(services.gst.gov.in)</span></span>
+        <button id="gstTaxpayerImgBtn" class="gst-screenshot-btn" onclick="gstShowScreenshot('taxpayer')" style="display:none;">📷 Screenshot</button>
+      </div>
+      <div class="gst-field-row">
+        <div class="gst-field-block">
+          <div class="gst-field-label">GSTIN Status</div>
+          <div class="gst-field-value"><span id="gstGstinStatus"></span></div>
+        </div>
+        <div class="gst-field-block">
+          <div class="gst-field-label">Legal Name</div>
+          <div class="gst-field-value" id="gstLegalName"></div>
+        </div>
+        <div class="gst-field-block">
+          <div class="gst-field-label">Taxpayer Type</div>
+          <div class="gst-field-value" id="gstTaxpayerType"></div>
+        </div>
+      </div>
+      <div class="gst-field-row">
+        <div class="gst-field-block">
+          <div class="gst-field-label">GSTR-3B Last Filed</div>
+          <div class="gst-field-value" id="gstGstr3bFiled"></div>
+        </div>
+        <div class="gst-field-block">
+          <div class="gst-field-label">GSTR-3B Period</div>
+          <div class="gst-field-value" id="gstGstr3bPeriod"></div>
+        </div>
+        <div class="gst-field-block">
+          <div class="gst-field-label">GSTR-3B Status</div>
+          <div class="gst-field-value"><span id="gstGstr3bStatus" class="gst-badge"></span></div>
+        </div>
+      </div>
+      <div class="gst-field-row">
+        <div class="gst-field-block">
+          <div class="gst-field-label">GSTR-1 Last Filed</div>
+          <div class="gst-field-value" id="gstGstr1Filed"></div>
+        </div>
+        <div class="gst-field-block">
+          <div class="gst-field-label">GSTR-1 Period</div>
+          <div class="gst-field-value" id="gstGstr1Period"></div>
+        </div>
+        <div class="gst-field-block">
+          <div class="gst-field-label">GSTR-1 Status</div>
+          <div class="gst-field-value"><span id="gstGstr1Status" class="gst-badge"></span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Bottom action buttons (left-aligned, consistent with other tabs) ── -->
+  <div style="display:flex;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #f0f0f0;">
+    <button class="gst-retry-btn" onclick="gstRetry()"
+            title="Refresh status if the spinner is stuck — does not restart the bot">
+      🔄 Refresh Status
+    </button>
+    <button class="gst-retry-btn" onclick="gstRerun()"
+            title="Restart full verification — use after correcting the GSTIN in Extracted Data tab">
+      ↺ Re-run Verification
+    </button>
+  </div>
+
+</div>
+
+<!-- ── Screenshot Lightbox ───────────────────────────────────────────────── -->
+<div id="gstLightbox" class="gst-lightbox" onclick="if(event.target===this)gstCloseLightbox()">
+  <div class="gst-lightbox-inner">
+    <button class="gst-lightbox-close" onclick="gstCloseLightbox()">✕</button>
+    <img id="gstLightboxImg" src="" alt="GST Portal Screenshot">
+  </div>
+</div>
+
+<!-- ── Re-run Confirm Modal ──────────────────────────────────────────────── -->
+<div id="gstRerunModal" class="gst-rerun-modal">
+  <div class="gst-rerun-box">
+    <h3>↺ Re-run GST Verification</h3>
+    <p>This will reset the current results and approval status, then start a fresh verification.<br>
+       If you corrected the GSTIN in the Extracted Data tab, the new value will be used.</p>
+    <div class="gst-rerun-actions">
+      <button class="gst-rerun-cancel" onclick="gstCloseRerunModal()">Cancel</button>
+      <button class="gst-rerun-confirm" onclick="gstConfirmRerun()">Yes, Re-run</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Hold Modal ────────────────────────────────────────────────────────── -->
+<div id="gstHoldModal" class="gst-hold-modal">
+  <div class="gst-hold-box">
+    <h3>⏸ Put GST Verification on Hold</h3>
+    <p style="color:#666; font-size:13px;">Reason <span style="color:#999;">(optional)</span></p>
+    <textarea id="gstHoldReason" placeholder="Enter reason for holding…"></textarea>
+    <div class="gst-hold-actions">
+      <button class="gst-hold-cancel" onclick="gstCloseHoldModal()">Cancel</button>
+      <button class="gst-hold-confirm" onclick="gstConfirmHold()">Confirm Hold</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  /* ── State ───────────────────────────────────────────────────────────── */
+  const HISTORY_ID = parseInt(document.getElementById('gst_history_id').value, 10);
+  let _pollTimer   = null;
+  let _initialized = false;
+  let _currentData = null;
+
+  /* ── Inline notification (replaces browser alert()) ─────────────────── */
+  function _showMsg(text, type) {
+    var el = document.getElementById('gstInlineMsg');
+    el.textContent = text;
+    el.className = 'gst-inline-msg ' + (type || 'error');
+    el.style.display = 'block';
+    clearTimeout(el._timer);
+    el._timer = setTimeout(function () { el.style.display = 'none'; }, 6000);
+  }
+
+  /* ── Tab hook: called by main.js switchTab() via window._onTabSwitch ── */
+  /* Shows spinner if user opens the tab while bot is still running.       */
+  window._onTabSwitch = function (name) {
+    if (name === 'gstApproval') {
+      if (!_currentData) {
+        /* Bot not done yet — show spinner so user knows it's working */
+        _show('gstCheckingWrap');
+      }
+      /* If _currentData is already set, _renderResults already unhid
+         gstResultsWrap, so nothing extra to do here. */
+    }
+  };
+
+  /* ── Init ────────────────────────────────────────────────────────────── */
+  /* Start polling immediately on page load — bot takes 30-90 s, so by    */
+  /* the time the user clicks the GST tab results are often already ready. */
+  /* This removes the dependency on the tab-switch hook for core function. */
+  function _gstInit() {
+    _gstPoll();
+  }
+
+  /* ── Poll ────────────────────────────────────────────────────────────── */
+  function _gstPoll() {
+    fetch('/api/gst/status/' + HISTORY_ID)
+      .then(function (r) {
+        if (!r.ok) { throw new Error('HTTP ' + r.status); }
+        return r.json();
+      })
+      .then(function (d) {
+        if (d.status === 'checking') {
+          _show('gstCheckingWrap');
+          _pollTimer = setTimeout(_gstPoll, 5000);
+          return;
+        }
+        clearTimeout(_pollTimer);
+        _currentData = d;
+        _renderResults(d);
+      })
+      .catch(function (err) {
+        console.error('[gstApproval] poll error:', err);
+        _pollTimer = setTimeout(_gstPoll, 5000);
+      });
+  }
+
+  /* ── Render ──────────────────────────────────────────────────────────── */
+  function _renderResults(d) {
+    _hide('gstCheckingWrap');
+
+    /* Hard error — both bots failed and no data at all */
+    if (d.bot_error && !d.einvoice_status && !d.gstin_status) {
+      document.getElementById('gstErrorText').textContent = d.bot_error;
+      _show('gstErrorWrap');
+      return;
+    }
+
+    _show('gstResultsWrap');
+
+    /* Soft bot error — show warning inside results */
+    if (d.bot_error) {
+      document.getElementById('gstErrorText').textContent = 'Partial data — ' + d.bot_error;
+      document.getElementById('gstErrorWrap').style.display = 'block';
+    }
+
+    /* Approval banner */
+    _renderBanner(d.approval_status, d.approval_by, d.approval_at, d.hold_reason);
+
+    /* Site 1 — E-Invoice */
+    var einvEl  = document.getElementById('gstEinvoiceStatus');
+    var einvStr = (d.einvoice_status || '').trim();
+    einvEl.textContent = einvStr || '—';
+    var notEnabled = einvStr.toLowerCase().indexOf('not enabled') !== -1;
+    var enabled    = !notEnabled && einvStr.toLowerCase().indexOf('enabled') !== -1;
+    einvEl.className = 'gst-badge ' + (enabled ? 'enabled' : notEnabled ? 'not-enabled' : '');
+
+    if (d.einvoice_screenshot) {
+      document.getElementById('gstEinvoiceImgBtn').style.display = 'inline-block';
+    }
+
+    /* Site 2 — Taxpayer */
+    var gstinStr = (d.gstin_status || '').trim();
+    var statusEl = document.getElementById('gstGstinStatus');
+    statusEl.textContent = gstinStr || '—';
+    statusEl.className = 'gst-badge ' +
+      (gstinStr.toLowerCase() === 'active' ? 'active' : gstinStr ? 'inactive' : '');
+
+    document.getElementById('gstLegalName').textContent    = d.legal_name    || '—';
+    document.getElementById('gstTaxpayerType').textContent = d.taxpayer_type || '—';
+    document.getElementById('gstGstr3bFiled').textContent  = d.gstr3b_last_filed  || '—';
+    document.getElementById('gstGstr3bPeriod').textContent = d.gstr3b_tax_period  || '—';
+    document.getElementById('gstGstr1Filed').textContent   = d.gstr1_last_filed   || '—';
+    document.getElementById('gstGstr1Period').textContent  = d.gstr1_tax_period   || '—';
+
+    _setFilingBadge('gstGstr3bStatus', d.gstr3b_status);
+    _setFilingBadge('gstGstr1Status',  d.gstr1_status);
+
+    if (d.taxpayer_screenshot) {
+      document.getElementById('gstTaxpayerImgBtn').style.display = 'inline-block';
+    }
+  }
+
+  function _setFilingBadge(id, val) {
+    var el = document.getElementById(id);
+    el.textContent = val || '—';
+    el.className = 'gst-badge ' +
+      ((val || '').toLowerCase() === 'filed' ? 'filed' : val ? 'not-filed' : '');
+  }
+
+  /* ── Banner ──────────────────────────────────────────────────────────── */
+  function _renderBanner(status, by, at, reason) {
+    var wrap = document.getElementById('gstApprovalBanner');
+    status = status || 'pending';
+    var byStr = by ? ' by <strong>' + by + '</strong>' : '';
+    var atStr = at ? ' on ' + at : '';
+
+    if (status === 'approved') {
+      wrap.innerHTML =
+        '<div class="approval-banner approved">' +
+          '<div>✓ <strong>GST Approved</strong>' + byStr + atStr + ' — Gate In is now unlocked.</div>' +
+        '</div>';
+    } else if (status === 'hold') {
+      wrap.innerHTML =
+        '<div class="approval-banner hold">' +
+          '<div>⏸ <strong>On Hold</strong>' + byStr + ': ' + (reason || 'No reason given') + '</div>' +
+          '<div class="approval-actions">' +
+            '<button class="btn-approve" onclick="gstApprove()">✓ Approve</button>' +
+          '</div>' +
+        '</div>';
+    } else {
+      wrap.innerHTML =
+        '<div class="approval-banner pending">' +
+          '<div>⏳ <strong>Pending GST Approval</strong> — Review details above, then approve or hold.</div>' +
+          '<div class="approval-actions">' +
+            '<button class="btn-hold" onclick="gstOpenHoldModal()">⏸ Hold</button>' +
+            '<button class="btn-approve" onclick="gstApprove()">✓ Approve</button>' +
+          '</div>' +
+        '</div>';
+    }
+  }
+
+  /* ── Actions ─────────────────────────────────────────────────────────── */
+  window.gstApprove = function () {
+    fetch('/api/gst/approve/' + HISTORY_ID, { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.success) {
+          _gstPoll();
+        } else {
+          _showMsg(d.error || 'Approve failed', 'error');
+        }
+      })
+      .catch(function (e) {
+        _showMsg('Request failed: ' + e.message, 'error');
+      });
+  };
+
+  window.gstOpenHoldModal = function () {
+    document.getElementById('gstHoldReason').value = '';
+    document.getElementById('gstHoldModal').classList.add('show');
+  };
+
+  window.gstCloseHoldModal = function () {
+    document.getElementById('gstHoldModal').classList.remove('show');
+  };
+
+  window.gstConfirmHold = function () {
+    var reason = document.getElementById('gstHoldReason').value.trim();
+    fetch('/api/gst/hold/' + HISTORY_ID, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.success) {
+          gstCloseHoldModal();
+          _gstPoll();
+        } else {
+          _showMsg(d.error || 'Hold failed', 'error');
+        }
+      })
+      .catch(function (e) {
+        _showMsg('Request failed: ' + e.message, 'error');
+      });
+  };
+
+  window.gstShowScreenshot = function (portal) {
+    document.getElementById('gstLightboxImg').src =
+      '/api/gst/screenshot/' + HISTORY_ID + '/' + portal;
+    document.getElementById('gstLightbox').classList.add('show');
+  };
+
+  window.gstCloseLightbox = function () {
+    document.getElementById('gstLightbox').classList.remove('show');
+    document.getElementById('gstLightboxImg').src = '';
+  };
+
+  window.gstRetry = function () {
+    _hide('gstErrorWrap');
+    _hide('gstResultsWrap');
+    _show('gstCheckingWrap');
+    _initialized = false;
+    _gstInit();
+  };
+
+  window.gstRerun = function () {
+    document.getElementById('gstRerunModal').classList.add('show');
+  };
+
+  window.gstCloseRerunModal = function () {
+    document.getElementById('gstRerunModal').classList.remove('show');
+  };
+
+  window.gstConfirmRerun = function () {
+    gstCloseRerunModal();
+    clearTimeout(_pollTimer);
+    _currentData = null;
+    _hide('gstResultsWrap');
+    _hide('gstErrorWrap');
+    _show('gstCheckingWrap');
+    fetch('/api/gst/rerun/' + HISTORY_ID, { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.success) {
+          /* Bot is now running — start polling for results */
+          _gstPoll();
+        } else {
+          _hide('gstCheckingWrap');
+          _showMsg(d.error || 'Re-run failed', 'error');
+        }
+      })
+      .catch(function (e) {
+        _hide('gstCheckingWrap');
+        _showMsg('Request failed: ' + e.message, 'error');
+      });
+  };
+
+  /* ── Helpers ─────────────────────────────────────────────────────────── */
+  function _show(id) { document.getElementById(id).style.display = 'block'; }
+  function _hide(id) { document.getElementById(id).style.display = 'none'; }
+
+  /* ── Auto-start: begin polling as soon as the page loads ─────────────── */
+  /* This is the primary init path. _onTabSwitch only adds the spinner UI. */
+  if (HISTORY_ID && !isNaN(HISTORY_ID)) {
+    _gstInit();
+  }
+
+})();
+</script>

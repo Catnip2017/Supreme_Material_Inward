@@ -603,7 +603,7 @@ function onInvCheck(cb) {
     const row = cb.closest('tr');
     if (row.classList.contains('matched-inv')) {
       cb.checked = false;
-      alert('This invoice row is already matched. Undo the match first.');
+      showToast('This invoice row is already matched. Undo the match first.', 'warning');
       return;
     }
     row.classList.add('selected-inv');
@@ -622,7 +622,7 @@ function onPoCheck(cb) {
     const row = cb.closest('tr');
     if (row.classList.contains('matched-po')) {
       cb.checked = false;
-      alert('This PO row is already matched. Undo the match first.');
+      showToast('This PO row is already matched. Undo the match first.', 'warning');
       return;
     }
     row.classList.add('selected-po');
@@ -832,14 +832,14 @@ function validateMigo103() {
   const matchedQtys = document.querySelectorAll('.matched-actual-qty');
   if (matchedQtys.length === 0) {
     valid = false;
-    alert('Please match at least one invoice row with a PO row and enter the actual received quantity.');
+    showToast('Please match at least one invoice row with a PO row and enter the actual received quantity.', 'warning');
   } else {
     let hasQty = false;
     matchedQtys.forEach(q => { if (q.value.trim()) hasQty = true; });
     if (!hasQty) {
       matchedQtys.forEach(q => q.classList.add('field-error'));
       valid = false;
-      alert('Please enter actual received quantity in the Matched Pairs section.');
+      showToast('Please enter actual received quantity in the Matched Pairs section.', 'warning');
     }
   }
   return valid;
@@ -851,7 +851,7 @@ function validateMigo103() {
 function submitMigo103() {
   if (!validateMigo103()) return;
   const historyId = parseInt(document.getElementById('history_id_migo').value);
-  if (!historyId) { alert('History ID missing.'); return; }
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
 
   const payload = {
     history_id:       historyId,
@@ -880,9 +880,11 @@ function submitMigo103() {
       document.getElementById('materialDocNumber').value = matDoc;
       const s105 = document.getElementById('migo105Section');
       s105.style.opacity = '1'; s105.style.pointerEvents = 'auto';
-      if (confirm(`✓ MIGO 103 posted!\nMaterial Document: ${matDoc}\n\nProceed to MIGO 105?`)) {
-        s105.scrollIntoView({ behavior:'smooth' });
-      }
+      showConfirm(
+        '✓ MIGO 103 Posted',
+        `Material Document: ${matDoc} — Proceed to MIGO 105?`,
+        function () { s105.scrollIntoView({ behavior: 'smooth' }); }
+      );
     },
     onFailure: (error) => {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
@@ -909,7 +911,7 @@ function validateMigo105() {
 function submitMigo105() {
   if (!validateMigo105()) return;
   const historyId = parseInt(document.getElementById('history_id_migo').value);
-  if (!historyId) { alert('History ID missing.'); return; }
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
 
   const payload = {
     history_id:          historyId,

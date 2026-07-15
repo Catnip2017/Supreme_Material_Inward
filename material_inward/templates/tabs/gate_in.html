@@ -1,4 +1,48 @@
 <style>
+/* ── Delivery type & PO availability selectors ─────────────────────────── */
+.delivery-type-group, .po-avail-group {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.delivery-radio-option {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 18px; border: 2px solid #e0e0e0;
+  border-radius: 8px; cursor: pointer; font-size: 14px;
+  font-weight: 600; color: #555; transition: all .2s;
+  user-select: none;
+}
+.delivery-radio-option input[type=radio] { accent-color: #1e5ca8; }
+.delivery-radio-option:has(input:checked) {
+  border-color: #1e5ca8; background: #f0f4ff; color: #1e5ca8;
+}
+/* ── Vehicle lookup row ─────────────────────────────────────────────────── */
+.vehicle-lookup-row { display: flex; gap: 8px; align-items: flex-start; }
+.vehicle-lookup-row .form-input { flex: 1; }
+.btn-lookup {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 14px; height: 38px;
+  background: #2ecc71; color: #fff; border: none; border-radius: 6px;
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  white-space: nowrap; flex-shrink: 0; transition: background .2s;
+}
+.btn-lookup:hover:not(:disabled) { background: #27ae60; }
+.btn-lookup:disabled { background: #b0bec5; cursor: not-allowed; }
+/* ── Driver dropdown ─────────────────────────────────────────────────────── */
+.driver-dropdown-wrap { position: relative; }
+.driver-dropdown {
+  display: none; position: absolute; z-index: 200;
+  background: #fff; border: 1px solid #c5d8f8; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(30,92,168,0.12);
+  min-width: 300px; max-width: 440px; max-height: 250px;
+  overflow-y: auto; margin-top: 4px;
+}
+.driver-dropdown.show { display: block; }
+.driver-dropdown-item {
+  padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f4ff;
+  font-size: 13px; transition: background .15s;
+}
+.driver-dropdown-item:hover { background: #e8f0fe; }
+.driver-dropdown-item .drv-name { font-weight: 700; color: #1e5ca8; }
+.driver-dropdown-item .drv-meta { font-size: 11px; color: #888; margin-top: 2px; }
 .req { color:#e74c3c; margin-left:2px; }
 .manual-hint { font-size:11px; color:#1e5ca8; font-weight:600; margin-left:6px; background:#f0f4ff; padding:2px 8px; border-radius:10px; }
 .field-error { border-color:#e74c3c !important; }
@@ -73,23 +117,16 @@
 <div class="content-card">
   <h3>🚪 Gate In Entry Form</h3>
 {% set status = (history.approval_status if history else 'pending') or 'pending' %}
-{% set post_locked = (status != 'approved') %}
+{% set gst_ok = (history.gst_check) if history else false %}
+{% set post_locked = (status != 'approved') or (not gst_ok) %}
 {% set is_approved = (status == 'approved') %}
 {% if not is_approved %}
-<div class="gate-banner">⏸ <strong>Awaiting Approval</strong> — Approve the record first.</div>
+<div class="gate-banner">⏸ <strong>Awaiting Approval</strong> — Approve the record in Extracted Data first.</div>
+{% elif not gst_ok %}
+<div class="gate-banner" style="background:#fff8e1;border-color:#ffc107;color:#856404;">⚠ <strong>Data Approved — GST Verification Pending</strong> — Complete GST Approval tab to unlock posting.</div>
 {% else %}
-<div class="gate-banner unlocked">✓ <strong>Approved</strong> — Ready for Gate In posting.</div>
+<div class="gate-banner unlocked">✓ <strong>Approved & GST Verified</strong> — Ready for Gate In posting.</div>
 {% endif %}
-
-  <!-- {% if gate_in_locked %}
-  <div class="gate-banner">
-    ⏸ <strong>Awaiting Approval</strong> — Documents must be verified and approved on the Extracted Data tab before Gate In can run.
-  </div>
-  {% else %}
-  <div class="gate-banner unlocked">
-    ✓ <strong>Approved</strong> — You may proceed with Gate In posting.
-  </div>
-  {% endif %} -->
 
   {% if history %}
   <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
@@ -100,6 +137,28 @@
     &nbsp;|&nbsp; MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   </div>
   {% endif %}
+
+  <!-- ── Delivery Type & PO Availability ──────────────────────────────── -->
+  <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
+    <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">🚦 Delivery Type</div>
+    <div class="delivery-type-group">
+      <label class="delivery-radio-option">
+        <input type="radio" name="deliveryType" value="truck" checked onchange="onDeliveryTypeChange()"> 🚚 Truck
+      </label>
+      <label class="delivery-radio-option">
+        <input type="radio" name="deliveryType" value="hand" onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
+      </label>
+    </div>
+    <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;margin-top:8px;">📋 Purchase Order Available?</div>
+    <div class="po-avail-group">
+      <label class="delivery-radio-option">
+        <input type="radio" name="poAvail" value="with_po" checked onchange="onPoAvailChange()"> With PO
+      </label>
+      <label class="delivery-radio-option">
+        <input type="radio" name="poAvail" value="without_po" onchange="onPoAvailChange()"> Without PO
+      </label>
+    </div>
+  </div>
 
   <form id="gateInForm" novalidate>
     <input type="hidden" id="history_id" value="{{ history_id or '' }}">
@@ -122,57 +181,87 @@
       </div>
     </div>
 
-    <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🚚 Truck Details</h4>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Vendor Name <span class="req">*</span></label>
-        <input type="text" id="vendorName" class="form-input"
-               value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-               placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_vendorName">Required</div>
+    <!-- ── Truck Fields Section ──────────────────────────────────────────── -->
+    <div id="truckFieldsSection">
+      <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🚚 Truck Details</h4>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Vendor Name <span class="req">*</span></label>
+          <input type="text" id="vendorName" class="form-input"
+                 value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                 placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_vendorName">Required</div>
+        </div>
+        <div class="form-group">
+          <label>Transporter</label>
+          <input type="text" id="transporter" class="form-input"
+                 value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+        </div>
       </div>
-      <div class="form-group">
-        <label>Transporter</label>
-        <input type="text" id="transporter" class="form-input"
-               value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-      </div>
-    </div>
 
+      <div class="form-row">
+        <div class="form-group driver-dropdown-wrap">
+          <label>Truck No <span class="req">*</span> <span class="manual-hint">Max 10 chars · auto-caps</span></label>
+          <div class="vehicle-lookup-row">
+            <input type="text" id="truckNo" class="form-input"
+                   value="{{ gatein_data.get('truck_no', '') if gatein_data else '' }}"
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <button type="button" class="btn-lookup" onclick="lookupVehicle()"
+                    {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch Driver</button>
+          </div>
+          <div class="driver-dropdown" id="driverDropdown"></div>
+          <div class="field-error-msg" id="err_truckNo">Required</div>
+        </div>
+        <div class="form-group">
+          <label>License No <span class="req">*</span> <span class="manual-hint">e.g. HR06 1234567890123</span></label>
+          <input type="text" id="licenseNo" class="form-input"
+                 value="{{ gatein_data.get('license_no', '') if gatein_data else '' }}"
+                 placeholder="e.g. HR06 1234567890123"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_licenseNo">Required</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Container No</label>
+          <input type="text" id="containerNo" class="form-input"
+                 value="{{ gatein_data.get('container_no', '') if gatein_data else '' }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+        </div>
+      </div>
+    </div><!-- /#truckFieldsSection -->
+
+    <!-- ── Hand Delivery Fields Section ─────────────────────────────────── -->
+    <div id="handFieldsSection" style="display:none;">
+      <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🤝 Hand Delivery Details</h4>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Vendor Name <span class="req">*</span></label>
+          <input type="text" id="vendorNameHand" class="form-input"
+                 value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                 placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_vendorNameHand">Required</div>
+        </div>
+        <div class="form-group">
+          <label>Transporter</label>
+          <input type="text" id="transporterHand" class="form-input"
+                 value="{{ (gatein_data.get('transporter') if gatein_data else '') or '' }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+        </div>
+      </div>
+    </div><!-- /#handFieldsSection -->
+
+    <!-- ── Shared: Driver / Person Name & No. of Persons ────────────────── -->
     <div class="form-row">
       <div class="form-group">
-        <label>Truck No <span class="req">*</span> <span class="manual-hint">Manual</span></label>
-        <input type="text" id="truckNo" class="form-input"
-               value="{{ gatein_data.get('truck_no', '') if gatein_data else '' }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_truckNo">Required</div>
-      </div>
-      <div class="form-group">
-        <label>Driver Name <span class="req">*</span> <span class="manual-hint">Manual</span></label>
+        <label><span id="driverNameLabelText">Driver Name</span><span class="req" id="driverNameReq"> *</span> <span class="manual-hint">Manual</span></label>
         <input type="text" id="driverName" class="form-input"
                value="{{ gatein_data.get('driver_name', '') if gatein_data else '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_driverName">Required</div>
       </div>
-    </div>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label>License No <span class="req">*</span> <span class="manual-hint">Manual</span></label>
-        <input type="text" id="licenseNo" class="form-input"
-               value="{{ gatein_data.get('license_no', '') if gatein_data else '' }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_licenseNo">Required</div>
-      </div>
-      <div class="form-group">
-        <label>Container No</label>
-        <input type="text" id="containerNo" class="form-input"
-               value="{{ gatein_data.get('container_no', '') if gatein_data else '' }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-      </div>
-    </div>
-
-    <div class="form-row">
       <div class="form-group">
         <label>No. of Persons</label>
         <input type="number" id="numPersons" class="form-input"
@@ -197,10 +286,17 @@
         </select>
         <div class="field-error-msg" id="err_category">Required</div>
       </div>
+      {# v7: goods fallbacks now come from invoice hsn_details (EWB goods columns deprecated) #}
+      {% set inv_hsn = (invoice_data.get('hsn_details') if invoice_data else []) or [] %}
+      {% set inv_goods_desc = (inv_hsn[0].get('description','') if inv_hsn else '') %}
+      {% if inv_hsn|length > 1 and inv_goods_desc %}
+        {% set inv_goods_desc = inv_goods_desc ~ ' +' ~ (inv_hsn|length - 1) ~ ' more' %}
+      {% endif %}
+      {% set inv_goods_qty = (inv_hsn[0].get('quantity','') if inv_hsn else '') %}
       <div class="form-group">
         <label>Material <span class="req">*</span></label>
         <input type="text" id="material" class="form-input"
-               value="{{ (gatein_data.get('material') if gatein_data else '') or (ewaybill_data.get('goods_description') if ewaybill_data else '') or '' }}"
+               value="{{ (gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_material">Required</div>
       </div>
@@ -217,7 +313,7 @@
       <div class="form-group">
         <label>Challan Quantity <span class="req">*</span></label>
         <input type="text" id="challanQty" class="form-input"
-              value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or (ewaybill_data.get('quantity') if ewaybill_data else '') or '' }}"
+              value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanQty">Required</div>
       </div>
@@ -304,7 +400,7 @@ const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
   }
 })();
 
-const MANDATORY_FIELDS = [
+const TRUCK_MANDATORY_FIELDS = [
   { id: 'gateInDate',    errId: 'err_gateInDate' },
   { id: 'gateInTime',    errId: 'err_gateInTime' },
   { id: 'vendorName',    errId: 'err_vendorName' },
@@ -318,14 +414,63 @@ const MANDATORY_FIELDS = [
   { id: 'purchaseOrder', errId: 'err_purchaseOrder' },
   { id: 'gatePassNo',    errId: 'err_gatePassNo' },
 ];
+const HAND_MANDATORY_FIELDS = [
+  { id: 'gateInDate',     errId: 'err_gateInDate' },
+  { id: 'gateInTime',     errId: 'err_gateInTime' },
+  { id: 'vendorNameHand', errId: 'err_vendorNameHand' },
+  { id: 'category',       errId: 'err_category' },
+  { id: 'material',       errId: 'err_material' },
+  { id: 'challanNo',      errId: 'err_challanNo' },
+  { id: 'challanQty',     errId: 'err_challanQty' },
+  { id: 'purchaseOrder',  errId: 'err_purchaseOrder' },
+  { id: 'gatePassNo',     errId: 'err_gatePassNo' },
+];
+
+function _getPoFlowType() {
+  const dType  = document.querySelector('input[name="deliveryType"]:checked');
+  const poAvail = document.querySelector('input[name="poAvail"]:checked');
+  const delivery = dType   ? dType.value   : 'truck';
+  const po       = poAvail ? poAvail.value : 'with_po';
+  return delivery + '_' + po;
+}
+
+function onDeliveryTypeChange() {
+  const dType = document.querySelector('input[name="deliveryType"]:checked').value;
+  document.getElementById('truckFieldsSection').style.display = (dType === 'truck') ? '' : 'none';
+  document.getElementById('handFieldsSection').style.display  = (dType === 'hand')  ? '' : 'none';
+  const labelText = document.getElementById('driverNameLabelText');
+  const reqStar   = document.getElementById('driverNameReq');
+  if (labelText) labelText.textContent = (dType === 'truck') ? 'Driver Name' : 'Person Name';
+  if (reqStar)   reqStar.style.display = (dType === 'truck') ? '' : 'none';
+}
+
+function onPoAvailChange() {
+  const poAvail = document.querySelector('input[name="poAvail"]:checked').value;
+  const poEl    = document.getElementById('purchaseOrder');
+  if (poAvail === 'without_po') {
+    poEl.value       = '';
+    poEl.readOnly    = true;
+    poEl.placeholder = 'Without PO';
+    poEl.style.background = '#f5f5f5';
+    poEl.style.color      = '#888';
+  } else {
+    poEl.readOnly    = false;
+    poEl.placeholder = '';
+    poEl.style.background = '';
+    poEl.style.color      = '';
+  }
+}
 
 function validateGateIn() {
+  const dType    = document.querySelector('input[name="deliveryType"]:checked');
+  const delivery = dType ? dType.value : 'truck';
+  const MANDATORY_FIELDS = (delivery === 'truck') ? TRUCK_MANDATORY_FIELDS : HAND_MANDATORY_FIELDS;
   let valid = true;
-  MANDATORY_FIELDS.forEach(f => {
+  [...TRUCK_MANDATORY_FIELDS, ...HAND_MANDATORY_FIELDS].forEach(f => {
     const el  = document.getElementById(f.id);
     const err = document.getElementById(f.errId);
     if (el)  el.classList.remove('field-error');
-    if (err) err.classList.remove('show');
+    if (err) { err.classList.remove('show'); err.textContent = 'Required'; }
   });
   MANDATORY_FIELDS.forEach(f => {
     const el  = document.getElementById(f.id);
@@ -336,10 +481,29 @@ function validateGateIn() {
       valid = false;
     }
   });
+  if (delivery === 'truck') {
+    const truckEl = document.getElementById('truckNo');
+    if (truckEl) {
+      const stripped = truckEl.value.replace(/\s/g, '');
+      if (stripped.length > 10) {
+        truckEl.classList.add('field-error');
+        const errEl = document.getElementById('err_truckNo');
+        if (errEl) { errEl.textContent = 'Max 10 characters'; errEl.classList.add('show'); }
+        valid = false;
+      }
+    }
+    const licEl = document.getElementById('licenseNo');
+    if (licEl && licEl.value.length > 16) {
+      licEl.classList.add('field-error');
+      const errEl = document.getElementById('err_licenseNo');
+      if (errEl) { errEl.textContent = 'Max 16 characters (incl. space)'; errEl.classList.add('show'); }
+      valid = false;
+    }
+  }
   return valid;
 }
 
-MANDATORY_FIELDS.forEach(f => {
+[...TRUCK_MANDATORY_FIELDS, ...HAND_MANDATORY_FIELDS].forEach(f => {
   const el  = document.getElementById(f.id);
   const err = document.getElementById(f.errId);
   if (el) {
@@ -348,10 +512,45 @@ MANDATORY_FIELDS.forEach(f => {
   }
 });
 
+(function() {
+  const el = document.getElementById('truckNo');
+  if (!el) return;
+  el.addEventListener('blur', function() {
+    const stripped = this.value.replace(/\s/g, '').toUpperCase();
+    this.value = stripped;
+    const errEl = document.getElementById('err_truckNo');
+    if (stripped.length > 10) {
+      this.classList.add('field-error');
+      if (errEl) { errEl.textContent = 'Max 10 characters'; errEl.classList.add('show'); }
+    } else if (stripped) {
+      this.classList.remove('field-error');
+      if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
+    }
+  });
+})();
+
+(function() {
+  const el = document.getElementById('licenseNo');
+  if (!el) return;
+  el.addEventListener('blur', function() {
+    let clean = this.value.replace(/\s/g, '').toUpperCase();
+    if (clean.length > 4) clean = clean.slice(0, 4) + ' ' + clean.slice(4);
+    this.value = clean;
+    const errEl = document.getElementById('err_licenseNo');
+    if (clean.length > 16) {
+      this.classList.add('field-error');
+      if (errEl) { errEl.textContent = 'Max 16 characters (incl. space)'; errEl.classList.add('show'); }
+    } else if (clean) {
+      this.classList.remove('field-error');
+      if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
+    }
+  });
+})();
+
 document.getElementById('gateInForm').addEventListener('submit', function(e) {
   e.preventDefault();
   if (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED) {
-    alert('⏸ Record must be approved before Gate In can be posted.');
+    showToast('⏸ Record must be approved before Gate In can be posted.', 'warning');
     return;
   }
   if (!validateGateIn()) {
@@ -360,7 +559,7 @@ document.getElementById('gateInForm').addEventListener('submit', function(e) {
     return;
   }
   const historyId = parseInt(document.getElementById('history_id').value);
-  if (!historyId) { alert('History ID missing.'); return; }
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
   showConfirm(
     'Confirm Gate In Posting',
     'You are about to post Gate In to SAP. Make sure all fields are correct — this cannot be undone from the portal.',
@@ -368,33 +567,44 @@ document.getElementById('gateInForm').addEventListener('submit', function(e) {
   );
 });
 
-// Add this function anywhere in the script block:
 function _stripToNumeric(val) {
   return String(val || '').replace(/[^0-9]/g, '');
 }
 
 function _doSubmitGateIn(historyId) {
-  
+  const dType    = document.querySelector('input[name="deliveryType"]:checked');
+  const delivery = dType ? dType.value : 'truck';
+  const poFlowType = _getPoFlowType();
+
+  let vendorName, transporter;
+  if (delivery === 'truck') {
+    vendorName  = document.getElementById('vendorName').value;
+    transporter = document.getElementById('transporter').value;
+  } else {
+    vendorName  = document.getElementById('vendorNameHand').value;
+    transporter = document.getElementById('transporterHand').value;
+  }
+
   const payload = {
     history_id:    historyId,
     gateInDate:    document.getElementById('gateInDate').value,
     gateInTime:    document.getElementById('gateInTime').value,
-    vendorName:    document.getElementById('vendorName').value,
-    transporter:   document.getElementById('transporter').value,
-    truckNo:       document.getElementById('truckNo').value,
+    vendorName:    vendorName,
+    transporter:   transporter,
+    truckNo:       (delivery === 'truck') ? document.getElementById('truckNo').value    : '',
     driverName:    document.getElementById('driverName').value,
-    licenseNo:     document.getElementById('licenseNo').value,
-    containerNo:   document.getElementById('containerNo').value,
+    licenseNo:     (delivery === 'truck') ? document.getElementById('licenseNo').value.replace(/\s/g, '') : '',
+    containerNo:   (delivery === 'truck') ? document.getElementById('containerNo').value : '',
     numPersons:    document.getElementById('numPersons').value,
     category:      document.getElementById('category').value,
     material:      document.getElementById('material').value,
-    // challanNo:     document.getElementById('challanNo').value,
-    challanNo: _stripToNumeric(document.getElementById('challanNo').value),
+    challanNo:     _stripToNumeric(document.getElementById('challanNo').value),
     challanQty:    document.getElementById('challanQty').value,
     boeNo:         document.getElementById('boeNo').value,
     purchaseOrder: document.getElementById('purchaseOrder').value,
     gatePassNo:    document.getElementById('gatePassNo').value,
     note:          document.getElementById('note').value,
+    po_flow_type:  poFlowType,
   };
 
   const btn      = document.getElementById('gateInSubmitBtn');
@@ -422,7 +632,8 @@ function clearGateInForm() {
   ['gateInDate','gateInTime','vendorName','transporter','truckNo',
    'driverName','licenseNo','containerNo','numPersons','category',
    'material','challanNo','challanQty','boeNo','purchaseOrder',
-   'gatePassNo','note'].forEach(id => {
+   'gatePassNo','note',
+   'vendorNameHand','transporterHand'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -431,7 +642,73 @@ function clearGateInForm() {
   document.getElementById('gateInDate').value = new Date().toISOString().split('T')[0];
   const now = new Date();
   document.getElementById('gateInTime').value = now.toTimeString().slice(0, 5);
+  const poEl = document.getElementById('purchaseOrder');
+  if (poEl) { poEl.readOnly = false; poEl.placeholder = ''; poEl.style.background = ''; poEl.style.color = ''; }
   closePoDropdown();
+  const dd = document.getElementById('driverDropdown');
+  if (dd) dd.classList.remove('show');
+}
+
+// ============================================================
+// VEHICLE MASTER LOOKUP
+// ============================================================
+
+function lookupVehicle() {
+  const truckNo = document.getElementById('truckNo').value.trim();
+  if (!truckNo) { showToast('Enter Truck No first.', 'warning'); return; }
+
+  const btn = document.querySelector('.btn-lookup');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
+
+  fetch('/api/vehicle_lookup/' + encodeURIComponent(truckNo))
+    .then(r => r.json())
+    .then(data => {
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 Fetch Driver'; }
+      if (!data.success) { showToast(data.error || 'Lookup failed', 'error'); return; }
+      if (data.count === 0) {
+        showToast('No driver found for this truck number in vehicle master.', 'warning');
+      } else if (data.count === 1) {
+        _applyDriver(data.drivers[0]);
+      } else {
+        _renderDriverDropdown(data.drivers);
+      }
+    })
+    .catch(err => {
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 Fetch Driver'; }
+      showToast('Lookup error: ' + err.message, 'error');
+    });
+}
+
+function _applyDriver(driver) {
+  document.getElementById('driverName').value  = driver.driver_name || '';
+  let lic = (driver.licence_number || '').replace(/\s/g, '').toUpperCase();
+  if (lic.length > 4) lic = lic.slice(0, 4) + ' ' + lic.slice(4);
+  document.getElementById('licenseNo').value   = lic;
+  document.getElementById('transporter').value = driver.transporter_name || '';
+  const dd = document.getElementById('driverDropdown');
+  if (dd) dd.classList.remove('show');
+}
+
+function _renderDriverDropdown(drivers) {
+  const dd = document.getElementById('driverDropdown');
+  if (!dd) return;
+  dd.innerHTML = `<div class="po-dropdown-header">
+    <span>${drivers.length} Driver(s) Found</span>
+    <span onclick="document.getElementById('driverDropdown').classList.remove('show')"
+    style="cursor:pointer;color:#888;font-size:14px;">✕</span></div>`;
+  drivers.forEach(function(d) {
+    const item = document.createElement('div');
+    item.className = 'driver-dropdown-item';
+    item.innerHTML =
+      '<div class="drv-name">' + _escHtml(d.driver_name) + '</div>' +
+      '<div class="drv-meta">' +
+        (d.transporter_name ? _escHtml(d.transporter_name) + ' &nbsp;|&nbsp; ' : '') +
+        (d.licence_number   ? 'Lic: ' + _escHtml(d.licence_number) : '') +
+      '</div>';
+    item.onclick = function() { _applyDriver(d); };
+    dd.appendChild(item);
+  });
+  dd.classList.add('show');
 }
 
 // ============================================================
@@ -552,11 +829,4 @@ function _showPoStatus(msg, type) {
 function _escHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-
-// document.addEventListener('click', function(e) {
-//   const wrap = document.querySelector('.po-field-wrap');
-//   if (wrap && !wrap.contains(e.target)) closePoDropdown();
-// });
-// Remove the auto-close listener entirely
-// Users close via the ✕ button or by selecting a PO
 </script>

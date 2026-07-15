@@ -159,13 +159,16 @@
 .po-fetched { background:#d1fae5; color:#065f46; }
 .po-pending { background:#fef3c7; color:#92400e; }
 
-.drag-handle {
-  cursor: grab; color: #aaa; font-size: 16px; padding: 0 6px;
-  user-select: none;
+.row-move-btns { display:flex; flex-direction:column; gap:2px; align-items:center; }
+.btn-row-move {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:22px; height:22px; padding:0;
+  background:#f0f4ff; border:1px solid #c5d8f8; border-radius:4px;
+  color:#1e5ca8; font-size:12px; cursor:pointer; line-height:1;
+  transition: background .15s;
 }
-.drag-handle:active { cursor: grabbing; }
-.matched-table tr.dragging { opacity: 0.4; }
-.matched-table tr.drag-over { border-top: 2px solid #7c3aed; }
+.btn-row-move:hover:not(:disabled) { background:#dce7f5; }
+.btn-row-move:disabled { color:#ccc; border-color:#e0e0e0; background:#fafafa; cursor:default; }
 </style>
 
 <div class="content-card">
@@ -186,6 +189,8 @@
 
 {% set post_locked = (history is none) or (not history.gate_in) %}
 {% set gate_in_done = history and history.gate_in %}
+{% set po_flow_type = (history.po_flow_type if history else 'truck_with_po') or 'truck_with_po' %}
+{% set show_manual_po_fetch = 'without_po' in po_flow_type %}
 {% if not gate_in_done %}
 <div class="gate-banner">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 103.</div>
 {% else %}
@@ -210,9 +215,21 @@
   <div class="form-row">
     <div class="form-group">
       <label>Purchase Order No <span class="req">*</span></label>
-      <input type="text" id="migoPoNumber" class="form-input"
-             value="{{ (migo_data.get('migo_po_number') if migo_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
-             {% if step_locked %}disabled{% endif %}>
+      <div style="display:flex;gap:8px;align-items:flex-start;">
+        <input type="text" id="migoPoNumber" class="form-input" style="flex:1;"
+               value="{{ (migo_data.get('migo_po_number') if migo_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+               {% if step_locked %}disabled{% endif %}>
+        {% if show_manual_po_fetch %}
+        <button type="button" id="fetchPoItemsBtn"
+                onclick="fetchMigo103PoItems()"
+                style="display:inline-flex;align-items:center;gap:5px;padding:0 14px;height:38px;
+                       background:#e67e22;color:#fff;border:none;border-radius:6px;
+                       cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;flex-shrink:0;"
+                {% if step_locked %}disabled{% endif %}>
+          📋 Fetch PO Items
+        </button>
+        {% endif %}
+      </div>
       <div class="field-error-msg" id="err_migoPoNumber">Required</div>
     </div>
     <div class="form-group">
@@ -397,7 +414,7 @@
         <table class="matched-table" id="matchedTable">
           <thead>
             <tr>
-              <th style="width:30px;"></th>  <!-- drag handle -->
+              <th style="width:44px;">Order</th>
               <th>#</th>
               <th>Mat. Code</th>
               <th>Short Text (Inv)</th>
@@ -478,7 +495,7 @@ const COMPARE_URLS = {
 function openCompareModal() {
   const first = COMPARE_URLS.invoice || COMPARE_URLS.ewaybill || COMPARE_URLS.lr;
   if (!first) {
-    alert('No documents available to compare.');
+    showToast('No documents available to compare.', 'warning');
     return;
   }
   if (COMPARE_URLS.invoice) switchCompareTab('invoice');
@@ -734,7 +751,7 @@ function autoPair() {
     });
 
     msg += '\nUse manual pairing if values differ.';
-    alert(msg);
+    showToast(msg, 'warning');
   } else {
     const hint = document.getElementById('matchHint');
     if (hint) {
@@ -907,7 +924,7 @@ function autoPair() {
 // ============================================================
 function confirmMatches() {
   if (_pairs.length === 0) {
-    alert('No pairs to confirm. Click circles on both invoice and PO sides.');
+    showToast('No pairs to confirm. Click circles on both invoice and PO sides.', 'warning');
     return;
   }
 
@@ -953,7 +970,12 @@ function confirmMatches() {
     tr.setAttribute('data-pair', pair.pairNum);
 
     tr.innerHTML = `
-      <td class="drag-handle" draggable="true">⠿</td>
+      <td>
+        <div class="row-move-btns">
+          <button type="button" class="btn-row-move" title="Move up" onclick="_moveRowUp(this)">▲</button>
+          <button type="button" class="btn-row-move" title="Move down" onclick="_moveRowDown(this)">▼</button>
+        </div>
+      </td>
       <td style="font-weight:600;color:#1e5ca8;">${idx + 1}</td>
       <td>${_esc(inv.material_code || po.material_code)}</td>
       <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
@@ -968,9 +990,9 @@ function confirmMatches() {
       tbody.appendChild(tr);
   });
   _renumberMatchedRows();
+  _updateArrowStates();
   document.getElementById('matchedSection').style.display = 'block';
   document.getElementById('matchedSection').scrollIntoView({behavior:'smooth', block:'center'});
-  initDragDrop();
 
 }
 
@@ -1016,33 +1038,32 @@ function addInvoiceRow() {
   tbody.appendChild(tr);
 }
 
-function initDragDrop() {
-  const tbody = document.getElementById('matchedBody');
-  let dragRow = null;
-
-  tbody.addEventListener('dragstart', e => {
-    dragRow = e.target.closest('tr');
-    dragRow.classList.add('dragging');
-  });
-  tbody.addEventListener('dragend', e => {
-    e.target.closest('tr').classList.remove('dragging');
-    document.querySelectorAll('#matchedBody tr').forEach(r => r.classList.remove('drag-over'));
+function _moveRowUp(btn) {
+  const row  = btn.closest('tr');
+  const prev = row.previousElementSibling;
+  if (prev) {
+    row.parentNode.insertBefore(row, prev);
     _renumberMatchedRows();
-  });
-  tbody.addEventListener('dragover', e => {
-    e.preventDefault();
-    const target = e.target.closest('tr');
-    if (target && target !== dragRow) {
-      document.querySelectorAll('#matchedBody tr').forEach(r => r.classList.remove('drag-over'));
-      target.classList.add('drag-over');
-    }
-  });
-  tbody.addEventListener('drop', e => {
-    e.preventDefault();
-    const target = e.target.closest('tr');
-    if (target && target !== dragRow) {
-      tbody.insertBefore(dragRow, target);
-    }
+    _updateArrowStates();
+  }
+}
+
+function _moveRowDown(btn) {
+  const row  = btn.closest('tr');
+  const next = row.nextElementSibling;
+  if (next) {
+    row.parentNode.insertBefore(next, row);
+    _renumberMatchedRows();
+    _updateArrowStates();
+  }
+}
+
+function _updateArrowStates() {
+  const rows = document.querySelectorAll('#matchedBody tr');
+  rows.forEach((row, idx) => {
+    const [upBtn, downBtn] = row.querySelectorAll('.btn-row-move');
+    if (upBtn)   upBtn.disabled   = (idx === 0);
+    if (downBtn) downBtn.disabled = (idx === rows.length - 1);
   });
 }
 
@@ -1133,19 +1154,19 @@ function validateMigo103() {
   const matchedQtys = document.querySelectorAll('.matched-dn-qty');
   if (matchedQtys.length === 0) {
     valid = false;
-    alert('Confirm at least one matched pair before posting.');
+    showToast('Confirm at least one matched pair before posting.', 'warning');
   }
   return valid;
 }
 
 function submitMigo103() {
   if (POST_LOCKED_103 && STEP_LOCKS_ENABLED) {
-    alert('⏸ Gate In must be completed before posting MIGO 103.');
+    showToast('⏸ Gate In must be completed before posting MIGO 103.', 'warning');
     return;
   }
   if (!validateMigo103()) return;
   const historyId = parseInt(document.getElementById('history_id_migo').value);
-  if (!historyId) { alert('History ID missing.'); return; }
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
   showConfirm(
     'Confirm MIGO 103 Posting',
     'You are about to post MIGO 103 (Goods Receipt into Blocked Stock) to SAP. Make sure all line items and quantities are correct.',
@@ -1188,4 +1209,112 @@ function _doSubmitMigo103(historyId) {
     }
   });
 }
+
+{% if show_manual_po_fetch %}
+// ── Without-PO: manual PO fetch from MIGO 103 screen ──────────────────────
+let _migo103PoFetchJobId  = null;
+let _migo103PoFetchPoller = null;
+
+function fetchMigo103PoItems() {
+  const poNumber = document.getElementById('migoPoNumber').value.trim();
+  if (!poNumber) {
+    _showMigo103PoStatus('Enter a PO number first.', 'error');
+    return;
+  }
+  const historyId = parseInt(document.getElementById('history_id_migo').value);
+  if (!historyId) return;
+
+  _resetFetchPoBtn(true);
+  _showMigo103PoStatus('⏳ Fetching PO line items from SAP (ME23N)...', 'info');
+
+  fetch('/api/run_po_fetch/' + historyId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ po_number: poNumber })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (!data.success) {
+      _resetFetchPoBtn(false);
+      _showMigo103PoStatus('❌ ' + (data.error || 'Failed to queue PO fetch.'), 'error');
+      return;
+    }
+    _migo103PoFetchJobId = data.job_id;
+    _pollMigo103PoFetch();
+  })
+  .catch(err => {
+    _resetFetchPoBtn(false);
+    _showMigo103PoStatus('❌ Network error: ' + err.message, 'error');
+  });
+}
+
+function _pollMigo103PoFetch() {
+  if (!_migo103PoFetchJobId) return;
+  _migo103PoFetchPoller = setInterval(function() {
+    fetch('/api/queue_status/' + _migo103PoFetchJobId)
+      .then(r => r.json())
+      .then(data => {
+        const job = data.job;
+        if (!job) return;
+        if (job.status === 'done') {
+          clearInterval(_migo103PoFetchPoller);
+          _resetFetchPoBtn(false);
+          const result = job.result || {};
+          const items  = result.po_items || [];
+          if (items.length > 0) {
+            _showMigo103PoStatus('✓ Loaded ' + items.length + ' PO line(s) — refresh the table below.', 'success');
+            _reloadPoItemsTable(historyId);
+          } else {
+            _showMigo103PoStatus('⚠ PO fetched but no open line items found.', 'info');
+          }
+        } else if (job.status === 'failed') {
+          clearInterval(_migo103PoFetchPoller);
+          _resetFetchPoBtn(false);
+          _showMigo103PoStatus('❌ ' + (job.error_message || 'Fetch failed'), 'error');
+        }
+      })
+      .catch(function() {});
+  }, 3000);
+}
+
+function _resetFetchPoBtn(loading) {
+  const btn = document.getElementById('fetchPoItemsBtn');
+  if (!btn) return;
+  btn.disabled    = loading;
+  btn.textContent = loading ? '⏳ Fetching...' : '📋 Fetch PO Items';
+}
+
+function _showMigo103PoStatus(msg, type) {
+  let el = document.getElementById('migo103PoStatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'migo103PoStatus';
+    el.style.cssText = 'font-size:12px;margin-top:5px;padding:4px 8px;border-radius:4px;';
+    const poGroup = document.getElementById('migoPoNumber').closest('.form-group');
+    if (poGroup) poGroup.appendChild(el);
+  }
+  const colors = { info: '#e8f0fe:#1e5ca8', error: '#fee2e2:#b91c1c', success: '#d1fae5:#065f46' };
+  const [bg, color] = (colors[type] || colors.info).split(':');
+  el.style.background = bg;
+  el.style.color      = color;
+  el.style.display    = 'block';
+  el.textContent      = msg;
+}
+
+function _reloadPoItemsTable(historyId) {
+  fetch('/api/po_items/' + historyId)
+    .then(r => r.json())
+    .then(data => {
+      if (data.success && data.items && data.items.length > 0) {
+        // Trigger the existing page reload so the PO items table refreshes
+        // The migo_103 tab uses the po_data variable rendered server-side,
+        // so a tab reload is the cleanest approach.
+        if (typeof window.reloadTab === 'function') {
+          window.reloadTab('migo_103');
+        }
+      }
+    })
+    .catch(function() {});
+}
+{% endif %}
 </script>

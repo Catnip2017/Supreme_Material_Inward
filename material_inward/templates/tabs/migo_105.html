@@ -242,11 +242,11 @@ function validateMigo105() {
 
 function submitMigo105() {
   if (POST_LOCKED_105 && STEP_LOCKS_ENABLED) {
-    alert('⏸ MIGO 103 must be completed before posting MIGO 105.');
+    showToast('⏸ MIGO 103 must be completed before posting MIGO 105.', 'warning');
     return;
   }
   if (!validateMigo105()) return;
-  if (!HISTORY_ID_105) { alert('History ID missing.'); return; }
+  if (!HISTORY_ID_105) { showToast('History ID missing.', 'error'); return; }
   showConfirm(
     'Confirm MIGO 105 Posting',
     'You are about to post MIGO 105 (Release from Blocked Stock) to SAP. Make sure storage location and batch values are correct.',

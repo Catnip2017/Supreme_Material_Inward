@@ -44,7 +44,7 @@ function pollRFJob(jobId, callbacks, button = null) {
         if (res.status === 401) {
           return res.json().then(data => {
             if (data.session_expired) {
-              alert('Your session has expired. Please log in again.');
+              showToast('Your session has expired. Please log in again.', 'warning');
               window.location.href = '/login';
             }
           });
@@ -117,7 +117,7 @@ function submitAndPoll(url, payload, button, callbacks) {
         return res.json().then(data => {
           if (button) { button.disabled = false; button.textContent = button._originalText; }
           if (data.session_expired) {
-            alert('Session expired. Please log in again.');
+            showToast('Session expired. Please log in again.', 'warning');
             window.location.href = '/login';
           }
         });
@@ -126,7 +126,7 @@ function submitAndPoll(url, payload, button, callbacks) {
       if (res.status === 409) {
         return res.json().then(data => {
           if (button) { button.disabled = false; button.textContent = button._originalText; }
-          alert('⚠ ' + (data.error || 'Already processing. Please wait.'));
+          showToast('⚠ ' + (data.error || 'Already processing. Please wait.'), 'warning');
         });
       }
       return res.json();

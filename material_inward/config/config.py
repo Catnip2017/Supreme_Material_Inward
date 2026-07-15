@@ -71,6 +71,7 @@ class Config:
 
     # --- File Handling ---
     UPLOAD_FOLDER: str           = os.getenv("UPLOAD_FOLDER", "uploads")
+    DMS_STAGING_FOLDER: str      = os.getenv("DMS_STAGING_FOLDER", r"C:\material_inward\dms_staging")
     UPLOAD_PROCESSED_FOLDER: str = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "processed")
     UPLOAD_FAILED_FOLDER: str    = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "failed")
     MAX_FILE_SIZE_BYTES: int     = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024

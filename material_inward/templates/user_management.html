@@ -733,12 +733,12 @@
  
         function openDeleteModal(username, role) {
             if (username === currentUsername) {
-                alert('You cannot delete your own account!');
+                showToast('You cannot delete your own account!', 'warning');
                 return;
             }
             
             if (role === 'Admin') {
-                alert('Cannot delete Admin users!');
+                showToast('Cannot delete Admin users!', 'warning');
                 return;
             }
             
@@ -780,13 +780,13 @@
                 });
                 const result = await response.json();
                 if (result.status) {
-                    alert('User created successfully!');
+                    showToast('User created successfully!', 'success');
                     window.location.reload();
                 } else {
-                    alert('Error: ' + result.message);
+                    showToast('Error: ' + result.message, 'error');
                 }
             } catch (error) {
-                alert('Error: ' + error.message);
+                showToast('Error: ' + error.message, 'error');
             }
         }
  
@@ -802,7 +802,7 @@
             }
  
             if (!newPassword) {
-                alert('Please enter a new password');
+                showToast('Please enter a new password', 'warning');
                 return;
             }
  
@@ -813,39 +813,40 @@
             const originalRole = document.getElementById('edit_original_role').value;
             
             // Confirm if changing User to Admin
-            if (originalRole === 'User' && role === 'Admin') {
-                const confirmChange = confirm('Are you sure you want to make this user an Admin? This action cannot be reversed!');
-                if (!confirmChange) {
-                    return;
-                }
-            }
- 
             const userData = {
                 username: username,
                 role: role,
                 password: newPassword,
                 confirm_password: confirmPassword
             };
- 
-            try {
-                const response = await fetch('/edit_user_web', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(userData)
-                });
- 
-                const result = await response.json();
- 
-                if (result.status) {
-                    alert('User updated successfully!');
-                    window.location.reload();
-                } else {
-                    alert('Error: ' + result.message);
+
+            async function _submitEdit() {
+                try {
+                    const response = await fetch('/edit_user_web', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(userData)
+                    });
+                    const result = await response.json();
+                    if (result.status) {
+                        showToast('User updated successfully!', 'success');
+                        window.location.reload();
+                    } else {
+                        showToast('Error: ' + result.message, 'error');
+                    }
+                } catch (error) {
+                    showToast('Error updating user: ' + error.message, 'error');
                 }
-            } catch (error) {
-                alert('Error updating user: ' + error.message);
+            }
+
+            if (originalRole === 'User' && role === 'Admin') {
+                showConfirm(
+                    'Make Admin',
+                    'Are you sure you want to make this user an Admin? This action cannot be reversed!',
+                    _submitEdit
+                );
+            } else {
+                _submitEdit();
             }
         }
  
@@ -853,7 +854,7 @@
             const username = document.getElementById('delete_username').value;
  
             if (username === currentUsername) {
-                alert('You cannot delete your own account!');
+                showToast('You cannot delete your own account!', 'warning');
                 closeModal('deleteModal');
                 return;
             }
@@ -870,17 +871,83 @@
                 const result = await response.json();
  
                 if (result.status) {
-                    alert('User deleted successfully!');
+                    showToast('User deleted successfully!', 'success');
                     window.location.reload();
                 } else {
-                    alert('Error: ' + result.message);
+                    showToast('Error: ' + result.message, 'error');
                 }
             } catch (error) {
-                alert('Error deleting user: ' + error.message);
+                showToast('Error deleting user: ' + error.message, 'error');
             }
         }
     </script>
  
+
+<!-- ── Toast notifications ──────────────────────────────────────────────── -->
+<style>
+#appToastContainer{position:fixed;bottom:24px;right:24px;z-index:99999;display:flex;flex-direction:column;gap:10px;pointer-events:none;}
+.app-toast{min-width:250px;max-width:400px;padding:13px 16px;border-radius:10px;font-size:13px;font-weight:500;box-shadow:0 6px 24px rgba(0,0,0,.15);pointer-events:auto;display:flex;align-items:flex-start;gap:10px;animation:toastIn .25s ease;}
+@keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.app-toast.success{background:#ecfdf5;color:#1a7a3c;border-left:4px solid #00b894;}
+.app-toast.error{background:#fff0f0;color:#c0392b;border-left:4px solid #e74c3c;}
+.app-toast.warning{background:#fff8e1;color:#856404;border-left:4px solid #f39c12;}
+.app-toast.info{background:#e8f0fe;color:#1e5ca8;border-left:4px solid #1e5ca8;}
+.app-toast-close{flex-shrink:0;background:none;border:none;cursor:pointer;font-size:15px;color:inherit;opacity:.6;padding:0 0 0 6px;line-height:1;}
+.app-toast-close:hover{opacity:1;}
+
+/* Confirm modal for user_management */
+.um-confirm-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90000;align-items:center;justify-content:center;}
+.um-confirm-modal.show{display:flex;}
+.um-confirm-box{background:#fff;border-radius:12px;padding:32px;width:90%;max-width:440px;box-shadow:0 8px 32px rgba(0,0,0,.2);}
+.um-confirm-icon{font-size:40px;text-align:center;margin-bottom:14px;}
+.um-confirm-title{font-size:17px;font-weight:700;color:#2c3e50;text-align:center;margin-bottom:10px;}
+.um-confirm-msg{font-size:13px;color:#555;text-align:center;line-height:1.6;margin-bottom:24px;}
+.um-confirm-actions{display:flex;gap:10px;}
+.um-confirm-actions button{flex:1;padding:12px;border:none;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;transition:.2s;}
+.um-confirm-cancel{background:#ecf0f1;color:#333;}
+.um-confirm-cancel:hover{background:#d5dbdc;}
+.um-confirm-yes{background:linear-gradient(135deg,#1e5ca8,#164a8a);color:#fff;}
+.um-confirm-yes:hover{box-shadow:0 4px 12px rgba(30,92,168,.35);}
+</style>
+<div id="appToastContainer"></div>
+<div class="um-confirm-modal" id="umConfirmModal">
+  <div class="um-confirm-box">
+    <div class="um-confirm-icon">⚠</div>
+    <div class="um-confirm-title" id="umConfirmTitle"></div>
+    <div class="um-confirm-msg" id="umConfirmMsg"></div>
+    <div class="um-confirm-actions">
+      <button class="um-confirm-cancel" onclick="umCloseConfirm()">Cancel</button>
+      <button class="um-confirm-yes" id="umConfirmYes">Confirm</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var _cb = null;
+  window.showToast = function(msg, type){
+    var icons={success:'✓',error:'✗',warning:'⚠',info:'ℹ'};
+    var c=document.getElementById('appToastContainer');
+    var t=document.createElement('div');
+    t.className='app-toast '+(type||'info');
+    t.innerHTML='<span>'+icons[type||'info']+'</span><span style="flex:1">'+msg+'</span><button class="app-toast-close" onclick="this.parentNode.remove()">✕</button>';
+    c.appendChild(t);
+    setTimeout(function(){if(t.parentNode)t.remove();},5000);
+  };
+  window.showConfirm = function(title, msg, onYes){
+    document.getElementById('umConfirmTitle').textContent=title;
+    document.getElementById('umConfirmMsg').textContent=msg;
+    _cb=onYes;
+    document.getElementById('umConfirmModal').classList.add('show');
+  };
+  window.umCloseConfirm = function(){
+    document.getElementById('umConfirmModal').classList.remove('show');
+    _cb=null;
+  };
+  document.getElementById('umConfirmYes').onclick=function(){
+    if(_cb){var f=_cb;_cb=null;document.getElementById('umConfirmModal').classList.remove('show');f();}
+  };
+})();
+</script>
 </body>
 </html>
 <!-- ================================================ -->
@@ -1078,8 +1145,8 @@ function updateLocation(code, is_active) {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({code, description: desc, is_active})
   }).then(r=>r.json()).then(d=>{
-    if(d.success) { alert('✓ Location updated.'); location.reload(); }
-    else { alert('❌ Update failed.'); }
+    if(d.success) { showToast('✓ Location updated.', 'success'); location.reload(); }
+    else { showToast('❌ Update failed.', 'error'); }
   });
 }
 
@@ -1090,7 +1157,7 @@ function toggleLocation(code, newActiveState) {
     body: JSON.stringify({code, description: desc, is_active: newActiveState})
   }).then(r=>r.json()).then(d=>{
     if(d.success) location.reload();
-    else alert('❌ Failed.');
+    else showToast('❌ Failed.', 'error');
   });
 }
 
