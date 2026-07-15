@@ -1,0 +1,133 @@
+<div class="content-card">
+  <h3>📊 GST Department - Auto MIRO Report</h3>
+  <form id="gstForm">
+    <h4 style="color: #1e5ca8; font-size: 16px; margin-top: 20px; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0;">Type of Purchase</h4>
+    <div class="radio-group">
+      <label class="radio-label">
+        <input type="radio" name="purchaseType" value="material" checked>
+        <span>Material</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="purchaseType" value="services">
+        <span>Services</span>
+      </label>
+    </div>
+
+    <h4 style="color: #1e5ca8; font-size: 16px; margin-top: 30px; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0;">📋 Selection Criteria</h4>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>Material Document</label>
+        <input type="text" id="gstMaterialDoc" class="form-input">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="text" id="gstMaterialDocTo" class="form-input">
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>Material Document Year</label>
+        <input type="text" id="gstMatDocYear" class="form-input">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="text" id="gstMatDocYearTo" class="form-input">
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>Invoice Date</label>
+        <input type="date" id="gstInvoiceDate" class="form-input" 
+               value="{% if invoice_data %}{{ invoice_data.get('Invoice Date', '') }}{% endif %}">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="date" id="gstInvoiceDateTo" class="form-input">
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>Business Place</label>
+        <input type="text" id="gstBusinessPlace" class="form-input">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="text" id="gstBusinessPlaceTo" class="form-input">
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>Document Date</label>
+        <input type="date" id="gstDocDate" class="form-input">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="date" id="gstDocDateTo" class="form-input">
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>Plant</label>
+        <input type="text" id="gstPlant" class="form-input">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="text" id="gstPlantTo" class="form-input">
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>Purchasing Document</label>
+        <input type="text" id="gstPurchasingDoc" class="form-input" 
+               value="{% if invoice_data %}{{ invoice_data.get('PO Number', '') }}{% endif %}">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="text" id="gstPurchasingDocTo" class="form-input">
+      </div>
+    </div>
+    
+    <div class="form-row">
+      <div class="form-group">
+        <label>MSME Vendor</label>
+        <input type="text" id="gstMSMEVendor" class="form-input">
+      </div>
+      <div class="form-group">
+        <label>to</label>
+        <input type="text" id="gstMSMEVendorTo" class="form-input">
+      </div>
+    </div>
+
+    <h4 style="color: #1e5ca8; font-size: 16px; margin-top: 30px; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0;">Document Type</h4>
+    <div class="radio-group">
+      <label class="radio-label">
+        <input type="radio" name="docType" value="all" checked>
+        <span>All Documents</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="docType" value="error">
+        <span>Error Documents</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="docType" value="parked">
+        <span>Parked Documents</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="docType" value="posted">
+        <span>Posted Documents</span>
+      </label>
+    </div>
+
+    <div class="action-buttons">
+      <button type="submit" class="btn btn-primary">📊 Generate Report</button>
+      <button type="button" class="btn btn-secondary" onclick="clearGstForm()">🔄 Clear</button>
+    </div>
+  </form>
+</div>

@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management - SPL</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+ 
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background:whitesmoke;
+            min-height: 100vh;
+        }
+ 
+        .header {
+            background: white;
+            padding: 15px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+ 
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+ 
+        .logo-icon {
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+ 
+        .logo-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+ 
+        .user-menu {
+            position: relative;
+        }
+ 
+        .user-profile {
+            width: 45px;
+            height: 45px;
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s;
+            text-transform: uppercase;
+        }
+ 
+        .user-profile:hover {
+            transform: scale(1.05);
+        }
+ 
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 55px;
+            right: 0;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            min-width: 180px;
+            z-index: 1000;
+            overflow: hidden;
+        }
+ 
+        .dropdown-menu.show {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+ 
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+ 
+        .dropdown-menu a {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 20px;
+            color: #2c3e50;
+            text-decoration: none;
+            transition: background 0.2s;
+            font-size: 14px;
+        }
+ 
+        .dropdown-menu a:hover {
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            color: white;
+        }
+ 
+        .dropdown-menu a i {
+            width: 20px;
+        }
+ 
+        .container {
+            max-width: 1400px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+ 
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            background: white;
+            padding: 25px 30px;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+ 
+        .page-title {
+            font-size: 28px;
+            color: #2c3e50;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+ 
+        .page-title i {
+            color: #1e5ca8;
+        }
+ 
+        .new-user-btn {
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(30, 92, 168, 0.4);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+ 
+        .new-user-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(30, 92, 168, 0.6);
+        }
+ 
+        .user-table {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+ 
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+ 
+        thead {
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            color: white;
+        }
+ 
+        th {
+            padding: 20px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+ 
+        td {
+            padding: 20px;
+            color: #2c3e50;
+            font-size: 14px;
+            font-weight: 500;
+            border-bottom: 1px solid #ecf0f1;
+        }
+ 
+        tbody tr:hover {
+            background: #f8f9fa;
+        }
+ 
+        .action-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-right: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+ 
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+ 
+        .edit-btn {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+        }
+ 
+        .edit-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+        }
+ 
+        .delete-btn {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }
+ 
+        .delete-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+        }
+ 
+        .role-badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+ 
+        .role-admin {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }
+ 
+        .role-user {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+        }
+ 
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 9999;
+            animation: fadeIn 0.3s;
+        }
+ 
+        .modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+ 
+       .modal-content {
+        background: white;
+        border-radius: 15px;
+        padding: 30px;
+        width: 90%;
+        max-width: 500px;
+        max-height: 85vh;
+        overflow-y: auto;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        animation: slideUp 0.3s;
+        }
+ 
+        @keyframes slideUp {
+            from { transform: translateY(50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+ 
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+ 
+        .modal-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+ 
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 28px;
+            color: #95a5a6;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+ 
+        .close-btn:hover {
+            color: #e74c3c;
+        }
+ 
+        .form-group {
+            margin-bottom: 20px;
+        }
+ 
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+ 
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #ecf0f1;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+ 
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #1e5ca8;
+        }
+ 
+        .form-group input:disabled,
+        .form-group select:disabled {
+            background: #f8f9fa;
+            cursor: not-allowed;
+        }
+ 
+        .error-message {
+            color: #e74c3c;
+            font-size: 13px;
+            margin-top: 5px;
+            display: none;
+        }
+ 
+        .warning-message {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            color: #856404;
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+ 
+        .warning-message i {
+            color: #ffc107;
+            font-size: 18px;
+        }
+ 
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+ 
+        .btn-submit {
+            flex: 1;
+            padding: 12px;
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+ 
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(30, 92, 168, 0.4);
+        }
+ 
+        .btn-cancel {
+            flex: 1;
+            padding: 12px;
+            background: #95a5a6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+ 
+        .btn-cancel:hover {
+            background: #7f8c8d;
+        }
+ 
+        .confirmation-modal .modal-content {
+            text-align: center;
+            max-width: 400px;
+        }
+ 
+        .confirmation-icon {
+            font-size: 60px;
+            color: #e74c3c;
+            margin-bottom: 20px;
+        }
+ 
+        .confirmation-text {
+            font-size: 18px;
+            color: #2c3e50;
+            margin-bottom: 25px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+ 
+    <div class="header">
+        <div class="logo-container">
+            <div class="logo-icon">
+                <img src="/static/SPL_Logo.png" alt="SPL Logo" onerror="this.style.display='none'">
+            </div>
+        </div>
+ 
+        <div class="user-menu">
+            <div class="user-profile" onclick="toggleDropdown(event)">
+                {{ role[0] if role else 'A' }}
+            </div>
+ 
+            <div class="dropdown-menu" id="userDropdown">
+                <a href="/history"><i class="fas fa-history"></i> History</a>
+                <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
+                <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </div>
+        </div>
+    </div>
+ 
+    <div class="container">
+        <div class="page-header">
+            <h1 class="page-title">
+                <i class="fas fa-users-cog"></i>
+                User Management
+            </h1>
+ 
+            <button class="new-user-btn" onclick="openCreateModal()">
+                <i class="fas fa-user-plus"></i> New User
+            </button>
+        </div>
+ 
+        <div class="user-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+ 
+                <tbody>
+                    {% if users and users|length > 0 %}
+                        {% for user in users %}
+                            <tr>
+                                <td>{{ user['username'] }}</td>
+                                <td>{{ user['name'] or '-' }}</td>
+                                <td>
+                                    <span class="role-badge {{ 'role-admin' if user['role'] == 'Admin' else 'role-user' }}">
+                                        {{ user['role'] }}
+                                    </span>
+                                </td>
+                                <td>{{ user['created_at'].strftime('%Y-%m-%d %H:%M') if user['created_at'] else '-' }}</td>
+                                <td>
+                                    <button class="action-btn edit-btn"
+                                        data-username="{{ user['username'] }}"
+                                        data-role="{{ user['role'] }}"
+                                        onclick="openEditModal(this.dataset.username, this.dataset.role)">
+                                        <i class="fas fa-edit"></i> Edit
+                                    </button>
+                                    <button class="action-btn delete-btn"
+                                        data-username="{{ user['username'] }}"
+                                        data-role="{{ user['role'] }}"
+                                        onclick="openDeleteModal(this.dataset.username, this.dataset.role)"
+                                        {% if user['username'] == current_username or user['role'] == 'Admin' %}disabled{% endif %}>
+                                        <i class="fas fa-trash"></i> Delete
+                                    </button>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="5" style="text-align:center;padding:40px;">No users found</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+        <div id="createModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Create New User</h2>
+                <button class="close-btn" onclick="closeModal('createModal')">&times;</button>
+            </div>
+            <form id="createForm" onsubmit="handleCreateUser(event)">
+            <div class="form-group">
+                <label>Username <span style="color:red;">*</span></label>
+                <input type="text" id="create_username" required placeholder="Enter username">
+            </div>
+            <div class="form-group">
+                <label>Name <span style="color:red;">*</span></label>
+                <input type="text" id="create_name" required placeholder="Enter full name">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="create_email" placeholder="user@company.com (for notifications)">
+            </div>
+            <div class="form-group">
+                <label>Role <span style="color:red;">*</span></label>
+                <select id="create_role" required>
+                    <option value="">Select Role</option>
+                    <option value="Admin">Admin</option>
+                    <option value="User">User</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Step Roles (which workflow steps this user handles)</label>
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:6px;">
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="all" id="create_step_all" onchange="toggleAllSteps('create')"> All Steps</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="gate_in"> Gate In</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="migo_103"> MIGO 103</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="migo_105"> MIGO 105</label>
+                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="miro"> MIRO</label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="create_email_notif"> Enable email notifications for this user
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Password <span style="color:red;">*</span></label>
+                <input type="password" id="create_password" required placeholder="Enter password">
+            </div>
+            <div class="form-group">
+                <label>Confirm Password <span style="color:red;">*</span></label>
+                <input type="password" id="create_confirm_password" required placeholder="Confirm password">
+                <div class="error-message" id="create_password_error">Passwords do not match!</div>
+            </div>
+           <div class="modal-actions">
+                <button type="submit" class="btn-submit">Create User</button>
+                <button type="button" class="btn-cancel" onclick="closeModal('createModal')">Cancel</button>
+            </div>
+            </form>
+        </div>
+    </div>
+ 
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Edit User</h2>
+                <button class="close-btn" onclick="closeModal('editModal')">&times;</button>
+            </div>
+ 
+            <form id="editForm" onsubmit="handleEditUser(event)">
+                <div class="form-group">
+                    <label>Username <span style="color:red;">*</span></label>
+                    <input type="text" id="edit_username" required placeholder="Enter username">
+                </div>
+                <div class="form-group">
+                    <label>Name <span style="color:red;">*</span></label>
+                    <input type="text" id="edit_name" required placeholder="Enter full name">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="edit_email" placeholder="user@company.com (for notifications)">
+                </div>
+                <div class="form-group">
+                    <label>Role <span style="color:red;">*</span></label>
+                    <select id="edit_role" required>
+                        <option value="">Select Role</option>
+                        <option value="Admin">Admin</option>
+                        <option value="User">User</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Step Roles (which workflow steps this user handles)</label>
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:6px;">
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="all" id="edit_step_all" onchange="toggleAllSteps('edit')"> All Steps</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="gate_in"> Gate In</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="migo_103"> MIGO 103</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="migo_105"> MIGO 105</label>
+                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="miro"> MIRO</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="edit_email_notif"> Edit email notifications for this user
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Password <span style="color:red;">*</span></label>
+                    <input type="password" id="edit_password" required placeholder="Enter password">
+                </div>
+                <div class="form-group">
+                    <label>Confirm Password <span style="color:red;">*</span></label>
+                    <input type="password" id="edit_confirm_password" required placeholder="Confirm password">
+                    <div class="error-message" id="edit_password_error">Passwords do not match!</div>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn-submit">Update User</button>
+                    <button type="button" class="btn-cancel" onclick="closeModal('editModal')">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+ 
+    <div id="deleteModal" class="modal confirmation-modal">
+        <div class="modal-content">
+            <div class="confirmation-icon">
+                <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <p class="confirmation-text">
+                Are you sure you want to delete this user?<br>
+                <strong id="delete_username_display"></strong><br>
+                This action cannot be undone.
+            </p>
+            <input type="hidden" id="delete_username">
+            <div class="modal-actions">
+                <button class="btn-submit" style="background:linear-gradient(135deg,#e74c3c,#c0392b);" onclick="handleDeleteUser()">
+                    Yes, Delete
+                </button>
+                <button class="btn-cancel" onclick="closeModal('deleteModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+ 
+    <script>
+        const currentUsername = "{{ current_username }}";
+ 
+        function toggleDropdown(event) {
+            event.stopPropagation();
+            document.getElementById("userDropdown").classList.toggle("show");
+        }
+ 
+        document.addEventListener("click", function(e) {
+            const dropdown = document.getElementById("userDropdown");
+            const userMenu = document.querySelector(".user-menu");
+ 
+            if (!userMenu.contains(e.target)) {
+                dropdown.classList.remove("show");
+            }
+        });
+ 
+        function openCreateModal() {
+            document.getElementById('createForm').reset();
+            document.getElementById('create_password_error').style.display = 'none';
+            document.getElementById('createModal').classList.add('show');
+        }
+ 
+        function openEditModal(username, role) {
+            document.getElementById('edit_username').value = username;
+            document.getElementById('edit_role').value = role;
+            document.getElementById('edit_password').value = '';
+            document.getElementById('edit_confirm_password').value = '';
+            document.getElementById('edit_password_error').style.display = 'none';
+           
+            // const isCurrentUser = username === currentUsername;
+            // const roleSelect = document.getElementById('edit_role');
+            // const roleGroup = document.getElementById('edit_role_group');
+            // const warningDiv = document.getElementById('admin_warning');
+            
+            // // If current user is editing themselves, disable role change
+            // if (isCurrentUser) {
+            //     roleSelect.disabled = true;
+            //     roleGroup.style.display = 'block';
+            //     warningDiv.style.display = 'none';
+            // } 
+            // // If user is already Admin, disable role change
+            // else if (role === 'Admin') {
+            //     roleSelect.disabled = true;
+            //     roleGroup.style.display = 'block';
+            //     warningDiv.style.display = 'none';
+            // } 
+            // // Admin editing User - allow role change but show warning
+            // else {
+            //     roleSelect.disabled = false;
+            //     roleGroup.style.display = 'block';
+                
+            //     // Show warning when role changes to Admin
+            //     roleSelect.addEventListener('change', function() {
+            //         if (this.value === 'Admin') {
+            //             warningDiv.style.display = 'flex';
+            //         } else {
+            //             warningDiv.style.display = 'none';
+            //         }
+            //     });
+                
+            //     warningDiv.style.display = 'none';
+            // }
+           
+            document.getElementById('editModal').classList.add('show');
+        }
+ 
+        function openDeleteModal(username, role) {
+            if (username === currentUsername) {
+                alert('You cannot delete your own account!');
+                return;
+            }
+            
+            if (role === 'Admin') {
+                alert('Cannot delete Admin users!');
+                return;
+            }
+            
+            document.getElementById('delete_username').value = username;
+            document.getElementById('delete_username_display').textContent = username;
+            document.getElementById('deleteModal').classList.add('show');
+        }
+ 
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('show');
+        }
+ 
+        async function handleCreateUser(event) {
+            event.preventDefault();
+            const password = document.getElementById('create_password').value;
+            const confirmPassword = document.getElementById('create_confirm_password').value;
+            if (password !== confirmPassword) {
+                document.getElementById('create_password_error').style.display = 'block';
+                return;
+            }
+            document.getElementById('create_password_error').style.display = 'none';
+
+            const userData = {
+                username: document.getElementById('create_username').value,
+                name: document.getElementById('create_name').value,
+                email: document.getElementById('create_email').value,
+                role: document.getElementById('create_role').value,
+                step_roles: _collectStepRoles('create'),
+                email_notifications_enabled: document.getElementById('create_email_notif').checked,
+                password: password,
+                confirm_password: confirmPassword
+            };
+
+            try {
+                const response = await fetch('/add_user_web', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(userData)
+                });
+                const result = await response.json();
+                if (result.status) {
+                    alert('User created successfully!');
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+ 
+        async function handleEditUser(event) {
+            event.preventDefault();
+ 
+            const newPassword = document.getElementById('edit_password').value.trim();
+            const confirmPassword = document.getElementById('edit_confirm_password').value.trim();
+ 
+            if (newPassword !== confirmPassword) {
+                document.getElementById('edit_password_error').style.display = 'block';
+                return;
+            }
+ 
+            if (!newPassword) {
+                alert('Please enter a new password');
+                return;
+            }
+ 
+            document.getElementById('edit_password_error').style.display = 'none';
+ 
+            const username = document.getElementById('edit_username').value;
+            const role = document.getElementById('edit_role').value;
+            const originalRole = document.getElementById('edit_original_role').value;
+            
+            // Confirm if changing User to Admin
+            if (originalRole === 'User' && role === 'Admin') {
+                const confirmChange = confirm('Are you sure you want to make this user an Admin? This action cannot be reversed!');
+                if (!confirmChange) {
+                    return;
+                }
+            }
+ 
+            const userData = {
+                username: username,
+                role: role,
+                password: newPassword,
+                confirm_password: confirmPassword
+            };
+ 
+            try {
+                const response = await fetch('/edit_user_web', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(userData)
+                });
+ 
+                const result = await response.json();
+ 
+                if (result.status) {
+                    alert('User updated successfully!');
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error updating user: ' + error.message);
+            }
+        }
+ 
+        async function handleDeleteUser() {
+            const username = document.getElementById('delete_username').value;
+ 
+            if (username === currentUsername) {
+                alert('You cannot delete your own account!');
+                closeModal('deleteModal');
+                return;
+            }
+ 
+            try {
+                const response = await fetch('/delete_user_web', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username: username })
+                });
+ 
+                const result = await response.json();
+ 
+                if (result.status) {
+                    alert('User deleted successfully!');
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error deleting user: ' + error.message);
+            }
+        }
+    </script>
+ 
+</body>
+</html>
+<!-- ================================================ -->
+<!-- STORAGE LOCATIONS SECTION (Admin only) -->
+<!-- ================================================ -->
+
+<!-- ================================================ -->
+<!-- CHANGE MY PASSWORD (Admin self-reset) -->
+<!-- ================================================ -->
+<div style="max-width:1400px;margin:30px auto 0;padding:0 20px;">
+  <div style="background:white;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);overflow:hidden;">
+    <div style="padding:20px 28px;border-bottom:1px solid #ecf0f1;display:flex;justify-content:space-between;align-items:center;cursor:pointer;"
+         onclick="togglePasswordSection()">
+      <h2 style="font-size:18px;color:#2c3e50;font-weight:700;">🔒 Change My Password</h2>
+      <span id="pwdToggleIcon" style="font-size:20px;color:#1e5ca8;">▼</span>
+    </div>
+    <div id="passwordSection" style="display:none;padding:24px 28px;">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:800px;">
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#555;margin-bottom:6px;">Current Password</label>
+          <input type="password" id="currentPwd" placeholder="Enter current password"
+            style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:6px;font-size:14px;">
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#555;margin-bottom:6px;">New Password</label>
+          <input type="password" id="newPwd" placeholder="Enter new password"
+            style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:6px;font-size:14px;">
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#555;margin-bottom:6px;">Confirm New Password</label>
+          <input type="password" id="confirmPwd" placeholder="Confirm new password"
+            style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:6px;font-size:14px;">
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;align-items:center;gap:16px;">
+        <button onclick="changeMyPassword()"
+          style="padding:10px 24px;background:linear-gradient(135deg,#1e5ca8,#164a8a);color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+          Update Password
+        </button>
+        <span id="pwdMsg" style="font-size:14px;"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function togglePasswordSection() {
+  const section = document.getElementById('passwordSection');
+  const icon = document.getElementById('pwdToggleIcon');
+  if (section.style.display === 'none') {
+    section.style.display = 'block';
+    icon.textContent = '▲';
+  } else {
+    section.style.display = 'none';
+    icon.textContent = '▼';
+  }
+}
+
+function changeMyPassword() {
+  const current = document.getElementById('currentPwd').value;
+  const newPwd  = document.getElementById('newPwd').value;
+  const confirm = document.getElementById('confirmPwd').value;
+  const msg     = document.getElementById('pwdMsg');
+
+  if (!current || !newPwd || !confirm) {
+    msg.textContent = '⚠ All fields required.';
+    msg.style.color = '#e17055';
+    return;
+  }
+  if (newPwd !== confirm) {
+    msg.textContent = '⚠ New passwords do not match.';
+    msg.style.color = '#e17055';
+    return;
+  }
+
+  fetch('/change_my_password', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({current_password: current, new_password: newPwd, confirm_password: confirm})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      msg.textContent = '✓ Password updated successfully.';
+      msg.style.color = '#00b894';
+      document.getElementById('currentPwd').value = '';
+      document.getElementById('newPwd').value = '';
+      document.getElementById('confirmPwd').value = '';
+    } else {
+      msg.textContent = '❌ ' + (data.error || 'Update failed.');
+      msg.style.color = '#e17055';
+    }
+  })
+  .catch(() => {
+    msg.textContent = '❌ Network error.';
+    msg.style.color = '#e17055';
+  });
+}
+</script>
+
+<div style="max-width:1400px;margin:40px auto;padding:0 20px;">
+  <div style="background:white;border-radius:15px;box-shadow:0 5px 20px rgba(0,0,0,0.1);overflow:hidden;">
+    <div style="padding:25px 30px;border-bottom:1px solid #ecf0f1;display:flex;justify-content:space-between;align-items:center;">
+      <h2 style="font-size:22px;color:#2c3e50;font-weight:700;">📦 Storage Locations (Plant)</h2>
+      <button onclick="showAddLocationForm()"
+        style="background:linear-gradient(135deg,#1e5ca8,#164a8a);color:white;border:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+        + Add Location
+      </button>
+    </div>
+
+    <!-- Add form (hidden by default) -->
+    <div id="addLocationForm" style="display:none;padding:20px 30px;background:#f8f9fb;border-bottom:1px solid #ecf0f1;">
+      <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end;">
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#555;margin-bottom:6px;">Code</label>
+          <input type="text" id="newLocCode" placeholder="e.g. 1022"
+            style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:6px;font-size:14px;">
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#555;margin-bottom:6px;">Description</label>
+          <input type="text" id="newLocDesc" placeholder="e.g. New Warehouse"
+            style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:6px;font-size:14px;">
+        </div>
+        <button onclick="saveNewLocation()"
+          style="padding:10px 20px;background:#00b894;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
+          Save
+        </button>
+      </div>
+      <div id="locAddMsg" style="margin-top:8px;font-size:13px;"></div>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;">
+      <thead style="background:linear-gradient(135deg,#1e5ca8,#164a8a);color:white;">
+        <tr>
+          <th style="padding:16px 20px;text-align:left;font-size:13px;text-transform:uppercase;">Code</th>
+          <th style="padding:16px 20px;text-align:left;font-size:13px;text-transform:uppercase;">Description</th>
+          <th style="padding:16px 20px;text-align:left;font-size:13px;text-transform:uppercase;">Status</th>
+          <th style="padding:16px 20px;text-align:left;font-size:13px;text-transform:uppercase;">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for loc in storage_locations %}
+        <tr style="border-bottom:1px solid #ecf0f1;{% if not loc.is_active %}opacity:0.5;{% endif %}">
+          <td style="padding:16px 20px;font-weight:600;color:#2c3e50;">{{ loc.code }}</td>
+          <td style="padding:16px 20px;">
+            <input type="text" value="{{ loc.description }}" id="desc_{{ loc.code }}"
+              style="border:1px solid #e0e0e0;border-radius:4px;padding:6px 10px;width:100%;font-size:14px;">
+          </td>
+          <td style="padding:16px 20px;">
+            <span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;
+              background:{% if loc.is_active %}#ecfdf5;color:#00b894{% else %}#fee;color:#e17055{% endif %}">
+              {% if loc.is_active %}Active{% else %}Inactive{% endif %}
+            </span>
+          </td>
+          <td style="padding:16px 20px;display:flex;gap:8px;">
+            <button onclick="updateLocation('{{ loc.code }}', true)"
+              style="padding:6px 14px;background:#1e5ca8;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">
+              Save
+            </button>
+            <button onclick="toggleLocation('{{ loc.code }}', {{ 'false' if loc.is_active else 'true' }})"
+              style="padding:6px 14px;background:{% if loc.is_active %}#e17055{% else %}#00b894{% endif %};color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">
+              {% if loc.is_active %}Deactivate{% else %}Activate{% endif %}
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function showAddLocationForm() {
+  const form = document.getElementById('addLocationForm');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function saveNewLocation() {
+  const code = document.getElementById('newLocCode').value.trim();
+  const desc = document.getElementById('newLocDesc').value.trim();
+  const msg  = document.getElementById('locAddMsg');
+  if (!code || !desc) { msg.textContent = '⚠ Code and description required.'; msg.style.color='#e17055'; return; }
+  fetch('/api/storage_locations/add', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({code, description: desc})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success) { msg.textContent='✓ Location added.'; msg.style.color='#00b894'; setTimeout(()=>location.reload(),800); }
+    else { msg.textContent='❌ Failed — code may already exist.'; msg.style.color='#e17055'; }
+  });
+}
+
+function updateLocation(code, is_active) {
+  const desc = document.getElementById('desc_' + code).value.trim();
+  fetch('/api/storage_locations/update', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({code, description: desc, is_active})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success) { alert('✓ Location updated.'); location.reload(); }
+    else { alert('❌ Update failed.'); }
+  });
+}
+
+function toggleLocation(code, newActiveState) {
+  const desc = document.getElementById('desc_' + code).value.trim();
+  fetch('/api/storage_locations/update', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({code, description: desc, is_active: newActiveState})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success) location.reload();
+    else alert('❌ Failed.');
+  });
+}
+
+function toggleAllSteps(prefix) {
+  const allCheck = document.getElementById(prefix + '_step_all');
+  document.querySelectorAll(`input[name="${prefix}_step"]:not(#${prefix}_step_all)`).forEach(cb => {
+    cb.disabled = allCheck.checked;
+    if (allCheck.checked) cb.checked = false;
+  });
+}
+
+function _collectStepRoles(prefix) {
+  const checked = Array.from(document.querySelectorAll(`input[name="${prefix}_step"]:checked`))
+    .map(cb => cb.value);
+  if (checked.includes('all')) return 'all';
+  return checked.join(',') || 'all';
+}
+</script>

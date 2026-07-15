@@ -1,0 +1,1341 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 7.0.1 (Python 3.13.13 on win32)" generated="2026-05-07T12:31:17.938280" rpa="false" schemaversion="5">
+<suite id="s1" name="Migo 103" source="C:\Users\ctn_manas\Catnip\material_inward_FINAL\material_inward\robot_scripts\migo_103.robot">
+<test id="s1-t1" name="Execute MIGO 103" line="24">
+<kw name="Initialize SAP And Login" type="SETUP">
+<kw name="Evaluate" owner="BuiltIn">
+<arg>__import__('dotenv').load_dotenv(__import__('os').getenv('DOTENV_PATH', '.env'), override=True)</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.110713" elapsed="0.015304"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-05-07T12:31:18.126577" level="INFO">${CLIENT} = 400</msg>
+<var>${CLIENT}</var>
+<arg>__import__('os').getenv('SAP_CLIENT')</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.126290" elapsed="0.000316"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-05-07T12:31:18.126881" level="INFO">${USERNAME} = spl_rpa</msg>
+<var>${USERNAME}</var>
+<arg>__import__('os').getenv('SAP_USERNAME')</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.126724" elapsed="0.000180"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-05-07T12:31:18.127134" level="INFO">${PASSWORD} = Indigo@1414</msg>
+<var>${PASSWORD}</var>
+<arg>__import__('os').getenv('SAP_PASSWORD')</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.126998" elapsed="0.000155"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-05-07T12:31:18.127381" level="INFO">${CONN_NAME} = 03 SAP Production System</msg>
+<var>${CONN_NAME}</var>
+<arg>__import__('os').getenv('SAP_CONNECTION_NAME')</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.127243" elapsed="0.000157"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-05-07T12:31:18.127618" level="INFO">${LOGON_PATH} = C:\Program Files\SAP\FrontEnd\SAPGUI\saplogon.exe</msg>
+<var>${LOGON_PATH}</var>
+<arg>__import__('os').getenv('SAP_LOGON_PATH')</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.127483" elapsed="0.000153"/>
+</kw>
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<kw name="Run Process" owner="Process">
+<msg time="2026-05-07T12:31:18.128019" level="INFO">Starting process:
+taskkill /F /IM saplogon.exe /T</msg>
+<msg time="2026-05-07T12:31:18.149392" level="INFO">Waiting for process to complete.</msg>
+<msg time="2026-05-07T12:31:18.445682" level="INFO">Process completed.</msg>
+<arg>taskkill</arg>
+<arg>/F</arg>
+<arg>/IM</arg>
+<arg>saplogon.exe</arg>
+<arg>/T</arg>
+<doc>Runs a process and waits for it to complete.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.127871" elapsed="0.318014"/>
+</kw>
+<arg>Run Process</arg>
+<arg>taskkill</arg>
+<arg>/F</arg>
+<arg>/IM</arg>
+<arg>saplogon.exe</arg>
+<arg>/T</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.127736" elapsed="0.318282"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-05-07T12:31:20.446709" level="INFO">Slept 2 seconds.</msg>
+<arg>2s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-05-07T12:31:18.446215" elapsed="2.000630"/>
+</kw>
+<kw name="Start Process" owner="Process">
+<msg time="2026-05-07T12:31:20.447316" level="INFO">Starting process:
+"C:\Program Files\SAP\FrontEnd\SAPGUI\saplogon.exe"</msg>
+<arg>${LOGON_PATH}</arg>
+<doc>Starts a new process on background.</doc>
+<status status="PASS" start="2026-05-07T12:31:20.447052" elapsed="0.017893"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-05-07T12:31:25.465780" level="INFO">Slept 5 seconds.</msg>
+<arg>5s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-05-07T12:31:20.465174" elapsed="5.000751"/>
+</kw>
+<kw name="Connect To Session" owner="SapGuiLibrary">
+<doc>Connects to an open session SAP.</doc>
+<status status="PASS" start="2026-05-07T12:31:25.466126" elapsed="0.031079"/>
+</kw>
+<kw name="Open Connection" owner="SapGuiLibrary">
+<arg>${CONN_NAME}</arg>
+<doc>Opens a connection to the given connection name. Be sure to provide the full connection name, including the bracket part.</doc>
+<status status="PASS" start="2026-05-07T12:31:25.497416" elapsed="0.646609"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:26.180974" level="INFO">Typing text '400' into text field 'wnd[0]/usr/txtRSYST-MANDT'.</msg>
+<arg>wnd[0]/usr/txtRSYST-MANDT</arg>
+<arg>${CLIENT}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:26.144259" elapsed="0.037095"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:26.189459" level="INFO">Typing text 'spl_rpa' into text field 'wnd[0]/usr/txtRSYST-BNAME'.</msg>
+<arg>wnd[0]/usr/txtRSYST-BNAME</arg>
+<arg>${USERNAME}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:26.181572" elapsed="0.008019"/>
+</kw>
+<kw name="Input Password" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:26.195148" level="INFO">Typing password into text field 'wnd[0]/usr/pwdRSYST-BCODE'.</msg>
+<arg>wnd[0]/usr/pwdRSYST-BCODE</arg>
+<arg>${PASSWORD}</arg>
+<doc>Inserts the given password into the text field identified by locator.
+The password is not recorded in the log.</doc>
+<status status="PASS" start="2026-05-07T12:31:26.189808" elapsed="0.005443"/>
+</kw>
+<kw name="Click Element" owner="SapGuiLibrary">
+<arg>wnd[0]/tbar[0]/btn[0]</arg>
+<doc>Performs a single click on a given element. Used only for buttons, tabs and menu items.</doc>
+<status status="PASS" start="2026-05-07T12:31:26.195606" elapsed="0.426730"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.623114" level="INFO">Slept 8 seconds.</msg>
+<arg>8s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-05-07T12:31:26.622632" elapsed="8.000643"/>
+</kw>
+<kw name="Dismiss Any Popup">
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:34.731243" level="INFO" html="true">&lt;a href="sap-screenshot_49.jpg"&gt;&lt;img src="sap-screenshot_49.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:34.731456" level="FAIL">ValueError: Cannot find Element 'wnd[1]'.</msg>
+<arg>wnd[1]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:34.624174" elapsed="0.109489">ValueError: Cannot find Element 'wnd[1]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:34.733835" level="INFO">${popup1} = False</msg>
+<var>${popup1}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[1]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.624030" elapsed="0.109827"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup1}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[1]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:34.734197" elapsed="0.000021"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:34.734315" elapsed="0.000014"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:34.733982" elapsed="0.000545"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:34.733949" elapsed="0.000614"/>
+</if>
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:34.819556" level="INFO" html="true">&lt;a href="sap-screenshot_50.jpg"&gt;&lt;img src="sap-screenshot_50.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:34.819746" level="FAIL">ValueError: Cannot find Element 'wnd[2]'.</msg>
+<arg>wnd[2]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:34.734864" elapsed="0.085512">ValueError: Cannot find Element 'wnd[2]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:34.820516" level="INFO">${popup2} = False</msg>
+<var>${popup2}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[2]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.734667" elapsed="0.085869"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup2}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[2]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:34.820854" elapsed="0.000020"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:34.820971" elapsed="0.000014"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:34.820645" elapsed="0.000365"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:34.820617" elapsed="0.000419"/>
+</if>
+<status status="PASS" start="2026-05-07T12:31:34.623662" elapsed="0.197437"/>
+</kw>
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:34.885756" level="INFO" html="true">&lt;a href="sap-screenshot_51.jpg"&gt;&lt;img src="sap-screenshot_51.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:34.885966" level="FAIL">ValueError: Cannot find Element 'wnd[1]'.</msg>
+<arg>wnd[1]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:34.821355" elapsed="0.065266">ValueError: Cannot find Element 'wnd[1]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:34.886761" level="INFO">${multi} = False</msg>
+<var>${multi}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[1]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.821188" elapsed="0.065593"/>
+</kw>
+<if>
+<branch type="IF" condition="${multi}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Select Radio Button</arg>
+<arg>wnd[1]/usr/radMULTI_LOGON_OPT1</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:34.887078" elapsed="0.000021"/>
+</kw>
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[1]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:34.887188" elapsed="0.000014"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>2s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:34.887283" elapsed="0.000015"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:34.886884" elapsed="0.000439"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:34.886860" elapsed="0.000487"/>
+</if>
+<kw name="Maximize Window" owner="SapGuiLibrary">
+<arg>0</arg>
+<doc>Maximizes the SapGui window.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.887427" elapsed="0.004311"/>
+</kw>
+<status status="PASS" start="2026-05-07T12:31:18.109972" elapsed="16.781896"/>
+</kw>
+<kw name="Fill MIGO 103 And Post">
+<kw name="Clean Value">
+<kw name="Convert To String" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.894144" level="INFO">${val} = 4100035067</msg>
+<var>${val}</var>
+<arg>${raw_value}</arg>
+<doc>Converts the given item to a Unicode string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.893978" elapsed="0.000191"/>
+</kw>
+<kw name="Strip String" owner="String">
+<msg time="2026-05-07T12:31:34.894395" level="INFO">${cleaned} = 4100035067</msg>
+<var>${cleaned}</var>
+<arg>${val}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.894264" elapsed="0.000157"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.895011" level="INFO">${cleaned} = 4100035067</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>₹</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.894515" elapsed="0.000519"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.895573" level="INFO">${cleaned} = 4100035067</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>$</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.895141" elapsed="0.000453"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.896060" level="INFO">${cleaned} = 4100035067</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>€</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.895690" elapsed="0.000391"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.896568" level="INFO">${cleaned} = 4100035067</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>£</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.896169" elapsed="0.000418"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.897046" level="INFO">${cleaned} = 4100035067</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>,</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.896681" elapsed="0.000385"/>
+</kw>
+<kw name="Split String" owner="String">
+<msg time="2026-05-07T12:31:34.897340" level="INFO">@{parts} = [ 4100035067 ]</msg>
+<var>@{parts}</var>
+<arg>${cleaned}</arg>
+<arg>${SPACE}</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.897160" elapsed="0.000211"/>
+</kw>
+<return>
+<value>${parts}[0]</value>
+<status status="PASS" start="2026-05-07T12:31:34.897436" elapsed="0.000048"/>
+</return>
+<msg time="2026-05-07T12:31:34.897615" level="INFO">${po_clean} = 4100035067</msg>
+<var>${po_clean}</var>
+<arg>${PO_NUMBER}</arg>
+<status status="PASS" start="2026-05-07T12:31:34.893727" elapsed="0.003905"/>
+</kw>
+<kw name="Clean Value">
+<kw name="Convert To String" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.898437" level="INFO">${val} = INV001</msg>
+<var>${val}</var>
+<arg>${raw_value}</arg>
+<doc>Converts the given item to a Unicode string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.898272" elapsed="0.000192"/>
+</kw>
+<kw name="Strip String" owner="String">
+<msg time="2026-05-07T12:31:34.898707" level="INFO">${cleaned} = INV001</msg>
+<var>${cleaned}</var>
+<arg>${val}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.898573" elapsed="0.000153"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.899406" level="INFO">${cleaned} = INV001</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>₹</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.898815" elapsed="0.000612"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.899932" level="INFO">${cleaned} = INV001</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>$</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.899530" elapsed="0.000421"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.900449" level="INFO">${cleaned} = INV001</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>€</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.900046" elapsed="0.000425"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.900992" level="INFO">${cleaned} = INV001</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>£</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.900583" elapsed="0.000430"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.901661" level="INFO">${cleaned} = INV001</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>,</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.901131" elapsed="0.000550"/>
+</kw>
+<kw name="Split String" owner="String">
+<msg time="2026-05-07T12:31:34.901939" level="INFO">@{parts} = [ INV001 ]</msg>
+<var>@{parts}</var>
+<arg>${cleaned}</arg>
+<arg>${SPACE}</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.901790" elapsed="0.000167"/>
+</kw>
+<return>
+<value>${parts}[0]</value>
+<status status="PASS" start="2026-05-07T12:31:34.902009" elapsed="0.000040"/>
+</return>
+<msg time="2026-05-07T12:31:34.902188" level="INFO">${dn_clean} = INV001</msg>
+<var>${dn_clean}</var>
+<arg>${DELIVERY_NOTE}</arg>
+<status status="PASS" start="2026-05-07T12:31:34.897914" elapsed="0.004298"/>
+</kw>
+<kw name="Clean Value">
+<kw name="Convert To String" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.902857" level="INFO">${val} = </msg>
+<var>${val}</var>
+<arg>${raw_value}</arg>
+<doc>Converts the given item to a Unicode string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.902710" elapsed="0.000168"/>
+</kw>
+<kw name="Strip String" owner="String">
+<msg time="2026-05-07T12:31:34.903082" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${val}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.902967" elapsed="0.000132"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.903637" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>₹</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.903181" elapsed="0.000476"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.904172" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>$</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.903756" elapsed="0.000436"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.904696" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>€</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.904315" elapsed="0.000399"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.905164" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>£</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.904803" elapsed="0.000383"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.905683" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>,</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.905281" elapsed="0.000421"/>
+</kw>
+<kw name="Split String" owner="String">
+<msg time="2026-05-07T12:31:34.905954" level="INFO">@{parts} = [  ]</msg>
+<var>@{parts}</var>
+<arg>${cleaned}</arg>
+<arg>${SPACE}</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.905791" elapsed="0.000190"/>
+</kw>
+<return>
+<value>${parts}[0]</value>
+<status status="PASS" start="2026-05-07T12:31:34.906034" elapsed="0.000031"/>
+</return>
+<msg time="2026-05-07T12:31:34.906177" level="INFO">${bol_clean} = </msg>
+<var>${bol_clean}</var>
+<arg>${BILL_OF_LADING}</arg>
+<status status="PASS" start="2026-05-07T12:31:34.902420" elapsed="0.003781"/>
+</kw>
+<kw name="Clean Value">
+<kw name="Convert To String" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.906770" level="INFO">${val} = </msg>
+<var>${val}</var>
+<arg>${raw_value}</arg>
+<doc>Converts the given item to a Unicode string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.906637" elapsed="0.000154"/>
+</kw>
+<kw name="Strip String" owner="String">
+<msg time="2026-05-07T12:31:34.907008" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${val}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.906873" elapsed="0.000160"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.907551" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>₹</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.907112" elapsed="0.000467"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.908455" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>$</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.907692" elapsed="0.000797"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.909182" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>€</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.908660" elapsed="0.000543"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.909763" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>£</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.909329" elapsed="0.000455"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.910253" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>,</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.909884" elapsed="0.000389"/>
+</kw>
+<kw name="Split String" owner="String">
+<msg time="2026-05-07T12:31:34.910598" level="INFO">@{parts} = [  ]</msg>
+<var>@{parts}</var>
+<arg>${cleaned}</arg>
+<arg>${SPACE}</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.910363" elapsed="0.000254"/>
+</kw>
+<return>
+<value>${parts}[0]</value>
+<status status="PASS" start="2026-05-07T12:31:34.910664" elapsed="0.000031"/>
+</return>
+<msg time="2026-05-07T12:31:34.910804" level="INFO">${slip_clean} = </msg>
+<var>${slip_clean}</var>
+<arg>${GR_SLIP_NO}</arg>
+<status status="PASS" start="2026-05-07T12:31:34.906407" elapsed="0.004414"/>
+</kw>
+<kw name="Clean Value">
+<kw name="Convert To String" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.911336" level="INFO">${val} = GIN-TEST</msg>
+<var>${val}</var>
+<arg>${raw_value}</arg>
+<doc>Converts the given item to a Unicode string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.911192" elapsed="0.000165"/>
+</kw>
+<kw name="Strip String" owner="String">
+<msg time="2026-05-07T12:31:34.911598" level="INFO">${cleaned} = GIN-TEST</msg>
+<var>${cleaned}</var>
+<arg>${val}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.911453" elapsed="0.000174"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.912251" level="INFO">${cleaned} = GIN-TEST</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>₹</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.911738" elapsed="0.000542"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.912812" level="INFO">${cleaned} = GIN-TEST</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>$</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.912375" elapsed="0.000459"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.913518" level="INFO">${cleaned} = GIN-TEST</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>€</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.913013" elapsed="0.000526"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.914022" level="INFO">${cleaned} = GIN-TEST</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>£</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.913644" elapsed="0.000396"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.914572" level="INFO">${cleaned} = GIN-TEST</msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>,</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.914132" elapsed="0.000463"/>
+</kw>
+<kw name="Split String" owner="String">
+<msg time="2026-05-07T12:31:34.914889" level="INFO">@{parts} = [ GIN-TEST ]</msg>
+<var>@{parts}</var>
+<arg>${cleaned}</arg>
+<arg>${SPACE}</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.914727" elapsed="0.000182"/>
+</kw>
+<return>
+<value>${parts}[0]</value>
+<status status="PASS" start="2026-05-07T12:31:34.914956" elapsed="0.000031"/>
+</return>
+<msg time="2026-05-07T12:31:34.915097" level="INFO">${hdr_clean} = GIN-TEST</msg>
+<var>${hdr_clean}</var>
+<arg>${HEADER_TEXT}</arg>
+<status status="PASS" start="2026-05-07T12:31:34.910968" elapsed="0.004147"/>
+</kw>
+<kw name="Clean Value">
+<kw name="Convert To String" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.915642" level="INFO">${val} = </msg>
+<var>${val}</var>
+<arg>${raw_value}</arg>
+<doc>Converts the given item to a Unicode string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.915504" elapsed="0.000156"/>
+</kw>
+<kw name="Strip String" owner="String">
+<msg time="2026-05-07T12:31:34.915874" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${val}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.915741" elapsed="0.000156"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.916716" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>₹</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.916003" elapsed="0.000740"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.917278" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>$</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.916875" elapsed="0.000422"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.917757" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>€</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.917389" elapsed="0.000393"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.918507" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>£</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.917898" elapsed="0.000640"/>
+</kw>
+<kw name="Replace String" owner="String">
+<msg time="2026-05-07T12:31:34.919675" level="INFO">${cleaned} = </msg>
+<var>${cleaned}</var>
+<arg>${cleaned}</arg>
+<arg>,</arg>
+<arg>${EMPTY}</arg>
+<doc>Replaces ``search_for`` in the given ``string`` with ``replace_with``.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.918695" elapsed="0.001006"/>
+</kw>
+<kw name="Split String" owner="String">
+<msg time="2026-05-07T12:31:34.920014" level="INFO">@{parts} = [  ]</msg>
+<var>@{parts}</var>
+<arg>${cleaned}</arg>
+<arg>${SPACE}</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.919835" elapsed="0.000199"/>
+</kw>
+<return>
+<value>${parts}[0]</value>
+<status status="PASS" start="2026-05-07T12:31:34.920085" elapsed="0.000031"/>
+</return>
+<msg time="2026-05-07T12:31:34.920225" level="INFO">${rem_clean} = </msg>
+<var>${rem_clean}</var>
+<arg>${REMARKS}</arg>
+<status status="PASS" start="2026-05-07T12:31:34.915276" elapsed="0.004968"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.920575" level="INFO">${items} = []</msg>
+<var>${items}</var>
+<arg>__import__('json').loads('${ITEMS_JSON}'.replace("'", '"'))</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.920335" elapsed="0.000259"/>
+</kw>
+<kw name="Get Length" owner="BuiltIn">
+<msg time="2026-05-07T12:31:34.920774" level="INFO">Length is 0.</msg>
+<msg time="2026-05-07T12:31:34.920827" level="INFO">${total} = 0</msg>
+<var>${total}</var>
+<arg>${items}</arg>
+<doc>Returns and logs the length of the given item as an integer.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.920682" elapsed="0.000159"/>
+</kw>
+<kw name="Log To Console" owner="BuiltIn">
+<arg>Total matched pairs to fill: ${total}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.920922" elapsed="0.000320"/>
+</kw>
+<kw name="Run Transaction" owner="SapGuiLibrary">
+<arg>MIGO</arg>
+<doc>Runs a Sap transaction. An error is given when an unknown transaction is specified.</doc>
+<status status="PASS" start="2026-05-07T12:31:34.921341" elapsed="0.578436"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-05-07T12:31:38.500966" level="INFO">Slept 3 seconds.</msg>
+<arg>3s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-05-07T12:31:35.500358" elapsed="3.000744"/>
+</kw>
+<kw name="Dismiss Any Popup">
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:38.575273" level="INFO" html="true">&lt;a href="sap-screenshot_52.jpg"&gt;&lt;img src="sap-screenshot_52.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:38.575461" level="FAIL">ValueError: Cannot find Element 'wnd[1]'.</msg>
+<arg>wnd[1]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:38.501909" elapsed="0.074181">ValueError: Cannot find Element 'wnd[1]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:38.576231" level="INFO">${popup1} = False</msg>
+<var>${popup1}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[1]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.501752" elapsed="0.074500"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup1}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[1]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:38.576556" elapsed="0.000040"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:38.576690" elapsed="0.000013"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:38.576362" elapsed="0.000367"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:38.576332" elapsed="0.000421"/>
+</if>
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:38.665501" level="INFO" html="true">&lt;a href="sap-screenshot_53.jpg"&gt;&lt;img src="sap-screenshot_53.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:38.665669" level="FAIL">ValueError: Cannot find Element 'wnd[2]'.</msg>
+<arg>wnd[2]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:38.576971" elapsed="0.089298">ValueError: Cannot find Element 'wnd[2]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:38.666414" level="INFO">${popup2} = False</msg>
+<var>${popup2}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[2]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.576830" elapsed="0.089605"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup2}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[2]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:38.666722" elapsed="0.000021"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:38.666843" elapsed="0.000013"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:38.666531" elapsed="0.000352"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:38.666507" elapsed="0.000400"/>
+</if>
+<status status="PASS" start="2026-05-07T12:31:38.501440" elapsed="0.165520"/>
+</kw>
+<kw name="Set Focus" owner="SapGuiLibrary">
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/ctxtGODEFAULT_TV-BWART</arg>
+<doc>Sets the focus to the given element.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.667030" elapsed="0.021614"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:38.697874" level="INFO">Typing text '103' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/ctxtGODEFAULT_TV-BWART'.</msg>
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/ctxtGODEFAULT_TV-BWART</arg>
+<arg>103</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.688881" elapsed="0.009108"/>
+</kw>
+<kw name="Set Focus" owner="SapGuiLibrary">
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER</arg>
+<doc>Sets the focus to the given element.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.698191" elapsed="0.015374"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:38.722568" level="INFO">Typing text '4100035067' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER'.</msg>
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER</arg>
+<arg>${po_clean}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.713786" elapsed="0.008923"/>
+</kw>
+<kw name="Send Vkey" owner="SapGuiLibrary">
+<arg>0</arg>
+<doc>Sends a SAP virtual key combination to the window, not into an element.
+If you want to send a value to a text field, use `input text` instead.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.722914" elapsed="0.222189"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-05-07T12:31:41.945797" level="INFO">Slept 3 seconds.</msg>
+<arg>3s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-05-07T12:31:38.945340" elapsed="3.000609"/>
+</kw>
+<kw name="Dismiss Any Popup">
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.020419" level="INFO" html="true">&lt;a href="sap-screenshot_54.jpg"&gt;&lt;img src="sap-screenshot_54.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:42.020823" level="FAIL">ValueError: Cannot find Element 'wnd[1]'.</msg>
+<arg>wnd[1]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:41.946766" elapsed="0.076507">ValueError: Cannot find Element 'wnd[1]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:42.023440" level="INFO">${popup1} = False</msg>
+<var>${popup1}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[1]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:41.946626" elapsed="0.076839"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup1}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[1]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:42.023783" elapsed="0.000021"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:42.023885" elapsed="0.000013"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:42.023572" elapsed="0.000353"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:42.023543" elapsed="0.000406"/>
+</if>
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.102394" level="INFO" html="true">&lt;a href="sap-screenshot_55.jpg"&gt;&lt;img src="sap-screenshot_55.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:42.102625" level="FAIL">ValueError: Cannot find Element 'wnd[2]'.</msg>
+<arg>wnd[2]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:42.024319" elapsed="0.078905">ValueError: Cannot find Element 'wnd[2]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:42.103369" level="INFO">${popup2} = False</msg>
+<var>${popup2}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[2]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.024147" elapsed="0.079243"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup2}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[2]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:42.103680" elapsed="0.000019"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:42.103781" elapsed="0.000013"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:42.103488" elapsed="0.000332"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:42.103465" elapsed="0.000378"/>
+</if>
+<status status="PASS" start="2026-05-07T12:31:41.946297" elapsed="0.157594"/>
+</kw>
+<kw name="Set Variable" owner="BuiltIn">
+<msg time="2026-05-07T12:31:42.104108" level="INFO">${hdr_base} = wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110</msg>
+<var>${hdr_base}</var>
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.103972" elapsed="0.000155"/>
+</kw>
+<kw name="Set Focus" owner="SapGuiLibrary">
+<arg>${hdr_base}/ctxtGOHEAD-BLDAT</arg>
+<doc>Sets the focus to the given element.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.104219" elapsed="0.021697"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.135754" level="INFO">Typing text '07.05.2026' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110/ctxtGOHEAD-BLDAT'.</msg>
+<arg>${hdr_base}/ctxtGOHEAD-BLDAT</arg>
+<arg>${DOC_DATE}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.126147" elapsed="0.009730"/>
+</kw>
+<kw name="Set Focus" owner="SapGuiLibrary">
+<arg>${hdr_base}/ctxtGOHEAD-BUDAT</arg>
+<doc>Sets the focus to the given element.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.136068" elapsed="0.016942"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.161783" level="INFO">Typing text '07.05.2026' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110/ctxtGOHEAD-BUDAT'.</msg>
+<arg>${hdr_base}/ctxtGOHEAD-BUDAT</arg>
+<arg>${POST_DATE}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.153226" elapsed="0.008689"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.170069" level="INFO">Typing text 'INV001' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110/txtGOHEAD-LFSNR'.</msg>
+<arg>${hdr_base}/txtGOHEAD-LFSNR</arg>
+<arg>${dn_clean}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.162140" elapsed="0.008076"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.176255" level="INFO">Typing text '' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110/txtGOHEAD-FRBNR'.</msg>
+<arg>${hdr_base}/txtGOHEAD-FRBNR</arg>
+<arg>${bol_clean}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.170448" elapsed="0.005918"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.183860" level="INFO">Typing text '' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110/txtGOHEAD-XABLN'.</msg>
+<arg>${hdr_base}/txtGOHEAD-XABLN</arg>
+<arg>${slip_clean}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.176541" elapsed="0.007443"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:42.190119" level="INFO">Typing text 'GIN-TEST' into text field 'wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110/txtGOHEAD-BKTXT'.</msg>
+<arg>${hdr_base}/txtGOHEAD-BKTXT</arg>
+<arg>${hdr_clean}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.184191" elapsed="0.006021"/>
+</kw>
+<kw name="Send Vkey" owner="SapGuiLibrary">
+<arg>0</arg>
+<doc>Sends a SAP virtual key combination to the window, not into an element.
+If you want to send a value to a text field, use `input text` instead.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.190389" elapsed="0.184088"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-05-07T12:31:44.375220" level="INFO">Slept 2 seconds.</msg>
+<arg>2s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-05-07T12:31:42.374710" elapsed="2.000647"/>
+</kw>
+<kw name="Dismiss Any Popup">
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:44.445498" level="INFO" html="true">&lt;a href="sap-screenshot_56.jpg"&gt;&lt;img src="sap-screenshot_56.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:44.445673" level="FAIL">ValueError: Cannot find Element 'wnd[1]'.</msg>
+<arg>wnd[1]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:44.376142" elapsed="0.070136">ValueError: Cannot find Element 'wnd[1]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:44.446415" level="INFO">${popup1} = False</msg>
+<var>${popup1}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[1]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:44.376005" elapsed="0.070429"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup1}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[1]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.446739" elapsed="0.000019"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.446947" elapsed="0.000016"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:44.446536" elapsed="0.000456"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:44.446513" elapsed="0.000502"/>
+</if>
+<kw name="Run Keyword And Return Status" owner="BuiltIn">
+<kw name="Element Should Be Present" owner="SapGuiLibrary">
+<msg time="2026-05-07T12:31:44.505718" level="INFO" html="true">&lt;a href="sap-screenshot_57.jpg"&gt;&lt;img src="sap-screenshot_57.jpg" width="800px"&gt;&lt;/a&gt;</msg>
+<msg time="2026-05-07T12:31:44.505887" level="FAIL">ValueError: Cannot find Element 'wnd[2]'.</msg>
+<arg>wnd[2]</arg>
+<doc>Checks whether an element is present on the screen.</doc>
+<status status="FAIL" start="2026-05-07T12:31:44.447239" elapsed="0.059233">ValueError: Cannot find Element 'wnd[2]'.</status>
+</kw>
+<msg time="2026-05-07T12:31:44.506602" level="INFO">${popup2} = False</msg>
+<var>${popup2}</var>
+<arg>Element Should Be Present</arg>
+<arg>wnd[2]</arg>
+<doc>Runs the given keyword with given arguments and returns the status as a Boolean value.</doc>
+<status status="PASS" start="2026-05-07T12:31:44.447095" elapsed="0.059602"/>
+</kw>
+<if>
+<branch type="IF" condition="${popup2}">
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Click Element</arg>
+<arg>wnd[2]/tbar[0]/btn[0]</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.507171" elapsed="0.000025"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.507311" elapsed="0.000015"/>
+</kw>
+<status status="NOT RUN" start="2026-05-07T12:31:44.506845" elapsed="0.000509"/>
+</branch>
+<status status="PASS" start="2026-05-07T12:31:44.506819" elapsed="0.000559"/>
+</if>
+<status status="PASS" start="2026-05-07T12:31:44.375685" elapsed="0.131749"/>
+</kw>
+<kw name="Set Variable" owner="BuiltIn">
+<msg time="2026-05-07T12:31:44.507841" level="INFO">${det_base} = wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMDETAIL:SAPLMIGO:0301/subSUB_DETAIL:SAPLMIGO:0300</msg>
+<var>${det_base}</var>
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMDETAIL:SAPLMIGO:0301/subSUB_DETAIL:SAPLMIGO:0300</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="PASS" start="2026-05-07T12:31:44.507516" elapsed="0.000362"/>
+</kw>
+<for flavor="IN RANGE">
+<iter>
+<kw name="Get From List" owner="Collections">
+<var>${item}</var>
+<arg>${items}</arg>
+<arg>${i}</arg>
+<doc>Returns the value specified with an ``index`` from ``list``.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.508469" elapsed="0.000028"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<var>${line_num}</var>
+<arg>${i} + 1</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.508640" elapsed="0.000022"/>
+</kw>
+<kw name="Clean Value">
+<var>${qty_actual}</var>
+<arg>${item}[qty_actual]</arg>
+<status status="NOT RUN" start="2026-05-07T12:31:44.508887" elapsed="0.000026"/>
+</kw>
+<kw name="Clean Value">
+<var>${qty_dn}</var>
+<arg>${item}[qty_expected]</arg>
+<status status="NOT RUN" start="2026-05-07T12:31:44.509099" elapsed="0.000020"/>
+</kw>
+<kw name="Log To Console" owner="BuiltIn">
+<arg>Line ${line_num}: qty_actual=${qty_actual} qty_dn=${qty_dn}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.509246" elapsed="0.000020"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<arg>${det_base}/txtGODYNPRO-DETAIL_ZEILE</arg>
+<arg>${line_num}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.509368" elapsed="0.000022"/>
+</kw>
+<kw name="Click Element" owner="SapGuiLibrary">
+<arg>${det_base}/btnOK_LOCATE</arg>
+<doc>Performs a single click on a given element. Used only for buttons, tabs and menu items.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.509488" elapsed="0.000019"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.509640" elapsed="0.000021"/>
+</kw>
+<kw name="Dismiss Any Popup">
+<status status="NOT RUN" start="2026-05-07T12:31:44.509913" elapsed="0.000022"/>
+</kw>
+<kw name="Click Element" owner="SapGuiLibrary">
+<arg>${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_QUANTITIES</arg>
+<doc>Performs a single click on a given element. Used only for buttons, tabs and menu items.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.510161" elapsed="0.000043"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.510353" elapsed="0.000023"/>
+</kw>
+<kw name="Set Variable" owner="BuiltIn">
+<var>${qty_base}</var>
+<arg>${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_QUANTITIES/ssubSUB_TS_GOITEM_QUANTITIES:SAPLMIGO:0315</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.510490" elapsed="0.000020"/>
+</kw>
+<kw name="Set Focus" owner="SapGuiLibrary">
+<arg>${qty_base}/txtGOITEM-ERFMG</arg>
+<doc>Sets the focus to the given element.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.510612" elapsed="0.000017"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<arg>${qty_base}/txtGOITEM-ERFMG</arg>
+<arg>${qty_actual}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.510732" elapsed="0.000017"/>
+</kw>
+<kw name="Set Focus" owner="SapGuiLibrary">
+<arg>${qty_base}/txtGOITEM-LSMNG</arg>
+<doc>Sets the focus to the given element.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.510849" elapsed="0.000016"/>
+</kw>
+<kw name="Input Text" owner="SapGuiLibrary">
+<arg>${qty_base}/txtGOITEM-LSMNG</arg>
+<arg>${qty_dn}</arg>
+<doc>Inserts the given text into the text field identified by locator.
+Use keyword `input password` to insert a password in a text field.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.510953" elapsed="0.000018"/>
+</kw>
+<kw name="Send Vkey" owner="SapGuiLibrary">
+<arg>0</arg>
+<doc>Sends a SAP virtual key combination to the window, not into an element.
+If you want to send a value to a text field, use `input text` instead.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.511080" elapsed="0.000054"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.511216" elapsed="0.000014"/>
+</kw>
+<kw name="Dismiss Any Popup">
+<status status="NOT RUN" start="2026-05-07T12:31:44.511448" elapsed="0.000021"/>
+</kw>
+<kw name="Select Checkbox" owner="SapGuiLibrary">
+<arg>${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE</arg>
+<doc>Selects checkbox identified by locator.
+Does nothing if the checkbox is already selected.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.511632" elapsed="0.000035"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>0.5s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.511773" elapsed="0.000015"/>
+</kw>
+<var name="${i}"/>
+<status status="NOT RUN" start="2026-05-07T12:31:44.508292" elapsed="0.003525"/>
+</iter>
+<var>${i}</var>
+<value>${total}</value>
+<status status="NOT RUN" start="2026-05-07T12:31:44.507990" elapsed="0.003866"/>
+</for>
+<kw name="Log To Console" owner="BuiltIn">
+<arg>DRY RUN — Skipping post button click</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="PASS" start="2026-05-07T12:31:44.512013" elapsed="0.000324"/>
+</kw>
+<kw name="Log" owner="BuiltIn">
+<msg time="2026-05-07T12:31:44.512584" level="INFO">RESULT:MATERIAL_DOC_NUMBER:DRY_RUN</msg>
+<arg>RESULT:MATERIAL_DOC_NUMBER:DRY_RUN</arg>
+<arg>level=INFO</arg>
+<doc>Logs the given message with the given level.</doc>
+<status status="PASS" start="2026-05-07T12:31:44.512444" elapsed="0.000173"/>
+</kw>
+<return>
+<value>DRY_RUN</value>
+<status status="PASS" start="2026-05-07T12:31:44.512662" elapsed="0.000039"/>
+</return>
+<kw name="Set Focus" owner="SapGuiLibrary">
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/btnMIGO_OK_GO</arg>
+<doc>Sets the focus to the given element.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.512775" elapsed="0.000014"/>
+</kw>
+<kw name="Click Element" owner="SapGuiLibrary">
+<arg>wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/btnMIGO_OK_GO</arg>
+<doc>Performs a single click on a given element. Used only for buttons, tabs and menu items.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.512853" elapsed="0.000014"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>3s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.512931" elapsed="0.000013"/>
+</kw>
+<kw name="Dismiss Any Popup">
+<status status="NOT RUN" start="2026-05-07T12:31:44.513144" elapsed="0.000020"/>
+</kw>
+<kw name="Read Status Bar With Retry">
+<var>${status_msg}</var>
+<arg>expected_pattern=\\d{8,}</arg>
+<status status="NOT RUN" start="2026-05-07T12:31:44.513337" elapsed="0.000015"/>
+</kw>
+<kw name="Log To Console" owner="BuiltIn">
+<arg>Final Status Message: ${status_msg}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.513429" elapsed="0.000014"/>
+</kw>
+<kw name="Get Regexp Matches" owner="String">
+<var>@{matches}</var>
+<arg>${status_msg}</arg>
+<arg>\\d{8,12}</arg>
+<doc>Returns a list of all non-overlapping matches in the given string.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:44.513523" elapsed="0.000013"/>
+</kw>
+<if>
+<branch type="IF" condition="len($matches) == 0">
+<return>
+<value>MANUAL_CHECK_REQUIRED</value>
+<status status="NOT RUN" start="2026-05-07T12:31:44.513634" elapsed="0.000008"/>
+</return>
+<status status="NOT RUN" start="2026-05-07T12:31:44.513598" elapsed="0.000066"/>
+</branch>
+<status status="NOT RUN" start="2026-05-07T12:31:44.513582" elapsed="0.000098"/>
+</if>
+<return>
+<value>${matches}[0]</value>
+<status status="NOT RUN" start="2026-05-07T12:31:44.513703" elapsed="0.000007"/>
+</return>
+<msg time="2026-05-07T12:31:44.513806" level="INFO">${mat_doc} = DRY_RUN</msg>
+<var>${mat_doc}</var>
+<status status="PASS" start="2026-05-07T12:31:34.893382" elapsed="9.620445"/>
+</kw>
+<kw name="Log To Console" owner="BuiltIn">
+<arg>RESULT:MATERIAL_DOC_NUMBER:${mat_doc}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="PASS" start="2026-05-07T12:31:44.514146" elapsed="0.000270"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-05-07T12:31:54.515177" level="INFO">Slept 10 seconds.</msg>
+<arg>10s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-05-07T12:31:44.514747" elapsed="10.000596"/>
+</kw>
+<kw name="Close SAP Session" type="TEARDOWN">
+<kw name="Log" owner="BuiltIn">
+<msg time="2026-05-07T12:31:54.517130" level="INFO">Execution finished. Session kept open.</msg>
+<arg>Execution finished. Session kept open.</arg>
+<doc>Logs the given message with the given level.</doc>
+<status status="PASS" start="2026-05-07T12:31:54.517019" elapsed="0.000161"/>
+</kw>
+<return>
+<status status="PASS" start="2026-05-07T12:31:54.517236" elapsed="0.000041"/>
+</return>
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Input Text</arg>
+<arg>wnd[0]/tbar[0]/okcd</arg>
+<arg>/nex</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:54.517379" elapsed="0.000016"/>
+</kw>
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Send VKey</arg>
+<arg>wnd[0]</arg>
+<arg>0</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:54.517480" elapsed="0.000013"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>2s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:54.517567" elapsed="0.000012"/>
+</kw>
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Run Process</arg>
+<arg>taskkill</arg>
+<arg>/F</arg>
+<arg>/IM</arg>
+<arg>saplogon.exe</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:54.517646" elapsed="0.000014"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<arg>2s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:54.517733" elapsed="0.000014"/>
+</kw>
+<kw name="Run Keyword And Ignore Error" owner="BuiltIn">
+<arg>Run Process</arg>
+<arg>taskkill</arg>
+<arg>/F</arg>
+<arg>/IM</arg>
+<arg>saplogon.exe</arg>
+<arg>/T</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:54.517838" elapsed="0.000015"/>
+</kw>
+<kw name="Log" owner="BuiltIn">
+<arg>SAP session closed and process terminated.</arg>
+<arg>level=INFO</arg>
+<doc>Logs the given message with the given level.</doc>
+<status status="NOT RUN" start="2026-05-07T12:31:54.517944" elapsed="0.000014"/>
+</kw>
+<status status="PASS" start="2026-05-07T12:31:54.516678" elapsed="0.001334"/>
+</kw>
+<status status="PASS" start="2026-05-07T12:31:18.108908" elapsed="36.409334"/>
+</test>
+<doc>MIGO 103 SAP Automation — GR into Blocked Stock</doc>
+<status status="PASS" start="2026-05-07T12:31:17.947805" elapsed="36.571626"/>
+</suite>
+<statistics>
+<total>
+<stat pass="1" fail="0" skip="0">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat pass="1" fail="0" skip="0" id="s1" name="Migo 103">Migo 103</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>
