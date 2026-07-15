@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Material Inward History - SPL</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:whitesmoke; min-height:100vh; }
+
+        .header {
+            background:white; padding:15px 40px;
+            display:flex; justify-content:space-between; align-items:center;
+            box-shadow:0 2px 10px rgba(0,0,0,0.1);
+        }
+        .logo-icon { width:auto; height:44px; }
+        .logo-icon img { width:100%; height:100%; object-fit:contain; }
+        .user-menu { position:relative; }
+        .user-profile {
+            width:45px; height:45px;
+            background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%);
+            border-radius:50%; display:flex; align-items:center; justify-content:center;
+            color:white; font-size:18px; font-weight:600; cursor:pointer;
+            text-transform:uppercase; transition:transform 0.3s;
+        }
+        .user-profile:hover { transform:scale(1.05); }
+        .dropdown-menu {
+            display:none; position:absolute; top:55px; right:0;
+            background:white; border-radius:10px;
+            box-shadow:0 8px 25px rgba(0,0,0,0.15);
+            min-width:180px; z-index:1000; overflow:hidden;
+        }
+        .dropdown-menu.show { display:block; animation:fadeIn 0.3s; }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+        .dropdown-menu a {
+            display:flex; align-items:center; gap:10px;
+            padding:14px 20px; color:#2c3e50; text-decoration:none;
+            font-size:14px; transition:background 0.2s;
+        }
+        .dropdown-menu a:hover { background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%); color:white; }
+        .dropdown-menu a:last-child { color:#e74c3c; }
+        .dropdown-menu a:last-child:hover { background:#e74c3c; color:white; }
+
+        .container { max-width:1400px; margin:30px auto; padding:0 20px; }
+
+        /* Today count cards */
+        .counts-row {
+            display:grid; grid-template-columns:repeat(4,1fr);
+            gap:16px; margin-bottom:24px;
+        }
+        .count-card {
+            background:white; border-radius:12px;
+            padding:20px 24px;
+            box-shadow:0 2px 12px rgba(0,0,0,0.08);
+            display:flex; align-items:center; gap:16px;
+        }
+        .count-icon { font-size:32px; }
+        .count-label { font-size:12px; color:#888; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
+        .count-value { font-size:28px; font-weight:800; color:#2c3e50; line-height:1; }
+        .count-card.total  { border-left:4px solid #1e5ca8; }
+        .count-card.pending { border-left:4px solid #fdcb6e; }
+        .count-card.progress { border-left:4px solid #74b9ff; }
+        .count-card.done   { border-left:4px solid #00b894; }
+
+        /* Page header */
+        .page-header {
+            display:flex; justify-content:space-between; align-items:center;
+            margin-bottom:20px; background:white;
+            padding:20px 28px; border-radius:12px;
+            box-shadow:0 2px 12px rgba(0,0,0,0.08);
+        }
+        .page-title { font-size:24px; color:#2c3e50; font-weight:700; display:flex; align-items:center; gap:10px; }
+        .page-title i { color:#1e5ca8; }
+        .new-invoice-btn {
+            background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%);
+            color:white; border:none; padding:12px 28px;
+            border-radius:8px; font-size:15px; font-weight:600;
+            cursor:pointer; transition:all 0.3s;
+            box-shadow:0 4px 15px rgba(102,126,234,0.4);
+            display:flex; align-items:center; gap:8px;
+        }
+        .new-invoice-btn:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(102,126,234,0.6); }
+
+        /* Search/filter bar */
+        .filter-bar {
+            background:white; border-radius:12px;
+            padding:20px 24px; margin-bottom:20px;
+            box-shadow:0 2px 12px rgba(0,0,0,0.08);
+            display:grid;
+            grid-template-columns:2fr 1fr 1fr 1fr;
+            gap:12px; align-items:end;
+        }
+        .filter-group label {
+            display:block; font-size:12px; font-weight:600;
+            color:#666; margin-bottom:6px; text-transform:uppercase;
+        }
+        .filter-input, .filter-select {
+            width:100%; padding:10px 14px;
+            border:2px solid #e0e0e0; border-radius:8px;
+            font-size:14px; transition:border-color 0.2s; outline:none;
+        }
+        .filter-input:focus, .filter-select:focus { border-color:#1e5ca8; }
+        .filter-date-row { display:flex; gap:8px; }
+        .filter-date-row input { flex:1; }
+        .clear-btn {
+            padding:10px 20px; background:#f0f0f0; border:none;
+            border-radius:8px; font-size:14px; cursor:pointer;
+            color:#555; font-weight:500; transition:0.2s; width:100%;
+        }
+        .clear-btn:hover { background:#e0e0e0; }
+
+        /* Table */
+        .history-table { background:white; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.08); overflow:hidden; }
+        table { width:100%; border-collapse:collapse; }
+        thead { background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%); color:white; }
+        th { padding:16px 20px; text-align:left; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:1px; }
+        td { padding:16px 20px; color:#2c3e50; font-size:14px; font-weight:500; border-bottom:1px solid #ecf0f1; }
+        tbody tr:hover { background:#f8f9fa; }
+
+        .status-badge { display:inline-block; padding:6px 14px; border-radius:20px; font-size:11px; font-weight:700; }
+        .status-pending  { background:linear-gradient(135deg,#ffeaa7,#fdcb6e); color:#d63031; }
+        .status-miro     { background:linear-gradient(135deg,#55efc4,#00b894); color:white; }
+        .status-migo     { background:linear-gradient(135deg,#a29bfe,#6c5ce7); color:white; }
+        .status-gate-in  { background:linear-gradient(135deg,#74b9ff,#0984e3); color:white; }
+
+        .view-btn {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:7px 14px;
+            background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%);
+            color:white; text-decoration:none; border-radius:6px;
+            font-size:13px; font-weight:600; transition:all 0.3s;
+        }
+        .view-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(102,126,234,0.4); }
+
+        /* Pagination */
+        .pagination {
+            display:flex; justify-content:center; align-items:center;
+            gap:8px; padding:20px;
+        }
+        .page-btn {
+            padding:8px 14px; border:2px solid #e0e0e0; border-radius:6px;
+            background:white; color:#555; font-size:14px; cursor:pointer;
+            transition:0.2s; font-weight:500;
+        }
+        .page-btn:hover:not(:disabled) { border-color:#1e5ca8; color:#1e5ca8; }
+        .page-btn.active { background:#1e5ca8; color:white; border-color:#1e5ca8; }
+        .page-btn:disabled { opacity:0.4; cursor:not-allowed; }
+        .page-info { font-size:14px; color:#888; padding:0 8px; }
+
+        /* Empty state */
+        .empty-state { text-align:center; padding:60px 20px; color:#999; }
+        .empty-state-icon { font-size:64px; margin-bottom:16px; opacity:0.4; }
+
+        /* Loading */
+        .loading-row td { text-align:center; padding:40px; color:#888; font-size:15px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="logo-icon">
+        <img src="/static/spl-new-logo.png" alt="SPL Logo" onerror="this.style.display='none'">
+    </div>
+    <div class="user-menu">
+        <div class="user-profile" onclick="toggleDropdown(event)">
+            {{ role[0] if role else 'U' }}
+        </div>
+        <div class="dropdown-menu" id="userDropdown">
+            <a href="/history"><i class="fas fa-history"></i> History</a>
+            {% if role == 'Admin' %}
+            <a href="/new_entry"><i class="fas fa-plus"></i> New Entry</a>
+            <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
+            {% endif %}
+            <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- Dashboard count cards -->
+    {% if show_dashboard_counts and today_counts %}
+    <div class="counts-row">
+        <div class="count-card total">
+            <div class="count-icon">📋</div>
+            <div>
+                <div class="count-label">Total Today</div>
+                <div class="count-value">{{ today_counts.total or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card pending">
+            <div class="count-icon">⏳</div>
+            <div>
+                <div class="count-label">Pending</div>
+                <div class="count-value">{{ today_counts.pending or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card progress">
+            <div class="count-icon">🔄</div>
+            <div>
+                <div class="count-label">In Progress</div>
+                <div class="count-value">{{ today_counts.in_progress or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card done">
+            <div class="count-icon">✅</div>
+            <div>
+                <div class="count-label">Completed</div>
+                <div class="count-value">{{ today_counts.completed or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Page header -->
+    <div class="page-header">
+        <h1 class="page-title">
+            <i class="fas fa-history"></i>
+            Material Inward History
+            
+        </h1>
+        {% if role == 'Admin' or allow_user_upload %}
+        <button class="new-invoice-btn" onclick="window.location.href='/new_entry'">
+            <i class="fas fa-plus-circle"></i> New Invoice
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Search and filter bar -->
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>Search</label>
+            <input type="text" class="filter-input" id="searchInput"
+                placeholder="Invoice No, Gate In No, PO No, E-Way Bill No..."
+                oninput="debounceSearch()">
+        </div>
+        <div class="filter-group">
+            <label>Status</label>
+            <select class="filter-select" id="statusFilter" onchange="loadHistory()">
+                <option value="">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Date Range</label>
+            <div class="filter-date-row">
+                <input type="date" class="filter-input" id="dateFrom" onchange="loadHistory()">
+                <input type="date" class="filter-input" id="dateTo" onchange="loadHistory()">
+            </div>
+        </div>
+        <div class="filter-group">
+            <label>&nbsp;</label>
+            <button class="clear-btn" onclick="clearFilters()">✕ Clear Filters</button>
+        </div>
+    </div>
+
+    <!-- History table -->
+    <div class="history-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Invoice No</th>
+                    <th>E-Way Bill No</th>
+                    <th>LR No</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="historyTableBody">
+                <tr class="loading-row"><td colspan="6">Loading...</td></tr>
+            </tbody>
+        </table>
+        <div class="pagination" id="paginationBar"></div>
+    </div>
+
+</div>
+
+<script>
+let currentPage = 1;
+let searchTimer = null;
+
+function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { currentPage = 1; loadHistory(); }, 300);
+}
+
+function clearFilters() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('statusFilter').value = '';
+    document.getElementById('dateFrom').value = '';
+    document.getElementById('dateTo').value = '';
+    currentPage = 1;
+    loadHistory();
+}
+
+function loadHistory(page) {
+    if (page) currentPage = page;
+    const search   = document.getElementById('searchInput').value.trim();
+    const status   = document.getElementById('statusFilter').value;
+    const dateFrom = document.getElementById('dateFrom').value;
+    const dateTo   = document.getElementById('dateTo').value;
+
+    const params = new URLSearchParams({
+        search, status, date_from: dateFrom, date_to: dateTo, page: currentPage
+    });
+
+    const tbody = document.getElementById('historyTableBody');
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="6">⏳ Loading...</td></tr>';
+
+    fetch('/api/history_search?' + params)
+        .then(r => {
+            if (r.status === 401) { window.location.href = '/login'; return; }
+            return r.json();
+        })
+        .then(data => {
+            if (!data) return;
+            renderTable(data.records);
+            renderPagination(data.page, data.total_pages, data.total);
+        })
+        .catch(err => {
+            tbody.innerHTML = '<tr class="loading-row"><td colspan="6">Error loading records.</td></tr>';
+        });
+}
+
+function renderTable(records) {
+    const tbody = document.getElementById('historyTableBody');
+    if (!records || records.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="6">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📂</div>
+                    <p>No records found</p>
+                </div>
+            </td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = records.map(r => {
+        const statusBadge = getStatusBadge(r.status);
+        const date = r.created_at ? r.created_at.split('T')[0] : '-';
+        return `
+        <tr>
+            <td>${r.invoice_number || '-'}</td>
+            <td>${r.ewaybill_number || '-'}</td>
+            <td>${r.lr_number || '-'}</td>
+            <td>${statusBadge}</td>
+            <td>${date}</td>
+            <td><a href="/view/${r.id}" class="view-btn"><i class="fas fa-eye"></i> View</a></td>
+        </tr>`;
+    }).join('');
+}
+
+function getStatusBadge(status) {
+    const map = {
+        'MIRO Done':     '<span class="status-badge status-miro">✓ MIRO Done</span>',
+        'MIGO 105 Done': '<span class="status-badge status-migo">✓ MIGO 105 Done</span>',
+        'MIGO 103 Done': '<span class="status-badge status-migo">✓ MIGO 103 Done</span>',
+        'Gate In Done':  '<span class="status-badge status-gate-in">✓ Gate In Done</span>',
+        'Pending':       '<span class="status-badge status-pending">⏳ Pending</span>',
+    };
+    return map[status] || '<span class="status-badge status-pending">⏳ Pending</span>';
+}
+
+function renderPagination(page, totalPages, total) {
+    const bar = document.getElementById('paginationBar');
+    if (totalPages <= 1) { bar.innerHTML = ''; return; }
+
+    let html = `<button class="page-btn" onclick="loadHistory(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
+    
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= page-2 && i <= page+2)) {
+            html += `<button class="page-btn ${i===page?'active':''}" onclick="loadHistory(${i})">${i}</button>`;
+        } else if (i === page-3 || i === page+3) {
+            html += `<span class="page-info">...</span>`;
+        }
+    }
+
+    html += `<button class="page-btn" onclick="loadHistory(${page+1})" ${page>=totalPages?'disabled':''}>Next →</button>`;
+    html += `<span class="page-info">${total} records</span>`;
+    bar.innerHTML = html;
+}
+
+function toggleDropdown(event) {
+    event.stopPropagation();
+    document.getElementById("userDropdown").classList.toggle("show");
+}
+document.addEventListener("click", function(e) {
+    const menu = document.querySelector(".user-menu");
+    if (menu && !menu.contains(e.target)) {
+        document.getElementById("userDropdown").classList.remove("show");
+    }
+});
+
+// Load on page open
+loadHistory();
+</script>
+
+</body>
+</html>

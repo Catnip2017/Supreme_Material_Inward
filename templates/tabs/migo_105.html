@@ -1,0 +1,290 @@
+<style>
+.req { color:#e74c3c; margin-left:2px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+.readonly-field { background:#f8f9fb !important; color:#1e5ca8; font-weight:600; }
+
+.gate-banner {
+  background:#fff3cd; border:1px solid #ffc107;
+  border-radius:8px; padding:14px 18px; margin-bottom:20px;
+  color:#856404; font-weight:500; font-size:14px;
+}
+.gate-banner.unlocked {
+  background:#ecfdf5; border-color:#00b894; color:#1a7a3c;
+}
+
+.matched-105 {
+  margin-top:18px;
+  border:2px solid #1e5ca8; border-radius:8px; overflow:hidden;
+}
+.matched-105-header {
+  background:#1e5ca8; color:#fff;
+  padding:9px 16px; font-weight:700; font-size:13px;
+}
+.matched-105-table { width:100%; border-collapse:collapse; font-size:12px; }
+.matched-105-table th {
+  background:#f5f3ff; padding:8px 10px; text-align:left;
+  font-weight:600; border-bottom:2px solid #ddd6fe;
+  white-space:nowrap;
+}
+.matched-105-table td {
+  padding:7px 10px; border-bottom:1px solid #ede9fe;
+  white-space:nowrap;
+}
+.matched-105-table input.batch-input {
+  width:140px; padding:5px 8px; font-size:12px;
+  border:1.5px solid #c5d8f8; border-radius:5px;
+}
+.matched-105-table input.batch-input:focus {
+  outline:none; border-color:#1e5ca8;
+}
+</style>
+
+<div class="content-card">
+  <h3>📦 MIGO 105 — Release from Blocked Stock</h3>
+
+<!-- {% set post_locked = (history is none) or (not history.migo_103) %}
+{% set step_locked = false %}
+
+  {% if step_locked %}
+  <div class="gate-banner">
+    ⏸ <strong>Awaiting MIGO 103</strong> — MIGO 105 unlocks once MIGO 103 is posted.
+  </div>
+  {% else %}
+  <div class="gate-banner unlocked">
+    ✓ <strong>MIGO 103 Done</strong> — Ready for MIGO 105 posting.
+  </div>
+  {% endif %} -->
+
+{% set post_locked = (history is none) or (not history.migo_103) %}
+{% set migo_103_done = history and history.migo_103 %}
+{% if not migo_103_done %}
+<div class="gate-banner">⏸ <strong>Awaiting MIGO 103</strong> — Complete MIGO 103 before posting MIGO 105.</div>
+{% else %}
+<div class="gate-banner unlocked">✓ <strong>MIGO 103 Done</strong> — Ready for MIGO 105 posting.</div>
+{% endif %}
+
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
+
+  <input type="hidden" id="history_id_migo105" value="{{ history_id or '' }}">
+
+  <div class="form-group">
+    <label>Material Document Number <span style="font-size:11px;color:#1e5ca8;">(auto-filled from MIGO 103)</span></label>
+    <input type="text" id="materialDocNumber105" class="form-input"
+       value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
+       placeholder="Material document number from MIGO 103">
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label>Storage Location <span class="req">*</span></label>
+      <select id="storageLocation105" class="form-select" {% if step_locked %}disabled{% endif %}>
+        <option value="">Loading...</option>
+      </select>
+      <div class="field-error-msg" id="err_storageLocation105">Required</div>
+    </div>
+    <div class="form-group">
+      <label>Vendor Invoice Amount</label>
+      <input type="text" id="vendorInvoiceDetail105" class="form-input"
+             value="{{ (migo_data.get('migo_105_vendor_invoice') if migo_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
+             {% if step_locked %}disabled{% endif %}>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Remarks</label>
+    <input type="text" id="remarks105" class="form-input"
+           value="{{ migo_data.get('migo_105_remarks', '') if migo_data else '' }}"
+           {% if step_locked %}disabled{% endif %}>
+  </div>
+
+  <!-- Matched Line Items from MIGO 103 -->
+  <div class="matched-105">
+    <div class="matched-105-header">📋 Line Items from MIGO 103 — Enter Batch per Line (leave blank for SAP auto-generation)</div>
+    <div style="overflow-x:auto;max-height:340px;">
+      <table class="matched-105-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Mat. Code</th>
+            <th>Short Text</th>
+            <th>HSN/SAC</th>
+            <th>Qty</th>
+            <th>Delivery Note Qty</th>
+            <th>Batch</th>
+          </tr>
+        </thead>
+        <tbody id="migo105ItemsBody">
+          <tr><td colspan="7" style="padding:14px;text-align:center;color:#888;">Loading line items...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="migo105Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+  <div class="action-buttons">
+    <button type="button" id="migo105Btn" class="btn btn-primary" onclick="submitMigo105()"
+        style="{% if history and history.migo_105 %}background:#00b894;{% else %}background:#1e5ca8;{% endif %};padding:10px 20px;font-size:14px;font-weight:600;min-width:160px;">
+  {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
+</button>
+  </div>
+</div>
+
+
+<script>
+const POST_LOCKED_105 = {{ 'true' if post_locked else 'false' }};
+
+
+const HISTORY_ID_105 = {{ history_id|tojson }};
+const MIGO_105_LOCKED = false;
+// Load storage locations
+(function() {
+  const saved = "{{ migo_data.get('migo_105_storage_loc', '') if migo_data else '' }}";
+  fetch('/api/storage_locations')
+    .then(r => r.json())
+    .then(data => {
+      const sel = document.getElementById('storageLocation105');
+      sel.innerHTML = '<option value="">Select Storage Location</option>';
+      (data.data || []).forEach(loc => {
+        const opt = document.createElement('option');
+        opt.value = loc.code;
+        opt.textContent = loc.code + ' — ' + loc.description;
+        if (loc.code === saved) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(() => {
+      document.getElementById('storageLocation105').innerHTML =
+        '<option value="">Error loading — refresh page</option>';
+    });
+})();
+
+// Load matched pairs from MIGO 103
+function loadMigo105Items() {
+  fetch(`/api/migo_matched_pairs/${HISTORY_ID_105}`)
+    .then(r => r.json())
+    .then(data => {
+      const tbody = document.getElementById('migo105ItemsBody');
+      const items = data.items || [];
+      if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="padding:14px;text-align:center;color:#888;">No line items — complete MIGO 103 first.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      items.forEach((item, idx) => {
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-line', item.line || (idx + 1));
+        tr.innerHTML = `
+          <td style="color:#7c3aed;font-weight:600;">${idx + 1}</td>
+          <td>${_esc(item.material_code || '')}</td>
+          <td title="${_esc(item.short_text || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${_esc(item.short_text || '')}</td>
+          <td>${_esc(item.hsn_sac || '')}</td>
+          <td>${_esc(item.qty_expected || '')}</td>
+          <td>${_esc(item.qty_actual || '')}</td>
+          <td><input type="text" class="batch-input" value="${_esc(item.batch || '')}" placeholder="(auto)" ${MIGO_105_LOCKED ? 'disabled' : ''}></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    })
+    .catch(err => {
+      console.error(err);
+      document.getElementById('migo105ItemsBody').innerHTML =
+        '<tr><td colspan="7" style="padding:14px;text-align:center;color:#e17055;">Failed to load line items.</td></tr>';
+    });
+}
+
+function _esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function _collectBatchesByLine() {
+  const rows = document.querySelectorAll('#migo105ItemsBody tr[data-line]');
+  const batches = [];
+  rows.forEach(row => {
+    const lineNum = parseInt(row.getAttribute('data-line'));
+    const batchInput = row.querySelector('.batch-input');
+    if (batchInput) {
+      batches.push({
+        line:  lineNum,
+        batch: batchInput.value.trim()
+      });
+    }
+  });
+  return batches;
+}
+
+function validateMigo105() {
+  const sel = document.getElementById('storageLocation105');
+  const err = document.getElementById('err_storageLocation105');
+  sel.classList.remove('field-error');
+  err.classList.remove('show');
+  if (!sel.value) {
+    sel.classList.add('field-error');
+    err.classList.add('show');
+    return false;
+  }
+  return true;
+}
+
+
+function submitMigo105() {
+  if (POST_LOCKED_105 && STEP_LOCKS_ENABLED) {
+    showToast('⏸ MIGO 103 must be completed before posting MIGO 105.', 'warning');
+    return;
+  }
+  if (!validateMigo105()) return;
+  if (!HISTORY_ID_105) { showToast('History ID missing.', 'error'); return; }
+  showConfirm(
+    'Confirm MIGO 105 Posting',
+    'You are about to post MIGO 105 (Release from Blocked Stock) to SAP. Make sure storage location and batch values are correct.',
+    () => _doSubmitMigo105()
+  );
+}
+
+function _doSubmitMigo105() {
+  const payload = {
+    history_id:          HISTORY_ID_105,
+    storageLocation:     document.getElementById('storageLocation105').value,
+    vendorInvoiceDetail: document.getElementById('vendorInvoiceDetail105').value,
+    remarks105:          document.getElementById('remarks105').value,
+    line_batches:        _collectBatchesByLine(),
+    material_doc_number_override: document.getElementById('materialDocNumber105').value.trim(),
+  };
+
+  const btn      = document.getElementById('migo105Btn');
+  const statusEl = document.getElementById('migo105Status');
+
+  submitAndPoll('/api/run_migo_105', payload, btn, {
+    onSuccess: () => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '✓ MIGO 105 posted! Proceed to MIRO.';
+      btn.textContent        = '✓ MIGO 105 Done';
+      btn.style.background   = '#00b894';
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+// Load on page open
+loadMigo105Items();
+</script>

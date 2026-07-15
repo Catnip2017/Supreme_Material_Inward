@@ -1,0 +1,257 @@
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
+<div class="content-card" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+  <h3 style="color: #333; margin-bottom: 20px;">📁 Original Documents</h3>
+  
+  {% if invoice_data or ewaybill_data or lr_data %}
+    <div class="documents-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-bottom: 30px;">
+      
+      <!-- Invoice Document Card -->
+      {% if invoice_data and invoice_data.get('filename') %}
+      <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+        <div class="doc-header" style="background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+          <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📄</span>
+          <h4 style="color: white; font-size: 18px; margin: 0;">Invoice</h4>
+        </div>
+        <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <img src="{{ url_for('get_document_thumbnail', doctype='invoice', filename=invoice_data.filename) }}" 
+               alt="Invoice Preview" 
+               style="max-width: 100%; max-height: 100%; object-fit: contain;"
+               onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+        </div>
+        <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+          <strong>File:</strong> {{ invoice_data.filename }}<br>
+          <strong>Invoice No:</strong> {{ invoice_data.get('invoice_number') or 'N/A' }}<br>
+          <strong>Date:</strong> {{ invoice_data.get('invoice_date') or 'N/A' }}
+        </div>
+        <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+          <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data.filename) }}" 
+             target="_blank" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            👁️ View
+          </a>
+          <a href="{{ url_for('download_document', doctype='invoice', filename=invoice_data.filename) }}" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            📥 Download
+          </a>
+          <button onclick="deleteDocument('invoice', '{{ invoice_data.filename }}', this.closest('.document-card'))" 
+                  style="flex: 1; padding: 8px 12px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; background: #ff4757; color: white;">
+            🗑️ Delete
+          </button>
+          <div class="inline-confirm">
+            Are you sure?
+            <button class="confirm-yes" onclick="confirmDelete('invoice', '{{ invoice_data.filename }}', this)">Yes, Delete</button>
+            <button class="confirm-no" onclick="cancelDelete(this)">Cancel</button>
+          </div>
+          <div class="doc-status-msg"></div>
+        </div>
+      </div>
+      {% endif %}
+      
+      <!-- E-Way Bill Document Card -->
+      {% if ewaybill_data and ewaybill_data.get('filename') %}
+      <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+        <div class="doc-header" style="background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+          <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">🚚</span>
+          <h4 style="color: white; font-size: 18px; margin: 0;">E-Way Bill</h4>
+        </div>
+        <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <img src="{{ url_for('get_document_thumbnail', doctype='ewaybill', filename=ewaybill_data.filename) }}" 
+               alt="E-Way Bill Preview"
+               style="max-width: 100%; max-height: 100%; object-fit: contain;"
+               onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+        </div>
+        <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+          <strong>File:</strong> {{ ewaybill_data.filename }}<br>
+          <strong>E-Way Bill No:</strong> {{ ewaybill_data.get('ewaybill_number') or 'N/A' }}<br>
+          <strong>Date:</strong> {{ ewaybill_data.get('generated_date') or 'N/A' }}
+        </div>
+        <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+          <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data.filename) }}" 
+             target="_blank" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            👁️ View
+          </a>
+          <a href="{{ url_for('download_document', doctype='ewaybill', filename=ewaybill_data.filename) }}" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            📥 Download
+          </a>
+          <button onclick="deleteDocument('ewaybill', '{{ ewaybill_data.filename }}', this.closest('.document-card'))" 
+                  style="flex: 1; padding: 8px 12px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; background: #ff4757; color: white;">
+            🗑️ Delete
+          </button>
+          <div class="inline-confirm">
+            Are you sure?
+            <button class="confirm-yes" onclick="confirmDelete('ewaybill', '{{ ewaybill_data.filename }}', this)">Yes, Delete</button>
+            <button class="confirm-no" onclick="cancelDelete(this)">Cancel</button>
+          </div>
+          <div class="doc-status-msg"></div>
+        </div>
+      </div>
+      {% endif %}
+      
+      <!-- LR Document Card -->
+      {% if lr_data and lr_data.get('filename') %}
+      <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+        <div class="doc-header" style="background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+          <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📦</span>
+          <h4 style="color: white; font-size: 18px; margin: 0;">Lorry Receipt</h4>
+        </div>
+        <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <img src="{{ url_for('get_document_thumbnail', doctype='lr', filename=lr_data.filename) }}" 
+               alt="LR Preview"
+               style="max-width: 100%; max-height: 100%; object-fit: contain;"
+               onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+        </div>
+        <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+          <strong>File:</strong> {{ lr_data.filename }}<br>
+          <strong>LR No:</strong> {{ lr_data.get('lr_number') or 'N/A' }}<br>
+          <strong>Date:</strong> {{ lr_data.get('lr_date') or 'N/A' }}
+        </div>
+        <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+          <a href="{{ url_for('view_document', doctype='lr', filename=lr_data.filename) }}" 
+             target="_blank" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            👁️ View
+          </a>
+          <a href="{{ url_for('download_document', doctype='lr', filename=lr_data.filename) }}" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            📥 Download
+          </a>
+          <button onclick="deleteDocument('lr', '{{ lr_data.filename }}', this.closest('.document-card'))" 
+                  style="flex: 1; padding: 8px 12px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; background: #ff4757; color: white;">
+            🗑️ Delete
+          </button>
+          <div class="inline-confirm">
+            Are you sure?
+            <button class="confirm-yes" onclick="confirmDelete('lr', '{{ lr_data.filename }}', this)">Yes, Delete</button>
+            <button class="confirm-no" onclick="cancelDelete(this)">Cancel</button>
+          </div>
+          <div class="doc-status-msg"></div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    
+    <!-- Bulk Actions -->
+    <div class="bulk-actions" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 30px;">
+      <h4 style="color: #333; font-size: 18px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #e0e0e0;">Bulk Actions</h4>
+      <div class="action-buttons" style="display: flex; gap: 16px; flex-wrap: wrap;">
+        <button onclick="downloadAllDocuments()" 
+                style="padding: 12px 24px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); color: white; box-shadow: 0 4px 12px rgba(30, 92, 168, 0.3);">
+          📥 Download All Documents
+        </button>
+        <button onclick="deleteAllDocuments()" 
+                style="padding: 12px 24px; border: 2px solid #ff4757; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: #fff5f5; color: #ff4757;">
+          🗑️ Delete All Documents
+        </button>
+      </div>
+    </div>
+    
+  {% else %}
+    <div class="empty-state" style="text-align: center; padding: 80px 20px; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+      <div class="empty-state-icon" style="font-size: 80px; margin-bottom: 24px; opacity: 0.5;">📂</div>
+      <h3 style="color: #333; font-size: 24px; margin-bottom: 12px;">No Documents Available</h3>
+      <p style="color: #999; font-size: 16px;">Upload documents from the sidebar to view them here</p>
+    </div>
+  {% endif %}
+</div>
+
+<style>
+.inline-confirm {
+  display:none; background:#fff5f5; border:1px solid #e74c3c;
+  border-radius:6px; padding:8px 12px; margin-top:6px;
+  font-size:13px; color:#c0392b;
+}
+.inline-confirm.show { display:block; }
+.inline-confirm button {
+  margin-left:8px; padding:4px 12px; border:none; border-radius:4px;
+  cursor:pointer; font-size:12px; font-weight:600;
+}
+.confirm-yes { background:#e74c3c; color:white; }
+.confirm-no  { background:#ecf0f1; color:#333; }
+.doc-status-msg {
+  margin-top:8px; padding:8px 12px; border-radius:6px;
+  font-size:13px; font-weight:500; display:none;
+}
+</style>
+
+<script>
+function deleteDocument(doctype, filename, cardEl) {
+  // Show inline confirmation instead of browser popup
+  const confirmDiv = cardEl.querySelector('.inline-confirm');
+  if (confirmDiv) {
+    confirmDiv.classList.toggle('show');
+  }
+}
+
+function confirmDelete(doctype, filename, btn) {
+  const card = btn.closest('.document-card');
+  const statusMsg = card.querySelector('.doc-status-msg');
+  
+  btn.textContent = '⏳';
+  btn.disabled = true;
+
+  fetch(`/delete_document/${doctype}/${filename}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        card.style.transition = 'opacity 0.3s';
+        card.style.opacity = '0';
+        setTimeout(() => card.remove(), 300);
+      } else {
+        if (statusMsg) {
+          statusMsg.style.display = 'block';
+          statusMsg.style.background = '#fff5f5';
+          statusMsg.style.color = '#e74c3c';
+          statusMsg.textContent = '❌ ' + (data.error || 'Delete failed');
+        }
+        btn.textContent = 'Yes, Delete';
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      if (statusMsg) {
+        statusMsg.style.display = 'block';
+        statusMsg.style.background = '#fff5f5';
+        statusMsg.style.color = '#e74c3c';
+        statusMsg.textContent = '❌ Network error. Please try again.';
+      }
+      btn.textContent = 'Yes, Delete';
+      btn.disabled = false;
+    });
+}
+
+function cancelDelete(btn) {
+  btn.closest('.inline-confirm').classList.remove('show');
+}
+
+function downloadAllDocuments() {
+  fetch('/download_all_documents')
+    .then(response => {
+      if (!response.ok) throw new Error('Download failed');
+      return response.blob();
+    })
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `documents-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    })
+    .catch(err => console.error('Download error:', err));
+}
+</script>

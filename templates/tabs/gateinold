@@ -1,0 +1,392 @@
+<style>
+.req { color:#e74c3c; margin-left:2px; }
+.manual-hint { font-size:11px; color:#1e5ca8; font-weight:600; margin-left:6px; background:#f0f4ff; padding:2px 8px; border-radius:10px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+.form-group { margin-bottom:18px; }
+</style>
+
+<div class="content-card">
+  <h3>🚪 Gate In Entry Form</h3>
+
+  {% if lock_warning %}
+  <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:20px;color:#856404;font-weight:500;">
+    ⚠ {{ lock_warning }}
+  </div>
+  {% endif %}
+
+  {% if history %}
+  <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+    <strong>Status:</strong>
+    Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO: {% if history.migo_103 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <form id="gateInForm" novalidate>
+    <input type="hidden" id="history_id" value="{{ history_id or '' }}">
+
+    <h4 style="color:#1e5ca8;font-size:15px;margin-top:16px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">⏰ Gate In Timing</h4>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gate In Date <span class="req">*</span></label>
+        <input type="date" id="gateInDate" class="form-input"
+               value="{{ gatein_data.get('gate_in_date', '') if gatein_data else '' }}">
+        <div class="field-error-msg" id="err_gateInDate">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Gate In Time <span class="req">*</span></label>
+        <input type="time" id="gateInTime" class="form-input"
+               value="{{ gatein_data.get('gate_in_time', '') if gatein_data else '' }}">
+        <div class="field-error-msg" id="err_gateInTime">Required</div>
+      </div>
+    </div>
+
+    <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🚚 Truck Details</h4>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Vendor Name <span class="req">*</span></label>
+        <input type="text" id="vendorName" class="form-input"
+               value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+               placeholder="Vendor name">
+        <div class="field-error-msg" id="err_vendorName">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Transporter</label>
+        <input type="text" id="transporter" class="form-input"
+               value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
+               placeholder="Transporter name (if applicable)">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Truck No <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <input type="text" id="truckNo" class="form-input"
+               value="{{ gatein_data.get('truck_no', '') if gatein_data else '' }}"
+               placeholder="Enter truck number">
+        <div class="field-error-msg" id="err_truckNo">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Driver Name <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <input type="text" id="driverName" class="form-input"
+               value="{{ gatein_data.get('driver_name', '') if gatein_data else '' }}"
+               placeholder="Enter driver name">
+        <div class="field-error-msg" id="err_driverName">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>License No <span class="req">*</span> <span class="manual-hint">Manual fill</span></label>
+        <input type="text" id="licenseNo" class="form-input"
+               value="{{ gatein_data.get('license_no', '') if gatein_data else '' }}"
+               placeholder="Enter license number">
+        <div class="field-error-msg" id="err_licenseNo">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Container No</label>
+        <input type="text" id="containerNo" class="form-input"
+               value="{{ gatein_data.get('container_no', '') if gatein_data else '' }}"
+               placeholder="If applicable">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>No. of Persons</label>
+        <input type="number" id="numPersons" class="form-input"
+               value="{{ gatein_data.get('num_persons', '1') if gatein_data else '1' }}"
+               min="1">
+      </div>
+    </div>
+
+    <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">📦 Material Details</h4>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Category <span class="req">*</span></label>
+        <select id="category" class="form-select">
+          <option value="">Select category</option>
+          <option value="Stores" {% if gatein_data and gatein_data.get('category')=='Stores' %}selected{% endif %}>Stores</option>
+          <option value="Tankfarm" {% if gatein_data and gatein_data.get('category')=='Tankfarm' %}selected{% endif %}>Tankfarm</option>
+          <option value="Scrap" {% if gatein_data and gatein_data.get('category')=='Scrap' %}selected{% endif %}>Scrap</option>
+          <option value="Despatch" {% if gatein_data and gatein_data.get('category')=='Despatch' %}selected{% endif %}>Despatch</option>
+          <option value="Salesreturn" {% if gatein_data and gatein_data.get('category')=='Salesreturn' %}selected{% endif %}>Sales Return</option>
+          <option value="Jobwork" {% if gatein_data and gatein_data.get('category')=='Jobwork' %}selected{% endif %}>Job Work</option>
+          <option value="Despatchscrap" {% if gatein_data and gatein_data.get('category')=='Despatchscrap' %}selected{% endif %}>Despatch Scrap</option>
+        </select>
+        <div class="field-error-msg" id="err_category">Required</div>
+        <div class="field-error-msg" id="err_category">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Material <span class="req">*</span></label>
+        <input type="text" id="material" class="form-input"
+               value="{{ (gatein_data.get('material') if gatein_data else '') or (ewaybill_data.get('goods_description') if ewaybill_data else '') or '' }}"
+               placeholder="Material description">
+        <div class="field-error-msg" id="err_material">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Challan No <span class="req">*</span></label>
+        <input type="text" id="challanNo" class="form-input"
+               value="{{ (gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
+               placeholder="Invoice / Challan number">
+        <div class="field-error-msg" id="err_challanNo">Required</div>
+      </div>
+      <div class="form-group">
+        <label>Challan Quantity <span class="req">*</span></label>
+        <input type="text" id="challanQty" class="form-input"
+               value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or (ewaybill_data.get('quantity') if ewaybill_data else '') or '' }}"
+               placeholder="Quantity from challan">
+        <div class="field-error-msg" id="err_challanQty">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Import BOE No</label>
+        <input type="text" id="boeNo" class="form-input"
+               value="{{ gatein_data.get('boe_no', '') if gatein_data else '' }}"
+               placeholder="If applicable">
+      </div>
+      <div class="form-group">
+        <label>Purchase Order <span class="req">*</span></label>
+        <input type="text" id="purchaseOrder" class="form-input"
+               value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '' }}"
+               placeholder="PO number">
+        <div class="field-error-msg" id="err_purchaseOrder">Required</div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gate Pass No (RTGP) <span class="req">*</span></label>
+        <input type="text" id="gatePassNo" class="form-input"
+               value="{{ gatein_data.get('gate_pass_no', '') if gatein_data else '' }}"
+               placeholder="Gate pass number">
+        <div class="field-error-msg" id="err_gatePassNo">Required</div>
+      </div>
+    </div>
+
+    <!-- <div style="margin:20px 0;">
+      <label style="display:block;margin-bottom:10px;color:#333;font-weight:600;font-size:14px;">
+        Weight Options <span class="req">*</span>
+      </label>
+      <div class="radio-group">
+        <label class="radio-label"><input type="radio" name="weightOption" value="gross"> <span>Gross weight</span></label>
+        <label class="radio-label"><input type="radio" name="weightOption" value="storage"> <span>Assign storage location</span></label>
+        <label class="radio-label"><input type="radio" name="weightOption" value="tare"> <span>Tare weight</span></label>
+        <label class="radio-label"><input type="radio" name="weightOption" value="gateout"> <span>Gate out</span></label>
+      </div>
+      <div class="field-error-msg" id="err_weightOption">Please select a weight option</div>
+    </div> -->
+
+    <div class="form-group">
+      <label>Note</label>
+      <textarea id="note" class="form-textarea" rows="3" placeholder="Additional notes (optional)">{{ gatein_data.get('note', '') if gatein_data else '' }}</textarea>
+    </div>
+
+    <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;"></div>
+
+    <div class="action-buttons">
+      <button type="submit" id="gateInSubmitBtn" class="btn btn-primary"
+              {% if history and history.gate_in %}style="background:#00b894;"{% endif %}>
+        {% if history and history.gate_in %}✓ Gate In Done (GIN: {{ history.gate_in_number }}){% else %}💾 Save & Post Gate In{% endif %}
+      </button>
+      <button type="button" class="btn btn-secondary" onclick="clearGateInForm()">🔄 Clear Form</button>
+    </div>
+  </form>
+</div>
+
+<script>
+// Auto-set date and time on load
+(function() {
+  const dateEl = document.getElementById('gateInDate');
+  const timeEl = document.getElementById('gateInTime');
+  if (dateEl && !dateEl.value) {
+    dateEl.value = new Date().toISOString().split('T')[0];
+  }
+  if (timeEl && !timeEl.value) {
+    const now = new Date();
+    timeEl.value = now.toTimeString().slice(0,5);
+  }
+})();
+
+const MANDATORY_FIELDS = [
+  { id: 'gateInDate',     errId: 'err_gateInDate' },
+  { id: 'gateInTime',     errId: 'err_gateInTime' },
+  { id: 'vendorName',     errId: 'err_vendorName' },
+  { id: 'truckNo',        errId: 'err_truckNo' },
+  { id: 'driverName',     errId: 'err_driverName' },
+  { id: 'licenseNo',      errId: 'err_licenseNo' },
+  { id: 'category',       errId: 'err_category' },
+  { id: 'material',       errId: 'err_material' },
+  { id: 'challanNo',      errId: 'err_challanNo' },
+  { id: 'challanQty',     errId: 'err_challanQty' },
+  { id: 'purchaseOrder',  errId: 'err_purchaseOrder' },
+  { id: 'gatePassNo',     errId: 'err_gatePassNo' },
+];
+
+function validateGateIn() {
+  let valid = true;
+
+  // Clear previous errors
+  MANDATORY_FIELDS.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el) el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  document.getElementById('err_weightOption').classList.remove('show');
+
+  // Check mandatory fields
+  MANDATORY_FIELDS.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el && !el.value.trim()) {
+      el.classList.add('field-error');
+      if (err) err.classList.add('show');
+      valid = false;
+    }
+  });
+
+  // Check weight option
+  const weightSelected = document.querySelector('input[name="weightOption"]:checked');
+  if (!weightSelected) {
+    document.getElementById('err_weightOption').classList.add('show');
+    valid = false;
+  }
+
+  return valid;
+}
+
+document.getElementById('gateInForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+
+  if (!validateGateIn()) {
+    // Scroll to first error
+    const firstError = document.querySelector('.field-error');
+    if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const historyId = parseInt(document.getElementById('history_id').value);
+  if (!historyId) {
+    alert('History ID missing. Please go back to History and reopen this record.');
+    return;
+  }
+
+  const payload = {
+    history_id:    historyId,
+    gateInDate:    document.getElementById('gateInDate').value,
+    gateInTime:    document.getElementById('gateInTime').value,
+    vendorName:    document.getElementById('vendorName').value,
+    transporter:   document.getElementById('transporter').value,
+    truckNo:       document.getElementById('truckNo').value,
+    driverName:    document.getElementById('driverName').value,
+    licenseNo:     document.getElementById('licenseNo').value,
+    containerNo:   document.getElementById('containerNo').value,
+    numPersons:    document.getElementById('numPersons').value,
+    category:      document.getElementById('category').value,
+    material:      document.getElementById('material').value,
+    challanNo:     document.getElementById('challanNo').value,
+    challanQty:    document.getElementById('challanQty').value,
+    boeNo:         document.getElementById('boeNo').value,
+    purchaseOrder: document.getElementById('purchaseOrder').value,
+    gatePassNo:    document.getElementById('gatePassNo').value,
+    weightOption:  document.querySelector('input[name="weightOption"]:checked')?.value,
+    note:          document.getElementById('note').value,
+  };
+
+  const btn = document.getElementById('gateInSubmitBtn');
+  const statusEl = document.getElementById('gateInStatus');
+
+  submitAndPoll('/save_gatein', payload, btn, {
+    onSuccess: (result) => {
+      statusEl.style.display = 'block';
+      statusEl.style.background = '#ecfdf5';
+      statusEl.style.color = '#00b894';
+      statusEl.style.border = '1px solid #00b894';
+      statusEl.textContent = `✓ Gate In posted! Gate In Number: ${result.gate_in_number || '—'}`;
+      btn.textContent = `✓ Gate In Done (GIN: ${result.gate_in_number || ''})`;
+      btn.style.background = '#00b894';
+    },
+    onFailure: (error) => {
+      statusEl.style.display = 'block';
+      statusEl.style.background = '#fff5f5';
+      statusEl.style.color = '#e17055';
+      statusEl.style.border = '1px solid #e17055';
+      statusEl.textContent = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.display = 'block';
+      statusEl.style.background = '#fff5f5';
+      statusEl.style.color = '#e17055';
+      statusEl.style.border = '1px solid #e17055';
+      statusEl.textContent = `❌ ${error}`;
+    }
+  });
+});
+
+// Clear red borders when user starts typing
+MANDATORY_FIELDS.forEach(f => {
+  const el = document.getElementById(f.id);
+  const err = document.getElementById(f.errId);
+  if (el) {
+    el.addEventListener('input', () => {
+      el.classList.remove('field-error');
+      if (err) err.classList.remove('show');
+    });
+    el.addEventListener('change', () => {
+      el.classList.remove('field-error');
+      if (err) err.classList.remove('show');
+    });
+  }
+});
+
+document.querySelectorAll('input[name="weightOption"]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('err_weightOption').classList.remove('show');
+  });
+});
+
+function clearGateInForm() {
+  // Explicitly clear all fields
+  const fieldIds = [
+    'gateInDate', 'gateInTime', 'vendorName', 'transporter', 'truckNo',
+    'driverName', 'licenseNo', 'containerNo', 'numPersons', 'category',
+    'material', 'challanNo', 'challanQty', 'boeNo', 'purchaseOrder',
+    'gatePassNo', 'note'
+  ];
+  fieldIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  // Uncheck radio buttons
+  document.querySelectorAll('input[name="weightOption"]').forEach(r => r.checked = false);
+
+  // Reset numPersons default
+  const np = document.getElementById('numPersons');
+  if (np) np.value = '1';
+
+  // Reset date/time to current
+  document.getElementById('gateInDate').value = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  document.getElementById('gateInTime').value = now.toTimeString().slice(0,5);
+
+  // Clear all error states
+  MANDATORY_FIELDS.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el) el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  document.getElementById('err_weightOption').classList.remove('show');
+  document.getElementById('gateInStatus').style.display = 'none';
+}
+</script>
