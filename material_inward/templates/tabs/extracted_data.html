@@ -35,6 +35,8 @@
 }
 .editable-input:focus { outline:none; border-color:#1e5ca8; }
 .editable-input:disabled { background:#f8f9fb; color:#666; cursor:not-allowed; }
+.editable-input.field-expired { border-color:#e74c3c; background:#fee; }
+.editable-input.field-expired:focus { border-color:#e74c3c; }
 
 .field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:14px; }
 .field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px; border-left:3px solid #1e5ca8; }
@@ -479,7 +481,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">Validity Date</div>
-              <input class="editable-input" id="eway_validity_date" type="date" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="date" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
@@ -981,7 +983,36 @@ function rerunOCR() {
       } catch (e) {
         showToast('❌ Network error', 'error');
       }
-    }
+    },
+    'Yes, Re-run OCR'
   );
 }
+
+// E-way Bill validity expiry notice.
+// Server (app.py view_detail) computes ewb_expired fresh on every page load
+// by comparing today's date to the EWB's validity_date -- this is
+// informational only and never blocks approval/workflow. The red field
+// highlight (.field-expired, applied to #eway_validity_date above) is
+// persistent and reappears every time this tab is viewed while still
+// expired. The popup itself is shown only once per browser session per
+// record (tracked via sessionStorage, not the database), so re-visiting
+// the same record repeatedly in one sitting doesn't re-trigger it.
+document.addEventListener('DOMContentLoaded', function () {
+  const EWB_EXPIRED = {{ 'true' if ewb_expired else 'false' }};
+  if (!EWB_EXPIRED) return;
+
+  const sessionKey = 'ewb_expiry_alert_shown_' + HISTORY_ID;
+  if (sessionStorage.getItem(sessionKey)) return;
+
+  const validityInput = document.getElementById('eway_validity_date');
+  const validityDate = validityInput ? validityInput.value : '';
+
+  showConfirm(
+    'E-way Bill Expired',
+    'This E-way Bill\'s validity expired on ' + validityDate + '. Please verify before proceeding.',
+    function () {},
+    'OK'
+  );
+  sessionStorage.setItem(sessionKey, '1');
+});
 </script>

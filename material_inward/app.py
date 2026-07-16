@@ -420,12 +420,32 @@ def view_detail(history_id):
 
         po_data = get_po_line_items(history_id)
 
+        # E-way Bill validity check — flags (does not block) an EWB whose
+        # "Valid Upto" date has already passed as of today. validity_date is
+        # already normalized to YYYY-MM-DD by services/extract.py, so this is
+        # a plain date-only comparison (time-of-day on the EWB is not parsed;
+        # EWB validity conventionally ends at 23:59 on the stated day, so a
+        # date-only check is accurate for the workflow's purposes).
+        ewb_expired = False
+        ewaybill_data = details.get("ewaybill_data") or {}
+        ewb_validity_raw = ewaybill_data.get("validity_date")
+        if ewb_validity_raw:
+            try:
+                validity_dt = datetime.strptime(str(ewb_validity_raw), "%Y-%m-%d").date()
+                ewb_expired = date.today() > validity_dt
+            except ValueError:
+                logger.warning(
+                    f"history_id={history_id}: could not parse ewaybill validity_date "
+                    f"'{ewb_validity_raw}' for expiry check."
+                )
+
         return render_template(
             "index.html",
             history=history,
             history_id=history_id,
             invoice_data=details.get("invoice_data"),
             ewaybill_data=details.get("ewaybill_data"),
+            ewb_expired=ewb_expired,
             lr_data=details.get("lr_data"),
             gatein_data=gatein_data,
             migo_data=migo_data,
