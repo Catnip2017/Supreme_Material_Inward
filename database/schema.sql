@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS invoice_data (
     total_amount            TEXT,
     grand_total             TEXT,
     hsn_details             JSONB,
+    irn                     TEXT,
     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -317,6 +318,50 @@ CREATE TABLE IF NOT EXISTS rf_queue (
 
 CREATE INDEX IF NOT EXISTS idx_rf_queue_status   ON rf_queue(status);
 CREATE INDEX IF NOT EXISTS idx_rf_queue_history  ON rf_queue(history_id);
+
+-- ============================================================
+-- SUPPLIER MASTER TABLE (SAP vendor code lookup)
+-- One row per SAP vendor code (Business Partner). Refreshed nightly by the
+-- standalone VENDOR_MASTER_SYNC bot (zvend_address transaction export),
+-- outside this Flask app -- see Material Inward/VENDOR_MASTER_SYNC/.
+-- supplier = SAP vendor code, PRIMARY KEY (natural key from SAP).
+-- Originally only declared in schema_migration_v8.sql (never in this base
+-- schema); folded in here by schema_migration_v10.sql, with column widths
+-- matching what v10 widened them to on production after the first real
+-- data load surfaced values wider than the original narrow declarations
+-- (e.g. a foreign vendor's free-text tax reference at 30+ characters).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS supplier_master (
+    supplier                    VARCHAR(50) PRIMARY KEY,
+    name_1                      VARCHAR(255),
+    tax_number_3                VARCHAR(50),
+    permanent_account_number    VARCHAR(100),
+    name                        VARCHAR(255),
+    name_2                      VARCHAR(255),
+    name_3                      VARCHAR(255),
+    name_4                      VARCHAR(255),
+    city                        VARCHAR(255),
+    district                    VARCHAR(255),
+    postal_code                 VARCHAR(50),
+    street_2                    VARCHAR(255),
+    street_3                    VARCHAR(255),
+    street_4                    VARCHAR(255),
+    street_5                    VARCHAR(255),
+    building                    VARCHAR(255),
+    floor                       VARCHAR(100),
+    rg                          VARCHAR(50),
+    last_synced_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at                  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_supplier_master_name_1_trgm
+    ON supplier_master USING gin (name_1 gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_supplier_master_name_trgm
+    ON supplier_master USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_supplier_master_city     ON supplier_master(city);
+CREATE INDEX IF NOT EXISTS idx_supplier_master_district ON supplier_master(district);
 
 -- ============================================================
 -- INDEXES for performance

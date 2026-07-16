@@ -86,6 +86,11 @@ Initialize SAP and Login
 # ─────────────────────────────────────────────
  
 Clean Value
+    # NOTE: previously ended with Split String (limit=1) + ${parts}[0],
+    # returning only the first word -- same bug as gate_in.robot's old
+    # Clean Material and migo_103/105.robot's old Clean Value. Not currently
+    # called anywhere in this file (fields are used raw), but fixed
+    # pre-emptively so it doesn't carry the bug forward if wired in later.
     [Documentation]    Strips currency symbols, commas, and leading/trailing spaces from a value.
     [Arguments]    ${raw_value}
     ${cleaned}=    Strip String    ${raw_value}
@@ -94,8 +99,7 @@ Clean Value
     ${cleaned}=    Replace String    ${cleaned}    €    ${EMPTY}
     ${cleaned}=    Replace String    ${cleaned}    £    ${EMPTY}
     ${cleaned}=    Replace String    ${cleaned}    ,    ${EMPTY}
-    ${parts}=      Split String    ${cleaned}    ${SPACE}    1
-    ${cleaned}=    Set Variable    ${parts}[0]
+    ${cleaned}=    Strip String    ${cleaned}
     RETURN    ${cleaned}
  
  
@@ -401,9 +405,9 @@ Execute MIRO Flow
         Fail    Simulate returned an error: "${sim_status}". Aborting post.
     END
  
-    ── STEP 10: Post the document ──
-    Post button is typically the Save/Post button: tbar[0]/btn[11] or Ctrl+S
-    TODO: Confirm Post button element ID
+    # ── STEP 10: Post the document ──
+    # Post button is typically the Save/Post button: tbar[0]/btn[11] or Ctrl+S
+    # TODO: Confirm Post button element ID
     Click Element    wnd[0]/tbar[0]/btn[11]
     Sleep    5s
     Dismiss Any Popup

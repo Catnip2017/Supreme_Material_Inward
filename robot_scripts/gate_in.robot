@@ -203,11 +203,14 @@ Fill Gate In Form And Submit
     RETURN    ${matches}[0]
  
 Clean Material
+    # NOTE: previously split on spaces and returned only the first word
+    # (parts[0]), same bug as the old Clean Value -- e.g. "Steel Pipe 25mm"
+    # became just "Steel". Material descriptions are legitimately multi-word,
+    # so this now only trims leading/trailing whitespace, matching Clean Value.
     [Arguments]    ${raw_material}
     ${val}=        Convert To String    ${raw_material}
-    ${stripped}=   Strip String    ${val}
-    @{parts}=      Split String    ${stripped}    ${SPACE}
-    RETURN         ${parts}[0]
+    ${cleaned}=    Strip String    ${val}
+    RETURN         ${cleaned}
  
 Clean Value
     # NOTE: previously split on spaces and returned only the first word

@@ -69,11 +69,14 @@ def _get_model() -> Optional[object]:
         return None
 
 
-def _encode_pages_to_base64(file_path: str, max_pages: int = 3) -> list:
+def _encode_pages_to_base64(file_path: str, max_pages: int = 10) -> list:
     """
     Convert up to max_pages of a PDF to PNG images encoded as base64.
     Returns list of base64 strings, one per page.
     Multi-page support ensures fields on page 2+ are captured.
+    Raised from 3 -> 10 pages (per instruction) to cover longer documents;
+    still a bounded cap (not unlimited) as a safety net against an
+    oversized or accidentally-wrong upload driving up OCR call cost/latency.
     """
     try:
         import fitz  # PyMuPDF
@@ -230,6 +233,13 @@ Important field notes:
 - "rate": The unit rate/price per item as shown in the Rate column.
 - "unit": The unit of measure for the line item (e.g., pc, Nos, EA, Num, kg).
 - "taxable_value": The line total before tax (rate x quantity, after discount).
+- "irn": Look anywhere on the page for a line labeled "IRN" (also seen as "IRN No",
+  "IRN #", "IRN:", or "e-Invoice IRN") — the value immediately following that label
+  is the IRN. It has no fixed position on the page (it may be near the top by the
+  QR code, or further down near the totals/signature area) — search the whole
+  page, not just the header. Do not confuse it with "Ack No" — that is a shorter,
+  separate acknowledgement number, not the IRN. Return empty string if no line
+  labeled IRN is found.
 
 
 
@@ -237,6 +247,7 @@ Important field notes:
   "invoice_number": "",
   "invoice_date": "",
   "po_number": "",
+  "irn": "",
   "buyer_name": "",
   "buyer_address": "",
   "buyer_gstin": "",
@@ -296,14 +307,8 @@ Important notes:
   "invoice_number": "",
   "invoice_date": "",
   "po_number": "",
-  "goods_description": "",
-  "hsn_code": "",
-  "quantity": "",
-  "value_of_goods": "",
   "dispatch_from": "",
   "dispatch_to": "",
-  "total_taxable_amount": "",
-  "total_invoice_amount": "",
   "transport_mode": "",
   "vehicle_number": "",
   "transporter_name": "",
@@ -416,8 +421,8 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
         logger.error("WatsonX model not available. Cannot process document.")
         return None
 
-    # Encode up to 3 pages
-    pages_b64 = _encode_pages_to_base64(file_path, max_pages=3)
+    # Encode up to 10 pages
+    pages_b64 = _encode_pages_to_base64(file_path, max_pages=10)
     if not pages_b64:
         logger.error(f"Failed to encode PDF pages for {filename}")
         return None

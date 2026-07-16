@@ -285,19 +285,9 @@ def map_ocr_to_migo(
                 "amount":        hsn.get("taxable_value") or "",
                 "batch":         "",
             })
-    elif ewaybill_data:
-        items.append({
-            "line":          1,
-            "material_code": "",
-            "short_text":    ewaybill_data.get("goods_description") or "",
-            "hsn_sac":       ewaybill_data.get("hsn_code") or "",
-            "qty_expected":  ewaybill_data.get("quantity") or "",
-            "qty_actual":    ewaybill_data.get("quantity") or "",
-            "unit":          "",
-            "rate":          "",
-            "amount":        "",
-            "batch":         "",
-        })
+    # v7: EWB goods fallback removed — invoice_data.hsn_details is the
+    # single source of goods lines. If invoice OCR failed, items stay
+    # empty until the invoice data is corrected on the Extracted Data tab.
 
     data["items_data"] = items
     return data

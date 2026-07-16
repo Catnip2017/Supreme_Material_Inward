@@ -138,28 +138,6 @@
   </div>
   {% endif %}
 
-  <!-- ── Delivery Type & PO Availability ──────────────────────────────── -->
-  <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
-    <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">🚦 Delivery Type</div>
-    <div class="delivery-type-group">
-      <label class="delivery-radio-option">
-        <input type="radio" name="deliveryType" value="truck" checked onchange="onDeliveryTypeChange()"> 🚚 Truck
-      </label>
-      <label class="delivery-radio-option">
-        <input type="radio" name="deliveryType" value="hand" onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
-      </label>
-    </div>
-    <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;margin-top:8px;">📋 Purchase Order Available?</div>
-    <div class="po-avail-group">
-      <label class="delivery-radio-option">
-        <input type="radio" name="poAvail" value="with_po" checked onchange="onPoAvailChange()"> With PO
-      </label>
-      <label class="delivery-radio-option">
-        <input type="radio" name="poAvail" value="without_po" onchange="onPoAvailChange()"> Without PO
-      </label>
-    </div>
-  </div>
-
   <form id="gateInForm" novalidate>
     <input type="hidden" id="history_id" value="{{ history_id or '' }}">
 
@@ -194,7 +172,7 @@
           <div class="vehicle-lookup-row">
             <input type="text" id="vendorName" class="form-input" maxlength="40" autocomplete="off"
                    value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-                   placeholder="Vendor name" oninput="onVendorNameTypeahead('')"
+                   placeholder="SAP vendor code" oninput="onVendorNameTypeahead('')"
                    {% if gate_in_locked %}disabled{% endif %}>
             <button type="button" class="btn-lookup" onclick="fetchVendorCode('')"
                     {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
@@ -232,7 +210,7 @@
             <input type="text" id="truckNo" class="form-input" maxlength="12"
                    value="{{ (gatein_data.get('truck_no') if gatein_data else '') or '' }}"
                    {% if gate_in_locked %}disabled{% endif %}>
-            <button type="button" class="btn-lookup" onclick="lookupVehicle()"
+            <button type="button" class="btn-lookup" id="fetchDriverBtn" onclick="lookupVehicle()"
                     {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch Driver</button>
           </div>
           <div class="driver-dropdown" id="driverDropdown"></div>
@@ -292,7 +270,21 @@
         <label>No. of Persons</label>
         <input type="number" id="numPersons" class="form-input"
                value="{{ (gatein_data.get('num_persons') if gatein_data else '1') or '1' }}"
-               min="1" {% if gate_in_locked %}disabled{% endif %}>
+               min="1" max="99" {% if gate_in_locked %}disabled{% endif %}>
+      </div>
+    </div>
+
+    <!-- ── Delivery Type ─ moved below Driver Name/No. of Persons per request;
+         same radios/ids/onchange handler as before, position only changed. -->
+    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
+      <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">🚦 Delivery Type</div>
+      <div class="delivery-type-group">
+        <label class="delivery-radio-option">
+          <input type="radio" name="deliveryType" value="truck" checked onchange="onDeliveryTypeChange()"> 🚚 Truck
+        </label>
+        <label class="delivery-radio-option">
+          <input type="radio" name="deliveryType" value="hand" onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
+        </label>
       </div>
     </div>
 
@@ -312,10 +304,17 @@
         </select>
         <div class="field-error-msg" id="err_category">Required</div>
       </div>
+      {# v7: goods fallbacks now come from invoice hsn_details (EWB goods columns deprecated) #}
+      {% set inv_hsn = (invoice_data.get('hsn_details') if invoice_data else []) or [] %}
+      {% set inv_goods_desc = (inv_hsn[0].get('description','') if inv_hsn else '') %}
+      {% if inv_hsn|length > 1 and inv_goods_desc %}
+        {% set inv_goods_desc = inv_goods_desc ~ ' +' ~ (inv_hsn|length - 1) ~ ' more' %}
+      {% endif %}
+      {% set inv_goods_qty = (inv_hsn[0].get('quantity','') if inv_hsn else '') %}
       <div class="form-group">
         <label>Material <span class="req">*</span></label>
-        <input type="text" id="material" class="form-input"
-               value="{{ (gatein_data.get('material') if gatein_data else '') or (ewaybill_data.get('goods_description') if ewaybill_data else '') or '' }}"
+        <input type="text" id="material" class="form-input" maxlength="40"
+               value="{{ (gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_material">Required</div>
       </div>
@@ -323,16 +322,16 @@
 
     <div class="form-row">
       <div class="form-group">
-        <label>Delivery Challan No <span class="req">*</span></label>
-        <input type="text" id="challanNo" class="form-input"
+        <label>Challan No <span class="req">*</span></label>
+        <input type="text" id="challanNo" class="form-input" maxlength="20"
                value="{{ (gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanNo">Required</div>
       </div>
       <div class="form-group">
         <label>Challan Quantity <span class="req">*</span></label>
-        <input type="text" id="challanQty" class="form-input"
-              value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or (ewaybill_data.get('quantity') if ewaybill_data else '') or '' }}"
+        <input type="text" id="challanQty" class="form-input" maxlength="17"
+              value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanQty">Required</div>
       </div>
@@ -341,7 +340,7 @@
     <div class="form-row">
       <div class="form-group">
         <label>Import BOE No</label>
-        <input type="text" id="boeNo" class="form-input"
+        <input type="text" id="boeNo" class="form-input" maxlength="10"
                value="{{ (gatein_data.get('boe_no') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
       </div>
@@ -353,7 +352,7 @@
           </span>
         </label>
         <div class="po-field-wrap" style="position:relative;">
-          <input type="text" id="purchaseOrder" class="form-input"
+          <input type="text" id="purchaseOrder" class="form-input" maxlength="10"
                  value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '' }}"
                  autocomplete="off" {% if gate_in_locked %}disabled{% endif %}>
           <button type="button" class="btn-fetch-po" id="fetchPoBtn" onclick="fetchPoList()"
@@ -374,10 +373,24 @@
       </div>
     </div>
 
+    <!-- ── PO Availability ─ moved below Purchase Order field per request;
+         same radios/ids/onchange handler as before, position only changed. -->
+    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
+      <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">📋 Purchase Order Available?</div>
+      <div class="po-avail-group">
+        <label class="delivery-radio-option">
+          <input type="radio" name="poAvail" value="with_po" checked onchange="onPoAvailChange()"> With PO
+        </label>
+        <label class="delivery-radio-option">
+          <input type="radio" name="poAvail" value="without_po" onchange="onPoAvailChange()"> Without PO
+        </label>
+      </div>
+    </div>
+
     <div class="form-row">
       <div class="form-group">
         <label>Gate Pass No (RTGP)</label>
-        <input type="text" id="gatePassNo" class="form-input"
+        <input type="text" id="gatePassNo" class="form-input" maxlength="12"
                value="{{ (gatein_data.get('gate_pass_no') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gatePassNo">Required</div>
@@ -532,6 +545,24 @@ function validateGateIn() {
       valid = false;
     }
   }
+
+  // Vendor Name must end up holding the SAP vendor code (LIFNR, max 10
+  // chars) before posting -- doesn't have to come from picking a
+  // Fetch/type-ahead match (a guard may just type the code straight in from
+  // memory), just has to fit the code format. Checked on whichever section
+  // is active.
+  const vendorSuffix = (delivery === 'truck') ? '' : 'Hand';
+  const vendorEl = document.getElementById('vendorName' + vendorSuffix);
+  if (vendorEl && vendorEl.value.trim().length > 10) {
+    vendorEl.classList.add('field-error');
+    const errEl = document.getElementById('err_vendorName' + vendorSuffix);
+    if (errEl) {
+      errEl.textContent = 'Max 10 characters -- enter the SAP vendor code (click Fetch or type it directly), not the vendor name.';
+      errEl.classList.add('show');
+    }
+    valid = false;
+  }
+
   return valid;
 }
 
@@ -592,6 +623,7 @@ document.getElementById('gateInForm').addEventListener('submit', function(e) {
   }
   const historyId = parseInt(document.getElementById('history_id').value);
   if (!historyId) { showToast('History ID missing.', 'error'); return; }
+
   showConfirm(
     'Confirm Gate In Posting',
     'You are about to post Gate In to SAP. Make sure all fields are correct — this cannot be undone from the portal.',
@@ -630,6 +662,11 @@ function _doSubmitGateIn(historyId) {
     numPersons:    document.getElementById('numPersons').value,
     category:      document.getElementById('category').value,
     material:      document.getElementById('material').value,
+    // Reverted per instruction -- keep stripping to numeric-only here in the
+    // frontend for now, same as before. (Briefly changed to send the raw
+    // value so the original OCR'd challan number would survive in the DB
+    // instead of being silently cut down to digits-only before ever being
+    // saved -- reverting that for now, revisit later.)
     challanNo:     _stripToNumeric(document.getElementById('challanNo').value),
     challanQty:    document.getElementById('challanQty').value,
     boeNo:         document.getElementById('boeNo').value,
@@ -689,7 +726,13 @@ function lookupVehicle() {
   const truckNo = document.getElementById('truckNo').value.trim();
   if (!truckNo) { showToast('Enter Truck No first.', 'warning'); return; }
 
-  const btn = document.querySelector('.btn-lookup');
+  // Was `document.querySelector('.btn-lookup')` -- grabs the FIRST element
+  // with that class in the DOM, which is actually the Vendor Name Fetch
+  // button (it comes before Truck No in the markup), not this one. That
+  // meant every truck lookup was silently disabling/relabeling the vendor
+  // button to "Fetch Driver" instead of the real Truck No button -- exactly
+  // the mislabeling bug reported. Fixed to target this button specifically.
+  const btn = document.getElementById('fetchDriverBtn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
 
   fetch('/api/vehicle_lookup/' + encodeURIComponent(truckNo))
@@ -807,9 +850,33 @@ function _applyVendorCode(candidate, suffix) {
   if (dd) dd.classList.remove('show');
 }
 
+// Some vendors have multiple SAP codes for the same name AND same postal
+// code (e.g. two departments/plants at one address) -- city/district alone
+// can't tell those apart. Detect that specific case and only THEN show the
+// full street/building address, so the dropdown stays compact for the
+// common case (different city/district is enough) and only gets denser
+// when it's genuinely needed to disambiguate.
+function _groupKey(c) {
+  const name = (c.name_1 || c.name || '').trim().toLowerCase();
+  const postal = (c.postal_code || '').trim();
+  return name + '|' + postal;
+}
+
+function _fullAddress(c) {
+  return [c.street_2, c.street_3, c.street_4, c.street_5, c.building, c.floor]
+    .filter(Boolean).join(', ');
+}
+
 function _renderVendorCodeDropdown(candidates, suffix) {
   const dd = document.getElementById('vendorCodeDropdown' + suffix);
   if (!dd) return;
+
+  const groupCounts = {};
+  candidates.forEach(c => {
+    const key = _groupKey(c);
+    groupCounts[key] = (groupCounts[key] || 0) + 1;
+  });
+
   dd.innerHTML = `<div class="po-dropdown-header">
     <span>${candidates.length} Match(es) Found</span>
     <span onclick="document.getElementById('vendorCodeDropdown${suffix}').classList.remove('show')"
@@ -819,9 +886,12 @@ function _renderVendorCodeDropdown(candidates, suffix) {
     item.className = 'driver-dropdown-item';
     const displayName = c.name_1 || c.name || '(no name)';
     const location = [c.city, c.district].filter(Boolean).join(', ');
+    const isAmbiguous = groupCounts[_groupKey(c)] > 1;
+    const address = isAmbiguous ? _fullAddress(c) : '';
     item.innerHTML =
       '<div class="drv-name">' + _escHtml(displayName) + ' &nbsp;<span style="color:#888;font-weight:400;">(' + _escHtml(c.supplier) + ')</span></div>' +
-      '<div class="drv-meta">' + (location ? _escHtml(location) : 'No location on file') + '</div>';
+      '<div class="drv-meta">' + (location ? _escHtml(location) : 'No location on file') + '</div>' +
+      (address ? '<div class="drv-meta" style="color:#c0392b;">' + _escHtml(address) + '</div>' : '');
     item.onclick = function() { _applyVendorCode(c, suffix); };
     dd.appendChild(item);
   });

@@ -27,7 +27,8 @@
   padding:10px 22px; border-radius:8px; font-size:14px; font-weight:600;
   cursor:pointer;
 }
-.btn-rerun-ocr:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(243,156,18,0.4); }
+.btn-rerun-ocr:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(243,156,18,0.4); }
+.btn-rerun-ocr:disabled { background:#b0bec5; cursor:not-allowed; }
 
 .editable-input {
   width:100%; padding:8px 12px; border:1.5px solid #e0e0e0;
@@ -35,6 +36,8 @@
 }
 .editable-input:focus { outline:none; border-color:#1e5ca8; }
 .editable-input:disabled { background:#f8f9fb; color:#666; cursor:not-allowed; }
+.editable-input.field-expired { border-color:#e74c3c; background:#fee; }
+.editable-input.field-expired:focus { border-color:#e74c3c; }
 
 .field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:14px; }
 .field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px; border-left:3px solid #1e5ca8; }
@@ -197,7 +200,7 @@
         </div>
         {% endif %}
       </div>
-      <button class="btn-rerun-ocr" onclick="rerunOCR()">🔄 Re-run OCR</button>
+      <button class="btn-rerun-ocr" id="rerunOcrBtn" onclick="rerunOCR()">🔄 Re-run OCR</button>
     </div>
   </div>
   {% endif %}
@@ -406,6 +409,44 @@
           {% endif %}
         </div> -->
 
+        <!-- Goods Information — editable, one row per invoice line item.
+             Backed by invoice_data.hsn_details (single source of truth, v7).
+             Hidden per-line fields (material_code, unit, rate, taxes, total)
+             are preserved on save via ORIGINAL_HSN merge. -->
+        <div class="section-card">
+          <div class="section-title">📦 Goods Information</div>
+          <div style="overflow-x:auto;">
+            <table class="hsn-table-edit" id="invGoodsTable">
+              <thead>
+                <tr>
+                  <th style="width:30px;">#</th>
+                  <th>Goods Description</th>
+                  <th>HSN Code</th>
+                  <th>Quantity</th>
+                  <th>Value of Goods</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="invGoodsBody">
+                {% set hsn_list = invoice_data.get('hsn_details') or [] %}
+                {% for hsn in hsn_list %}
+                <tr data-orig-idx="{{ loop.index0 }}">
+                  <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                  <td><input type="text" value="{{ hsn.get('description','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ hsn.get('hsn_sac','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ hsn.get('quantity','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ hsn.get('taxable_value','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td>{% if not is_approved %}<button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button>{% endif %}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% if not is_approved %}
+          <button type="button" class="btn-row-add" onclick="addGoodsRow()">➕ Add Row</button>
+          {% endif %}
+        </div>
+
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
           {% if not is_approved %}
           <button class="btn-save-section" onclick="saveExtractedInvoice()">💾 Save Invoice Changes</button>
@@ -441,7 +482,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">Validity Date</div>
-              <input class="editable-input" id="eway_validity_date" type="date" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="date" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
@@ -458,35 +499,9 @@
           </div>
         </div>
 
-        <div class="section-card">
-          <div class="section-title">📦 Goods Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Goods Description</div>
-              <input class="editable-input" id="eway_goods_description" value="{{ ewaybill_data.get('goods_description','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">HSN Code</div>
-              <input class="editable-input" id="eway_hsn_code" value="{{ ewaybill_data.get('hsn_code','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Quantity</div>
-              <input class="editable-input" id="eway_quantity" value="{{ ewaybill_data.get('quantity','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Value of Goods</div>
-              <input class="editable-input" id="eway_value_of_goods" value="{{ ewaybill_data.get('value_of_goods','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Total Taxable Amount</div>
-              <input class="editable-input" id="eway_total_taxable_amount" value="{{ ewaybill_data.get('total_taxable_amount','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Total Invoice Amount</div>
-              <input class="editable-input" id="eway_total_invoice_amount" value="{{ ewaybill_data.get('total_invoice_amount','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-          </div>
-        </div>
+        <!-- v7: Goods Information moved to the Invoice tab (single source
+             of truth = invoice_data.hsn_details). EWB goods columns are
+             deprecated — see schema_migration_v7.sql. -->
 
         <div class="section-card">
           <div class="section-title">📍 Dispatch Information</div>
@@ -677,6 +692,9 @@
 <script>
 const HISTORY_ID = {{ history_id|tojson }};
 const IS_APPROVED = {{ 'true' if is_approved else 'false' }};
+// v7: original OCR line items — used to preserve per-line fields not shown
+// in the Goods Information table (material_code, unit, rate, taxes, total).
+const ORIGINAL_HSN = {{ ((invoice_data.get('hsn_details') or []) if invoice_data else []) | tojson }};
 
 // ============================================================
 // Tab switching
@@ -761,12 +779,6 @@ async function saveExtractedEway() {
     invoice_number:  document.getElementById('eway_invoice_number').value,
     invoice_date:    document.getElementById('eway_invoice_date').value,
     po_number:       document.getElementById('eway_po_number').value,
-    goods_description: document.getElementById('eway_goods_description').value,
-    hsn_code:        document.getElementById('eway_hsn_code').value,
-    quantity:        document.getElementById('eway_quantity').value,
-    value_of_goods:  document.getElementById('eway_value_of_goods').value,
-    total_taxable_amount: document.getElementById('eway_total_taxable_amount').value,
-    total_invoice_amount: document.getElementById('eway_total_invoice_amount').value,
     dispatch_from:   document.getElementById('eway_dispatch_from').value,
     dispatch_to:     document.getElementById('eway_dispatch_to').value,
     transport_mode:  document.getElementById('eway_transport_mode').value,
@@ -821,51 +833,55 @@ async function saveExtractedLr() {
 }
 
 // ============================================================
-// HSN line items add/remove/collect
+// Goods Information rows add/remove/collect (v7)
+// Same pattern as MIGO 103 addInvoiceRow().
+// Rows are backed by invoice_data.hsn_details — collection merges
+// edits into the original line so hidden fields (material_code,
+// unit, rate, taxes, total) are never lost.
 // ============================================================
-function addInvHsnRow() {
-  const tbody = document.getElementById('invHsnBody');
-  const tr = tbody.insertRow();
+function addGoodsRow() {
+  const tbody = document.getElementById('invGoodsBody');
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-orig-idx', '-1');
   tr.innerHTML = `
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><input type="text"></td>
-    <td><button class="btn-row-delete" onclick="deleteInvHsnRow(this)">×</button></td>
+    <td class="goods-row-num" style="color:#888;font-size:11px;"></td>
+    <td><input type="text" placeholder="Goods Description"></td>
+    <td><input type="text" placeholder="HSN Code"></td>
+    <td><input type="text" placeholder="Quantity"></td>
+    <td><input type="text" placeholder="Value of Goods"></td>
+    <td><button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button></td>
   `;
+  tbody.appendChild(tr);
+  _renumberGoodsRows();
 }
 
-function deleteInvHsnRow(btn) {
+function deleteGoodsRow(btn) {
   btn.closest('tr').remove();
+  _renumberGoodsRows();
+}
+
+function _renumberGoodsRows() {
+  document.querySelectorAll('#invGoodsBody tr').forEach((row, i) => {
+    const numCell = row.querySelector('.goods-row-num');
+    if (numCell) numCell.textContent = i + 1;
+  });
 }
 
 function _collectInvHsn() {
-  const rows = document.querySelectorAll('#invHsnBody tr');
+  const tbody = document.getElementById('invGoodsBody');
+  if (!tbody) return ORIGINAL_HSN;  // safety: never wipe hsn_details
   const items = [];
-  rows.forEach(row => {
+  tbody.querySelectorAll('tr').forEach(row => {
     const inputs = row.querySelectorAll('input');
-    if (inputs.length >= 11) {
-      items.push({
-        material_code: inputs[0].value,
-        hsn_sac:       inputs[1].value,
-        description:   inputs[2].value,
-        quantity:      inputs[3].value,
-        unit:          inputs[4].value,
-        rate:          inputs[5].value,
-        taxable_value: inputs[6].value,
-        cgst_amount:   inputs[7].value,
-        sgst_amount:   inputs[8].value,
-        igst_amount:   inputs[9].value,
-        total:         inputs[10].value,
-      });
-    }
+    if (inputs.length < 4) return;
+    const origIdx = parseInt(row.getAttribute('data-orig-idx'), 10);
+    const base = (origIdx >= 0 && ORIGINAL_HSN[origIdx]) ? ORIGINAL_HSN[origIdx] : {};
+    items.push(Object.assign({}, base, {
+      description:   inputs[0].value,
+      hsn_sac:       inputs[1].value,
+      quantity:      inputs[2].value,
+      taxable_value: inputs[3].value,
+    }));
   });
   return items;
 }
@@ -956,6 +972,12 @@ function rerunOCR() {
     'Re-run OCR',
     'Re-run OCR on the failed documents?',
     async function () {
+      // Grey the button out immediately -- without this, users kept
+      // double/triple-clicking while the request was in flight, queuing up
+      // multiple OCR re-runs for the same record. Re-enabled on failure so
+      // they can retry; on success the page reloads anyway.
+      const btn = document.getElementById('rerunOcrBtn');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-running...'; }
       try {
         const res = await fetch(`/api/rerun_ocr/${HISTORY_ID}`, { method:'POST' });
         const data = await res.json();
@@ -964,12 +986,42 @@ function rerunOCR() {
           window.location.reload();
         } else {
           showToast('❌ ' + (data.error || 'OCR retry failed') + (data.retry_count ? ` (retry #${data.retry_count})` : ''), 'error');
+          if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-run OCR'; }
         }
       } catch (e) {
         showToast('❌ Network error', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-run OCR'; }
       }
     },
     'Yes, Re-run OCR'
   );
 }
+
+// E-way Bill validity expiry notice.
+// Server (app.py view_detail) computes ewb_expired fresh on every page load
+// by comparing today's date to the EWB's validity_date -- this is
+// informational only and never blocks approval/workflow. The red field
+// highlight (.field-expired, applied to #eway_validity_date above) is
+// persistent and reappears every time this tab is viewed while still
+// expired. The popup itself is shown only once per browser session per
+// record (tracked via sessionStorage, not the database), so re-visiting
+// the same record repeatedly in one sitting doesn't re-trigger it.
+document.addEventListener('DOMContentLoaded', function () {
+  const EWB_EXPIRED = {{ 'true' if ewb_expired else 'false' }};
+  if (!EWB_EXPIRED) return;
+
+  const sessionKey = 'ewb_expiry_alert_shown_' + HISTORY_ID;
+  if (sessionStorage.getItem(sessionKey)) return;
+
+  const validityInput = document.getElementById('eway_validity_date');
+  const validityDate = validityInput ? validityInput.value : '';
+
+  showConfirm(
+    'E-way Bill Expired',
+    'This E-way Bill\'s validity expired on ' + validityDate + '. Please verify before proceeding.',
+    function () {},
+    'OK'
+  );
+  sessionStorage.setItem(sessionKey, '1');
+});
 </script>

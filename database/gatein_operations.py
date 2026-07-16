@@ -147,6 +147,50 @@ def get_gatein_entry(history_id: int) -> Optional[dict]:
         return None
 
 
+def _goods_from_invoice(invoice_data: Optional[dict]) -> tuple:
+    """
+    v7: goods info now comes from invoice_data.hsn_details (single source
+    of truth) instead of the deprecated ewaybill goods columns.
+    Returns (material, challan_qty):
+      material    — first line description, with ' +N more' when multi-line
+      challan_qty — sum of numeric line quantities (or first line's raw
+                    value when quantities are not numeric)
+    """
+    if not invoice_data:
+        return "", ""
+    hsn_list = invoice_data.get("hsn_details") or []
+    if isinstance(hsn_list, str):
+        try:
+            hsn_list = json.loads(hsn_list)
+        except Exception:
+            hsn_list = []
+    if not isinstance(hsn_list, list) or not hsn_list:
+        return "", ""
+
+    first_desc = str(hsn_list[0].get("description") or "").strip()
+    material = first_desc
+    if len(hsn_list) > 1 and first_desc:
+        material = f"{first_desc} +{len(hsn_list) - 1} more"
+
+    total_qty = 0.0
+    numeric = True
+    for line in hsn_list:
+        raw = str(line.get("quantity") or "").strip()
+        if not raw:
+            continue
+        try:
+            total_qty += float(raw.replace(",", ""))
+        except ValueError:
+            numeric = False
+            break
+    if numeric and total_qty:
+        challan_qty = str(int(total_qty)) if total_qty == int(total_qty) else str(total_qty)
+    else:
+        challan_qty = str(hsn_list[0].get("quantity") or "").strip()
+
+    return material, challan_qty
+
+
 def map_ocr_to_gatein(
     invoice_data: Optional[dict],
     ewaybill_data: Optional[dict],
@@ -164,12 +208,16 @@ def map_ocr_to_gatein(
         data["vendorName"]     = invoice_data.get("seller_name") or ""
         # data["challanNo"]      = invoice_data.get("invoice_number") or ""
         data["purchaseOrder"]  = (invoice_data.get("po_number") if invoice_data else "") or (ewaybill_data.get("po_number") if ewaybill_data else "") or (lr_data.get("po_number") if lr_data else "") or ""
+        # v7: material + challan qty from invoice line items
+        _material, _challan_qty = _goods_from_invoice(invoice_data)
+        if _material:
+            data["material"] = _material
+        if _challan_qty:
+            data["challanQty"] = _challan_qty
 
     if ewaybill_data:
         data["transporter"]    = ewaybill_data.get("transporter_name") or ""
         data["truckNo"]        = ewaybill_data.get("vehicle_number") or ""
-        data["material"]       = ewaybill_data.get("goods_description") or ""
-        data["challanQty"]     = ewaybill_data.get("quantity") or ""
 
     if lr_data:
         if not data.get("transporter"):

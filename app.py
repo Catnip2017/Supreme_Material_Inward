@@ -40,10 +40,11 @@ from database.db_operations import (
     get_history_search, get_today_counts,
     set_approval_status, set_hold_status,
     set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
-    set_dms_status, set_po_flow_type
+    set_dms_status, set_po_flow_type,
+    update_invoice_irn
 )
 from database.vehicle_master_operations import get_drivers_by_truck
-from database.supplier_operations import search_suppliers
+from database.supplier_operations import search_suppliers, get_supplier_by_code
 from database.gatein_operations import (
     upsert_gatein_entry, get_gatein_entry, map_ocr_to_gatein
 )
@@ -431,12 +432,32 @@ def view_detail(history_id):
 
         po_data = get_po_line_items(history_id)
 
+        # E-way Bill validity check — flags (does not block) an EWB whose
+        # "Valid Upto" date has already passed as of today. validity_date is
+        # already normalized to YYYY-MM-DD by services/extract.py, so this is
+        # a plain date-only comparison (time-of-day on the EWB is not parsed;
+        # EWB validity conventionally ends at 23:59 on the stated day, so a
+        # date-only check is accurate for the workflow's purposes).
+        ewb_expired = False
+        ewaybill_data = details.get("ewaybill_data") or {}
+        ewb_validity_raw = ewaybill_data.get("validity_date")
+        if ewb_validity_raw:
+            try:
+                validity_dt = datetime.strptime(str(ewb_validity_raw), "%Y-%m-%d").date()
+                ewb_expired = date.today() > validity_dt
+            except ValueError:
+                logger.warning(
+                    f"history_id={history_id}: could not parse ewaybill validity_date "
+                    f"'{ewb_validity_raw}' for expiry check."
+                )
+
         return render_template(
             "index.html",
             history=history,
             history_id=history_id,
             invoice_data=details.get("invoice_data"),
             ewaybill_data=details.get("ewaybill_data"),
+            ewb_expired=ewb_expired,
             lr_data=details.get("lr_data"),
             gatein_data=gatein_data,
             migo_data=migo_data,
@@ -1048,6 +1069,28 @@ def vendor_lookup():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/vendor_lookup/verify")
+@api_login_required
+def vendor_lookup_verify():
+    """
+    Exact-match check: is whatever's currently sitting in the Vendor Name
+    field an actual SAP vendor code (from supplier_master), or is it still
+    free-text (OCR'd name, or a name the user typed but never resolved via
+    Fetch/type-ahead)? Used by Gate In's submit-time validation to block
+    posting to SAP with a vendor NAME in the vendor_name slot -- SAP needs
+    the code there, not the name.
+    """
+    code = request.args.get("code", "").strip()
+    if not code:
+        return jsonify({"success": False, "error": "code required"}), 400
+    try:
+        supplier = get_supplier_by_code(code)
+        return jsonify({"success": True, "valid": bool(supplier), "supplier": supplier or None})
+    except Exception as e:
+        logger.error(f"vendor_lookup_verify error code={code}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/set_po_flow_type/<int:history_id>", methods=["POST"])
 @api_login_required
 def api_set_po_flow_type(history_id):
@@ -1497,6 +1540,34 @@ def api_gst_hold(history_id):
         return jsonify({"success": False, "error": "DB update failed"}), 500
 
     return jsonify({"success": True, "message": "GST placed on hold", "held_by": user})
+
+
+@app.route("/api/gst/save_irn/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_gst_save_irn(history_id):
+    """
+    Save an edited IRN (Invoice Reference Number) from the GST Approval
+    tab. Targeted update of invoice_data.irn only -- see
+    database.db_operations.update_invoice_irn(). Editable until GST
+    approval_status becomes 'approved' (server-side lock, mirrors the
+    client-side check that also blocks the Approve button on an
+    unsaved edit).
+    """
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    row = get_gst_approval(history_id)
+    if row and row.get("approval_status") == "approved":
+        return jsonify({"success": False, "error": "GST already approved — IRN is locked."}), 403
+
+    body = request.get_json(silent=True) or {}
+    irn = (body.get("irn") or "").strip()
+
+    if not update_invoice_irn(history_id, irn):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "message": "IRN saved"})
 
 
 @app.route("/api/gst/rerun/<int:history_id>", methods=["POST"])
