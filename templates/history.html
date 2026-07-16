@@ -133,6 +133,20 @@
         }
         .view-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(102,126,234,0.4); }
 
+        .times-toggle-btn {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:6px 10px; background:#f0f4ff; border:1px solid #d0d9f0;
+            border-radius:6px; font-size:12px; color:#1e5ca8; cursor:pointer;
+        }
+        .times-toggle-btn:hover { background:#e2eaff; }
+        .step-times-row td { background:#f8f9fb; padding:12px 16px; }
+        .step-times-panel {
+            display:flex; flex-wrap:wrap; gap:20px;
+        }
+        .step-time-item { font-size:13px; color:#444; }
+        .step-time-label { font-weight:700; margin-right:6px; color:#1e5ca8; }
+        .step-time-value { color:#555; }
+
         /* Pagination */
         .pagination {
             display:flex; justify-content:center; align-items:center;
@@ -232,7 +246,7 @@
         <div class="filter-group">
             <label>Search</label>
             <input type="text" class="filter-input" id="searchInput"
-                placeholder="Invoice No, Gate In No, PO No, E-Way Bill No..."
+                placeholder="Invoice No, Vendor Name, Gate In No, PO No, E-Way Bill No..."
                 oninput="debounceSearch()">
         </div>
         <div class="filter-group">
@@ -245,10 +259,10 @@
             </select>
         </div>
         <div class="filter-group">
-            <label>Date Range</label>
+            <label>Date &amp; Time Range</label>
             <div class="filter-date-row">
-                <input type="date" class="filter-input" id="dateFrom" onchange="loadHistory()">
-                <input type="date" class="filter-input" id="dateTo" onchange="loadHistory()">
+                <input type="datetime-local" class="filter-input" id="dateFrom" onchange="loadHistory()">
+                <input type="datetime-local" class="filter-input" id="dateTo" onchange="loadHistory()">
             </div>
         </div>
         <div class="filter-group">
@@ -263,15 +277,17 @@
             <thead>
                 <tr>
                     <th>Invoice No</th>
+                    <th>Vendor Name</th>
                     <th>E-Way Bill No</th>
                     <th>LR No</th>
                     <th>Status</th>
                     <th>Date</th>
+                    <th>Times</th>
                     <th>Action</th>
                 </tr>
             </thead>
             <tbody id="historyTableBody">
-                <tr class="loading-row"><td colspan="6">Loading...</td></tr>
+                <tr class="loading-row"><td colspan="8">Loading...</td></tr>
             </tbody>
         </table>
         <div class="pagination" id="paginationBar"></div>
@@ -309,7 +325,7 @@ function loadHistory(page) {
     });
 
     const tbody = document.getElementById('historyTableBody');
-    tbody.innerHTML = '<tr class="loading-row"><td colspan="6">⏳ Loading...</td></tr>';
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="8">⏳ Loading...</td></tr>';
 
     fetch('/api/history_search?' + params)
         .then(r => {
@@ -322,7 +338,7 @@ function loadHistory(page) {
             renderPagination(data.page, data.total_pages, data.total);
         })
         .catch(err => {
-            tbody.innerHTML = '<tr class="loading-row"><td colspan="6">Error loading records.</td></tr>';
+            tbody.innerHTML = '<tr class="loading-row"><td colspan="8">Error loading records.</td></tr>';
         });
 }
 
@@ -330,7 +346,7 @@ function renderTable(records) {
     const tbody = document.getElementById('historyTableBody');
     if (!records || records.length === 0) {
         tbody.innerHTML = `
-            <tr><td colspan="6">
+            <tr><td colspan="8">
                 <div class="empty-state">
                     <div class="empty-state-icon">📂</div>
                     <p>No records found</p>
@@ -342,16 +358,67 @@ function renderTable(records) {
     tbody.innerHTML = records.map(r => {
         const statusBadge = getStatusBadge(r.status);
         const date = r.created_at ? r.created_at.split('T')[0] : '-';
+        const rowId = `stepTimes-${r.id}`;
         return `
         <tr>
             <td>${r.invoice_number || '-'}</td>
+            <td>${r.vendor_name || '-'}</td>
             <td>${r.ewaybill_number || '-'}</td>
             <td>${r.lr_number || '-'}</td>
             <td>${statusBadge}</td>
             <td>${date}</td>
+            <td>
+                <button class="times-toggle-btn" onclick="toggleStepTimes('${rowId}', this)" title="Show step times">
+                    <i class="fas fa-clock"></i> <i class="fas fa-chevron-down"></i>
+                </button>
+            </td>
             <td><a href="/view/${r.id}" class="view-btn"><i class="fas fa-eye"></i> View</a></td>
+        </tr>
+        <tr id="${rowId}" class="step-times-row" style="display:none;">
+            <td colspan="8">${renderStepTimes(r)}</td>
         </tr>`;
     }).join('');
+}
+
+function toggleStepTimes(rowId, btn) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    const showing = row.style.display !== 'none';
+    row.style.display = showing ? 'none' : 'table-row';
+    const chevron = btn.querySelector('.fa-chevron-down, .fa-chevron-up');
+    if (chevron) {
+        chevron.classList.toggle('fa-chevron-down', showing);
+        chevron.classList.toggle('fa-chevron-up', !showing);
+    }
+}
+
+function formatStepTime(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+    });
+}
+
+function renderStepTimes(r) {
+    const steps = [
+        { label: 'Gate In',   iso: r.gatein_done_at },
+        { label: 'MIGO 103',  iso: r.migo_103_done_at },
+        { label: 'MIGO 105',  iso: r.migo_105_done_at },
+        { label: 'MIRO',      iso: r.miro_done_at },
+    ];
+    return `
+        <div class="step-times-panel">
+            ${steps.map(s => {
+                const formatted = formatStepTime(s.iso);
+                return `<div class="step-time-item">
+                    <span class="step-time-label">${s.label}:</span>
+                    <span class="step-time-value">${formatted || 'Not done yet'}</span>
+                </div>`;
+            }).join('')}
+        </div>`;
 }
 
 function getStatusBadge(status) {

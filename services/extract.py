@@ -317,7 +317,7 @@ Extract these fields from the Lorry Receipt:
 
 Important notes:
 - "lr_date": Use the FIRST date at the top of the lorry receipt. Dates may be handwritten — read carefully.
-- "lr_number": The consignment/lorry receipt number, usually at the top. May be labeled "No.", "LR No", or just printed prominently.
+- "lr_number": The consignment/lorry receipt number, usually at the top. May be labeled "No.", "LR No", "GR No", or "Consignment No", or just printed prominently. IMPORTANT: Lorry receipts often also print an unrelated "Invoice No." somewhere on the same page — do NOT return that value here under any circumstances. Only return a number found next to an LR/GR/Consignment label, or if truly unlabeled, the number in the position where an LR number normally appears (top area, near the LR date). If you cannot confidently tell the LR number apart from an invoice number on this document, return an empty string rather than guessing.
 
 {
   "lr_number": "",

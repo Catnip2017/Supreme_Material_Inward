@@ -185,11 +185,21 @@
     <div id="truckFieldsSection">
       <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🚚 Truck Details</h4>
       <div class="form-row">
-        <div class="form-group">
-          <label>Vendor Name <span class="req">*</span></label>
-          <input type="text" id="vendorName" class="form-input" maxlength="40"
-                 value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-                 placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
+        <div class="form-group driver-dropdown-wrap">
+          <label>Vendor Name <span class="req">*</span>
+            <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
+              Type to search, or click Fetch — selecting a match replaces this with the SAP vendor code
+            </span>
+          </label>
+          <div class="vehicle-lookup-row">
+            <input type="text" id="vendorName" class="form-input" maxlength="40" autocomplete="off"
+                   value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                   placeholder="Vendor name" oninput="onVendorNameTypeahead('')"
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <button type="button" class="btn-lookup" onclick="fetchVendorCode('')"
+                    {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
+          </div>
+          <div class="driver-dropdown" id="vendorCodeDropdown"></div>
           <div class="field-error-msg" id="err_vendorName">Required</div>
         </div>
         <div class="form-group">
@@ -198,6 +208,21 @@
                  value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
                  {% if gate_in_locked %}disabled{% endif %}>
         </div>
+      </div>
+
+      <!-- Container No moved above Truck No/License No (truck-only, kept
+           solo since No. of Persons stays shared with hand delivery -- see
+           gate_in tab discussion). Paired with an empty spacer so the grid
+           gives it a half-width column like every other paired row, instead
+           of stretching full width the way a lone .form-row child does. -->
+      <div class="form-row">
+        <div class="form-group">
+          <label>Container No</label>
+          <input type="text" id="containerNo" class="form-input" maxlength="20"
+                 value="{{ (gatein_data.get('container_no') if gatein_data else '') or '' }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+        </div>
+        <div class="form-group" aria-hidden="true"></div>
       </div>
 
       <div class="form-row">
@@ -222,26 +247,27 @@
           <div class="field-error-msg" id="err_licenseNo">Required</div>
         </div>
       </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label>Container No</label>
-          <input type="text" id="containerNo" class="form-input" maxlength="20"
-                 value="{{ (gatein_data.get('container_no') if gatein_data else '') or '' }}"
-                 {% if gate_in_locked %}disabled{% endif %}>
-        </div>
-      </div>
     </div><!-- /#truckFieldsSection -->
 
     <!-- ── Hand Delivery Fields Section ─────────────────────────────────── -->
     <div id="handFieldsSection" style="display:none;">
       <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🤝 Hand Delivery Details</h4>
       <div class="form-row">
-        <div class="form-group">
-          <label>Vendor Name <span class="req">*</span></label>
-          <input type="text" id="vendorNameHand" class="form-input" maxlength="40"
-                 value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-                 placeholder="Vendor name" {% if gate_in_locked %}disabled{% endif %}>
+        <div class="form-group driver-dropdown-wrap">
+          <label>Vendor Name <span class="req">*</span>
+            <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
+              Type to search, or click Fetch — selecting a match replaces this with the SAP vendor code
+            </span>
+          </label>
+          <div class="vehicle-lookup-row">
+            <input type="text" id="vendorNameHand" class="form-input" maxlength="40" autocomplete="off"
+                   value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                   placeholder="Vendor name" oninput="onVendorNameTypeahead('Hand')"
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <button type="button" class="btn-lookup" onclick="fetchVendorCode('Hand')"
+                    {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
+          </div>
+          <div class="driver-dropdown" id="vendorCodeDropdownHand"></div>
           <div class="field-error-msg" id="err_vendorNameHand">Required</div>
         </div>
         <div class="form-group">
@@ -320,8 +346,8 @@
                {% if gate_in_locked %}disabled{% endif %}>
       </div>
 
-      <div class="form-group">
-        <label>Purchase Order <span class="req">*</span>
+      <div class="form-group" id="purchaseOrderGroup">
+        <label>Purchase Order <span class="req" id="purchaseOrderReq">*</span>
           <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
             Click ▾ to fetch pending POs for this vendor
           </span>
@@ -350,7 +376,7 @@
 
     <div class="form-row">
       <div class="form-group">
-        <label>Gate Pass No (RTGP) <span class="req">*</span></label>
+        <label>Gate Pass No (RTGP)</label>
         <input type="text" id="gatePassNo" class="form-input"
                value="{{ (gatein_data.get('gate_pass_no') if gatein_data else '') or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
@@ -391,6 +417,12 @@ const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
     const now = new Date();
     timeEl.value = now.toTimeString().slice(0, 5);
   }
+  // Apply initial show/hide state to match whichever poAvail radio is
+  // checked by default. Note: the poAvail/deliveryType radios don't
+  // currently get re-checked from a previously-saved po_flow_type on
+  // reload (pre-existing gap, separate from this fix) -- so reopening a
+  // without_po record will still show "With PO" selected by default here.
+  onPoAvailChange();
 })();
 
 const TRUCK_MANDATORY_FIELDS = [
@@ -405,7 +437,6 @@ const TRUCK_MANDATORY_FIELDS = [
   { id: 'challanNo',     errId: 'err_challanNo' },
   { id: 'challanQty',    errId: 'err_challanQty' },
   { id: 'purchaseOrder', errId: 'err_purchaseOrder' },
-  { id: 'gatePassNo',    errId: 'err_gatePassNo' },
 ];
 const HAND_MANDATORY_FIELDS = [
   { id: 'gateInDate',     errId: 'err_gateInDate' },
@@ -416,8 +447,8 @@ const HAND_MANDATORY_FIELDS = [
   { id: 'challanNo',      errId: 'err_challanNo' },
   { id: 'challanQty',     errId: 'err_challanQty' },
   { id: 'purchaseOrder',  errId: 'err_purchaseOrder' },
-  { id: 'gatePassNo',     errId: 'err_gatePassNo' },
 ];
+// Gate Pass No (RTGP) intentionally not in either mandatory list -- optional field.
 
 function _getPoFlowType() {
   const dType  = document.querySelector('input[name="deliveryType"]:checked');
@@ -438,25 +469,30 @@ function onDeliveryTypeChange() {
 }
 
 function onPoAvailChange() {
-  const poAvail = document.querySelector('input[name="poAvail"]:checked').value;
-  const poEl    = document.getElementById('purchaseOrder');
+  const poAvail  = document.querySelector('input[name="poAvail"]:checked').value;
+  const poEl     = document.getElementById('purchaseOrder');
+  const poGroup  = document.getElementById('purchaseOrderGroup');
+  const poErr    = document.getElementById('err_purchaseOrder');
   if (poAvail === 'without_po') {
-    poEl.value       = '';
-    poEl.readOnly    = true;
-    poEl.placeholder = 'Without PO';
-    poEl.style.background = '#f5f5f5';
-    poEl.style.color      = '#888';
+    // Without PO: blank the value (rf_runner.py sends PURCHASE_ORDER as "" to
+    // the SAP bot whenever po_flow_type ends in _without_po) and hide the
+    // whole field -- there's nothing to fill in, so showing a greyed-out
+    // readonly box was just clutter. Clear any stale error state too, since
+    // validateGateIn() no longer checks this field in this scenario.
+    poEl.value = '';
+    if (poGroup) poGroup.style.display = 'none';
+    poEl.classList.remove('field-error');
+    if (poErr) poErr.classList.remove('show');
   } else {
-    poEl.readOnly    = false;
-    poEl.placeholder = '';
-    poEl.style.background = '';
-    poEl.style.color      = '';
+    if (poGroup) poGroup.style.display = '';
   }
 }
 
 function validateGateIn() {
   const dType    = document.querySelector('input[name="deliveryType"]:checked');
   const delivery = dType ? dType.value : 'truck';
+  const poAvail  = document.querySelector('input[name="poAvail"]:checked');
+  const isWithoutPo = poAvail ? poAvail.value === 'without_po' : false;
   const MANDATORY_FIELDS = (delivery === 'truck') ? TRUCK_MANDATORY_FIELDS : HAND_MANDATORY_FIELDS;
   let valid = true;
   [...TRUCK_MANDATORY_FIELDS, ...HAND_MANDATORY_FIELDS].forEach(f => {
@@ -466,6 +502,9 @@ function validateGateIn() {
     if (err) { err.classList.remove('show'); err.textContent = 'Required'; }
   });
   MANDATORY_FIELDS.forEach(f => {
+    // Purchase Order is hidden and intentionally blank for without_po --
+    // don't block submission on a field the user can't even see or fill in.
+    if (f.id === 'purchaseOrder' && isWithoutPo) return;
     const el  = document.getElementById(f.id);
     const err = document.getElementById(f.errId);
     if (el && !el.value.trim()) {
@@ -699,6 +738,91 @@ function _renderDriverDropdown(drivers) {
         (d.licence_number   ? 'Lic: ' + _escHtml(d.licence_number) : '') +
       '</div>';
     item.onclick = function() { _applyDriver(d); };
+    dd.appendChild(item);
+  });
+  dd.classList.add('show');
+}
+
+// ============================================================
+// VENDOR CODE LOOKUP (supplier_master, synced nightly by the
+// standalone VENDOR_MASTER_SYNC bot -- see database/schema_migration_v8.sql)
+//
+// There is no separate vendor-code field. Vendor Name shows the OCR'd name
+// by default; Fetch (or picking a type-ahead match) overwrites that SAME
+// field's value with the resolved SAP vendor code, since Gate In posts to
+// SAP through the existing VENDOR_NAME slot either way.
+// ============================================================
+let _vendorTypeaheadTimer = null;
+
+// suffix is '' for the truck-flow fields, 'Hand' for hand-delivery fields --
+// same vendorName id either way, just with/without the suffix, since only
+// one of the two sections is visible at a time.
+function fetchVendorCode(suffix) {
+  const nameEl = document.getElementById('vendorName' + suffix);
+  const name   = nameEl ? nameEl.value.trim() : '';
+  if (!name) { showToast('Enter Vendor Name first.', 'warning'); return; }
+  _searchVendorCandidates(name, suffix, /*isTypeahead=*/false);
+}
+
+function onVendorNameTypeahead(suffix) {
+  clearTimeout(_vendorTypeaheadTimer);
+  const nameEl = document.getElementById('vendorName' + suffix);
+  const name   = nameEl ? nameEl.value.trim() : '';
+  const dd = document.getElementById('vendorCodeDropdown' + suffix);
+  if (name.length < 3) { if (dd) dd.classList.remove('show'); return; }
+  _vendorTypeaheadTimer = setTimeout(() => {
+    _searchVendorCandidates(name, suffix, /*isTypeahead=*/true);
+  }, 400);
+}
+
+function _searchVendorCandidates(name, suffix, isTypeahead) {
+  fetch('/api/vendor_lookup?name=' + encodeURIComponent(name))
+    .then(r => r.json())
+    .then(data => {
+      if (!data.success) {
+        if (!isTypeahead) showToast(data.error || 'Vendor lookup failed', 'error');
+        return;
+      }
+      if (data.count === 0) {
+        if (!isTypeahead) showToast('No matching vendor found in supplier master.', 'warning');
+        const dd = document.getElementById('vendorCodeDropdown' + suffix);
+        if (dd) dd.classList.remove('show');
+        return;
+      }
+      _renderVendorCodeDropdown(data.candidates, suffix);
+    })
+    .catch(err => {
+      if (!isTypeahead) showToast('Vendor lookup error: ' + err.message, 'error');
+    });
+}
+
+function _applyVendorCode(candidate, suffix) {
+  // Overwrites the Vendor Name field itself with the resolved SAP vendor
+  // code -- there's no separate code field. If the wrong line gets picked
+  // by mistake, Vendor Name is still a plain editable text input: just type
+  // over it, or hit Fetch again to reopen this list.
+  const nameEl = document.getElementById('vendorName' + suffix);
+  if (nameEl) nameEl.value = candidate.supplier || '';
+  const dd = document.getElementById('vendorCodeDropdown' + suffix);
+  if (dd) dd.classList.remove('show');
+}
+
+function _renderVendorCodeDropdown(candidates, suffix) {
+  const dd = document.getElementById('vendorCodeDropdown' + suffix);
+  if (!dd) return;
+  dd.innerHTML = `<div class="po-dropdown-header">
+    <span>${candidates.length} Match(es) Found</span>
+    <span onclick="document.getElementById('vendorCodeDropdown${suffix}').classList.remove('show')"
+    style="cursor:pointer;color:#888;font-size:14px;">✕</span></div>`;
+  candidates.forEach(function(c) {
+    const item = document.createElement('div');
+    item.className = 'driver-dropdown-item';
+    const displayName = c.name_1 || c.name || '(no name)';
+    const location = [c.city, c.district].filter(Boolean).join(', ');
+    item.innerHTML =
+      '<div class="drv-name">' + _escHtml(displayName) + ' &nbsp;<span style="color:#888;font-weight:400;">(' + _escHtml(c.supplier) + ')</span></div>' +
+      '<div class="drv-meta">' + (location ? _escHtml(location) : 'No location on file') + '</div>';
+    item.onclick = function() { _applyVendorCode(c, suffix); };
     dd.appendChild(item);
   });
   dd.classList.add('show');

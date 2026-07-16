@@ -147,15 +147,16 @@
     <div class="bulk-actions" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 30px;">
       <h4 style="color: #333; font-size: 18px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #e0e0e0;">Bulk Actions</h4>
       <div class="action-buttons" style="display: flex; gap: 16px; flex-wrap: wrap;">
-        <button onclick="downloadAllDocuments()" 
+        <button onclick="downloadAllDocuments({{ history_id or 'null' }})"
                 style="padding: 12px 24px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); color: white; box-shadow: 0 4px 12px rgba(30, 92, 168, 0.3);">
           📥 Download All Documents
         </button>
-        <button onclick="deleteAllDocuments()" 
+        <button onclick="deleteAllDocuments({{ history_id or 'null' }}, this)"
                 style="padding: 12px 24px; border: 2px solid #ff4757; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: #fff5f5; color: #ff4757;">
           🗑️ Delete All Documents
         </button>
       </div>
+      <div id="bulkDeleteStatus" style="margin-top:12px; font-size:13px; font-weight:500; display:none;"></div>
     </div>
     
   {% else %}
@@ -236,8 +237,12 @@ function cancelDelete(btn) {
   btn.closest('.inline-confirm').classList.remove('show');
 }
 
-function downloadAllDocuments() {
-  fetch('/download_all_documents')
+function downloadAllDocuments(historyId) {
+  if (!historyId) {
+    alert('No record loaded — open a record first.');
+    return;
+  }
+  fetch(`/download_all_documents/${historyId}`)
     .then(response => {
       if (!response.ok) throw new Error('Download failed');
       return response.blob();
@@ -253,5 +258,49 @@ function downloadAllDocuments() {
       window.URL.revokeObjectURL(url);
     })
     .catch(err => console.error('Download error:', err));
+}
+
+function deleteAllDocuments(historyId, btn) {
+  if (!historyId) {
+    alert('No record loaded — open a record first.');
+    return;
+  }
+  if (!confirm('Delete all documents for this record? This cannot be undone.')) {
+    return;
+  }
+  const statusEl = document.getElementById('bulkDeleteStatus');
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳ Deleting...';
+
+  fetch(`/delete_all_documents/${historyId}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        document.querySelectorAll('.document-card').forEach(card => card.remove());
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✅ All documents deleted.';
+        }
+      } else {
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          statusEl.style.color = '#e74c3c';
+          statusEl.textContent = '❌ ' + (data.error || 'Delete failed');
+        }
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    })
+    .catch(() => {
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = '#e74c3c';
+        statusEl.textContent = '❌ Network error. Please try again.';
+      }
+      btn.disabled = false;
+      btn.textContent = originalText;
+    });
 }
 </script>
