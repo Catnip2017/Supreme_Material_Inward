@@ -29,8 +29,13 @@ class Config:
     DB_NAME: str = os.getenv("DB_NAME", "material_inward")
     DB_USER: str = os.getenv("DB_USER", "")
     DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
-    DB_MIN_CONNECTIONS: int = 2
-    DB_MAX_CONNECTIONS: int = 10
+    # Raised from 2/10: a single /view/<id> page load alone checks out 5
+    # sequential connections (history + gate-in + migo + miro + PO line items),
+    # plus continuous polling from every open tab (/api/gst/status every 5s,
+    # /api/queue_status every 3s) and the background RF queue worker -- with
+    # 20 concurrent users the old cap of 10 left very little headroom.
+    DB_MIN_CONNECTIONS: int = 5
+    DB_MAX_CONNECTIONS: int = 25
 
     # --- SAP ---
     SAP_LOGON_PATH: str = os.getenv("SAP_LOGON_PATH", r"C:\Program Files\SAP\FrontEnd\SAPGUI\saplogon.exe")

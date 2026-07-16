@@ -109,10 +109,17 @@ def get_all_history() -> list:
     sql = """
         SELECT
             h.id,
-            COALESCE(h.invoice_number, inv.invoice_number)   AS invoice_number,
-            COALESCE(h.ewaybill_number, eway.ewaybill_number) AS ewaybill_number,
-            COALESCE(h.lr_number, lr.lr_number)              AS lr_number,
-            COALESCE(h.po_number, inv.po_number)             AS po_number,
+            -- Prefer the live invoice_data/ewaybill_data/lr_data value over
+            -- history's own denormalized copy. h.invoice_number/h.po_number
+            -- get set once from the mail subject line at ingestion time
+            -- (mail_poller.py) and are never updated again -- if the user
+            -- later corrects the number in the Extracted Data tab, only
+            -- invoice_data.invoice_number changes, so preferring h.* here
+            -- would keep showing the original, possibly wrong, value forever.
+            COALESCE(inv.invoice_number, h.invoice_number)   AS invoice_number,
+            COALESCE(eway.ewaybill_number, h.ewaybill_number) AS ewaybill_number,
+            COALESCE(lr.lr_number, h.lr_number)              AS lr_number,
+            COALESCE(inv.po_number, h.po_number)             AS po_number,
             h.mail_subject,
             h.gate_in,
             h.migo_103,
@@ -547,10 +554,11 @@ def get_history_search(
             COALESCE(eway.ewaybill_number, h.ewaybill_number, '') ILIKE %s OR
             COALESCE(lr.lr_number, h.lr_number, '') ILIKE %s OR
             COALESCE(inv.po_number, h.po_number, '') ILIKE %s OR
-            COALESCE(h.gate_in_number, '') ILIKE %s
+            COALESCE(h.gate_in_number, '') ILIKE %s OR
+            COALESCE(gatein.vendor_name, inv.seller_name, '') ILIKE %s
         )""")
         like = f"%{search}%"
-        params.extend([like, like, like, like, like])
+        params.extend([like, like, like, like, like, like])
 
     if status == "pending":
         conditions.append("h.gate_in = 0")
@@ -559,20 +567,25 @@ def get_history_search(
     elif status == "completed":
         conditions.append("h.miro = 1")
 
+    # date_from/date_to now carry full datetime-local values (e.g.
+    # "2026-07-16T14:30"), not date-only strings -- compared directly
+    # against created_at (a timestamp) instead of casting to ::date, so the
+    # time portion the user picks is actually honored rather than discarded.
     if date_from:
-        conditions.append("h.created_at::date >= %s")
+        conditions.append("h.created_at >= %s")
         params.append(date_from)
     if date_to:
-        conditions.append("h.created_at::date <= %s")
+        conditions.append("h.created_at <= %s")
         params.append(date_to)
 
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     base_sql = f"""
         FROM history h
-        LEFT JOIN invoice_data  inv  ON inv.id  = h.id
-        LEFT JOIN ewaybill_data eway ON eway.id = h.id
-        LEFT JOIN lr_data       lr   ON lr.id   = h.id
+        LEFT JOIN invoice_data     inv    ON inv.id  = h.id
+        LEFT JOIN ewaybill_data    eway   ON eway.id = h.id
+        LEFT JOIN lr_data         lr     ON lr.id   = h.id
+        LEFT JOIN gate_in_entries gatein ON gatein.history_id = h.id
         {where_clause}
     """
 
@@ -580,14 +593,20 @@ def get_history_search(
     data_sql = f"""
         SELECT
             h.id,
-            COALESCE(h.invoice_number, inv.invoice_number)    AS invoice_number,
-            COALESCE(h.ewaybill_number, eway.ewaybill_number) AS ewaybill_number,
-            COALESCE(h.lr_number, lr.lr_number)               AS lr_number,
-            COALESCE(h.po_number, inv.po_number)              AS po_number,
+            -- See get_all_history() for why inv./eway./lr. come first: they
+            -- reflect any post-ingestion corrections made in the Extracted
+            -- Data tab, whereas h.* is a one-time snapshot from mail
+            -- ingestion that's never updated again.
+            COALESCE(inv.invoice_number, h.invoice_number)    AS invoice_number,
+            COALESCE(gatein.vendor_name, inv.seller_name)     AS vendor_name,
+            COALESCE(eway.ewaybill_number, h.ewaybill_number) AS ewaybill_number,
+            COALESCE(lr.lr_number, h.lr_number)               AS lr_number,
+            COALESCE(inv.po_number, h.po_number)              AS po_number,
             h.gate_in, h.migo_103, h.migo_105, h.miro,
             h.gate_in_number, h.material_doc_number,
             h.approval_status, h.ocr_status,
             h.created_at,
+            h.gatein_done_at, h.migo_103_done_at, h.migo_105_done_at, h.miro_done_at,
             CASE
                 WHEN h.miro = 1     THEN 'MIRO Done'
                 WHEN h.migo_105 = 1 THEN 'MIGO 105 Done'
@@ -611,9 +630,14 @@ def get_history_search(
                 cur.execute(data_sql, params + [per_page, offset])
                 records = [dict(r) for r in cur.fetchall()]
 
+                timestamp_cols = (
+                    "created_at", "gatein_done_at",
+                    "migo_103_done_at", "migo_105_done_at", "miro_done_at"
+                )
                 for r in records:
-                    if r.get("created_at") and hasattr(r["created_at"], "isoformat"):
-                        r["created_at"] = r["created_at"].isoformat()
+                    for col in timestamp_cols:
+                        if r.get(col) and hasattr(r[col], "isoformat"):
+                            r[col] = r[col].isoformat()
 
                 return {
                     "records": records,
@@ -732,8 +756,8 @@ def get_pending_dms_records() -> list:
             h.consolidated_doc_path,
             h.dms_status,
             h.migo_103_done_at,
-            COALESCE(h.invoice_number, inv.invoice_number) AS invoice_number,
-            COALESCE(h.po_number, inv.po_number)           AS po_number,
+            COALESCE(inv.invoice_number, h.invoice_number) AS invoice_number,
+            COALESCE(inv.po_number, h.po_number)           AS po_number,
             inv.seller_name,
             inv.invoice_date,
             inv.grand_total

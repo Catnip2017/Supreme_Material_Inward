@@ -18,6 +18,9 @@ import json
 import threading
 import time
 import re
+import hashlib
+import zipfile
+import io
 from datetime import datetime, date
 from functools import wraps
 
@@ -41,6 +44,7 @@ from database.db_operations import (
     update_invoice_irn
 )
 from database.vehicle_master_operations import get_drivers_by_truck
+from database.supplier_operations import search_suppliers
 from database.gatein_operations import (
     upsert_gatein_entry, get_gatein_entry, map_ocr_to_gatein
 )
@@ -84,6 +88,13 @@ app.config["SESSION_COOKIE_SECURE"] = True
 
 for folder in [config.UPLOAD_FOLDER, config.UPLOAD_PROCESSED_FOLDER, config.UPLOAD_FAILED_FOLDER]:
     os.makedirs(folder, exist_ok=True)
+
+# Thumbnail cache — separate sibling folder, not scanned by _find_file() since
+# that only checks UPLOAD_FOLDER/UPLOAD_PROCESSED_FOLDER/UPLOAD_FAILED_FOLDER
+# directly. Rendered previews are cached here keyed by filename+mtime so a
+# repeat page view doesn't re-rasterize the PDF every time.
+THUMBNAIL_CACHE_FOLDER = os.path.join(config.UPLOAD_FOLDER, "_thumb_cache")
+os.makedirs(THUMBNAIL_CACHE_FOLDER, exist_ok=True)
 
 # ============================================================
 # STARTUP
@@ -1038,6 +1049,26 @@ def vehicle_lookup(truck_number):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/vendor_lookup")
+@api_login_required
+def vendor_lookup():
+    """
+    Fuzzy-search supplier_master by name. Used both by the Gate In tab's
+    'Fetch Vendor Code' button (called once, with whatever's currently in
+    Vendor Name) and by its live type-ahead search (called repeatedly,
+    debounced, as the user types).
+    """
+    query = request.args.get("name", "").strip()
+    if not query:
+        return jsonify({"success": False, "error": "name required"}), 400
+    try:
+        candidates = search_suppliers(query, limit=10)
+        return jsonify({"success": True, "candidates": candidates, "count": len(candidates)})
+    except Exception as e:
+        logger.error(f"vendor_lookup error name={query}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/set_po_flow_type/<int:history_id>", methods=["POST"])
 @api_login_required
 def api_set_po_flow_type(history_id):
@@ -1233,6 +1264,49 @@ def delete_user_web():
 # DOCUMENT FILE SERVING
 # ============================================================
 
+@app.route("/download_all_documents/<int:history_id>")
+@login_required
+def download_all_documents(history_id):
+    """
+    Zips whichever of invoice/e-way bill/LR files exist for this record and
+    sends the archive. The 'Download All Documents' button previously called
+    /download_all_documents (no history_id, no matching route at all --
+    every click was a 404). This is the first real implementation.
+    """
+    details = get_history_details_by_id(history_id)
+    if not details.get("history"):
+        return "Record not found", 404
+
+    doc_sources = {
+        "invoice":  details.get("invoice_data"),
+        "ewaybill": details.get("ewaybill_data"),
+        "lr":       details.get("lr_data"),
+    }
+
+    buf = io.BytesIO()
+    added_any = False
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for doctype, data in doc_sources.items():
+            filename = (data or {}).get("filename")
+            if not filename:
+                continue
+            file_path = _find_file(filename)
+            if file_path:
+                zf.write(file_path, arcname=filename)
+                added_any = True
+
+    if not added_any:
+        return "No documents available for this record", 404
+
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"documents-history-{history_id}.zip"
+    )
+
+
 @app.route("/view_document/<doctype>/<filename>")
 @login_required
 def view_document(doctype, filename):
@@ -1257,13 +1331,32 @@ def get_document_thumbnail(doctype, filename):
     file_path = _find_file(filename)
     if not file_path:
         return "File not found", 404
+
+    # Cache key includes mtime so a re-uploaded/re-run-OCR file (same name,
+    # new content) invalidates automatically instead of serving a stale image.
+    try:
+        mtime = int(os.path.getmtime(file_path))
+    except OSError:
+        mtime = 0
+    cache_key = hashlib.sha1(f"{filename}:{mtime}".encode("utf-8")).hexdigest()
+    cache_path = os.path.join(THUMBNAIL_CACHE_FOLDER, f"{cache_key}.jpg")
+
+    if os.path.exists(cache_path):
+        return send_file(cache_path, mimetype="image/jpeg")
+
     try:
         import fitz
         doc = fitz.open(file_path)
-        pix = doc[0].get_pixmap(dpi=150)
-        img = pix.tobytes("png")
+        # The preview box (documents.html) is only ~250px tall — 150 DPI was
+        # rendering a full-resolution page (1-1.6MB PNG) for that, on every
+        # single request, with no caching. 72 DPI + JPEG is plenty for a
+        # thumbnail and cuts payload size roughly 15-20x.
+        pix = doc[0].get_pixmap(dpi=72)
+        img = pix.tobytes("jpg", jpg_quality=70)
         doc.close()
-        return Response(img, mimetype="image/png")
+        with open(cache_path, "wb") as f:
+            f.write(img)
+        return Response(img, mimetype="image/jpeg")
     except Exception as e:
         logger.error(f"Thumbnail error {filename}: {e}")
         return str(e), 500
@@ -1296,6 +1389,50 @@ def delete_document(doctype, filename):
             logger.error(f"Failed to clear DB data: {e}")
 
     return jsonify({"success": True, "message": "Document deleted"})
+
+
+@app.route("/delete_all_documents/<int:history_id>", methods=["DELETE"])
+@api_login_required
+def delete_all_documents(history_id):
+    """
+    'Delete All Documents' button called deleteAllDocuments() with no
+    matching JS function and no backend route -- clicking it did nothing
+    but throw a console ReferenceError. First real implementation.
+    """
+    details = get_history_details_by_id(history_id)
+    if not details.get("history"):
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    doc_sources = {
+        "invoice":  details.get("invoice_data"),
+        "ewaybill": details.get("ewaybill_data"),
+        "lr":       details.get("lr_data"),
+    }
+
+    deleted_any = False
+    for doctype, data in doc_sources.items():
+        filename = (data or {}).get("filename")
+        if not filename:
+            continue
+        file_path = _find_file(filename)
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                deleted_any = True
+            except Exception as e:
+                logger.error(f"Failed to delete file {filename}: {e}")
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM invoice_data WHERE id = %s", (history_id,))
+                cur.execute("DELETE FROM ewaybill_data WHERE id = %s", (history_id,))
+                cur.execute("DELETE FROM lr_data WHERE id = %s", (history_id,))
+    except Exception as e:
+        logger.error(f"Failed to clear DB data for history_id={history_id}: {e}")
+        return jsonify({"success": False, "error": "Files removed but DB cleanup failed"}), 500
+
+    return jsonify({"success": True, "message": "All documents deleted", "deleted": deleted_any})
 
 
 # ============================================================
