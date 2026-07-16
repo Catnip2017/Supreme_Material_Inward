@@ -320,7 +320,7 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             company_pan, payment_terms, amount_in_words,
             total_taxable_amount, cgst_rate, cgst_amount,
             sgst_rate, sgst_amount, igst_rate, igst_amount,
-            total_tax_amount, total_amount, grand_total, hsn_details
+            total_tax_amount, total_amount, grand_total, hsn_details, irn
         ) VALUES (
             %s, %s, %s, %s, %s,
             %s, %s, %s,
@@ -330,7 +330,7 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             %s, %s, %s,
             %s, %s, %s,
             %s, %s, %s, %s,
-            %s, %s, %s, %s
+            %s, %s, %s, %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
             filename = EXCLUDED.filename,
@@ -375,8 +375,17 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
         data.get("company_pan"), data.get("payment_terms"), data.get("amount_in_words"),
         data.get("total_taxable_amount"), data.get("cgst_rate"), data.get("cgst_amount"),
         data.get("sgst_rate"), data.get("sgst_amount"), data.get("igst_rate"), data.get("igst_amount"),
-        data.get("total_tax_amount"), data.get("total_amount"), data.get("grand_total"), hsn
+        data.get("total_tax_amount"), data.get("total_amount"), data.get("grand_total"), hsn,
+        data.get("irn")
     )
+    # NOTE: "irn" is in the INSERT column list (so the OCR-extracted value is
+    # stored the first time this row is created) but deliberately NOT in the
+    # ON CONFLICT DO UPDATE SET list above. IRN is only ever displayed/edited
+    # on the GST Approval tab (see update_invoice_irn() below), never on the
+    # Extracted Data > Invoice tab -- that tab's save payload never includes
+    # "irn" at all, so if it were included in DO UPDATE SET, every routine
+    # Invoice-tab save would silently overwrite irn back to NULL using
+    # data.get("irn") = None from a payload that was never meant to carry it.
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -385,6 +394,30 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
                 return True
     except Exception as e:
         logger.error(f"Failed to save invoice for history_id {history_id}: {e}")
+        return False
+
+
+def update_invoice_irn(history_id: int, irn: str) -> bool:
+    """
+    Targeted update of ONLY invoice_data.irn -- used by the GST Approval
+    tab's IRN save action. Deliberately does not touch any other invoice
+    column, unlike save_invoice_to_db() which rewrites the whole row.
+    Requires the row to already exist (created by the initial OCR save).
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE invoice_data SET irn = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (irn, history_id)
+                )
+                if cur.rowcount == 0:
+                    logger.warning(f"update_invoice_irn: no invoice_data row for history_id {history_id}")
+                    return False
+                logger.info(f"IRN saved for history_id {history_id}")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to save IRN for history_id {history_id}: {e}")
         return False
 
 

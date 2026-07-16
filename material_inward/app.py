@@ -37,7 +37,8 @@ from database.db_operations import (
     get_history_search, get_today_counts,
     set_approval_status, set_hold_status,
     set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
-    set_dms_status, set_po_flow_type
+    set_dms_status, set_po_flow_type,
+    update_invoice_irn
 )
 from database.vehicle_master_operations import get_drivers_by_truck
 from database.gatein_operations import (
@@ -1380,6 +1381,34 @@ def api_gst_hold(history_id):
         return jsonify({"success": False, "error": "DB update failed"}), 500
 
     return jsonify({"success": True, "message": "GST placed on hold", "held_by": user})
+
+
+@app.route("/api/gst/save_irn/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_gst_save_irn(history_id):
+    """
+    Save an edited IRN (Invoice Reference Number) from the GST Approval
+    tab. Targeted update of invoice_data.irn only -- see
+    database.db_operations.update_invoice_irn(). Editable until GST
+    approval_status becomes 'approved' (server-side lock, mirrors the
+    client-side check that also blocks the Approve button on an
+    unsaved edit).
+    """
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    row = get_gst_approval(history_id)
+    if row and row.get("approval_status") == "approved":
+        return jsonify({"success": False, "error": "GST already approved — IRN is locked."}), 403
+
+    body = request.get_json(silent=True) or {}
+    irn = (body.get("irn") or "").strip()
+
+    if not update_invoice_irn(history_id, irn):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "message": "IRN saved"})
 
 
 @app.route("/api/gst/rerun/<int:history_id>", methods=["POST"])

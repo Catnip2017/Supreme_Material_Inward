@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS invoice_data (
     total_amount            TEXT,
     grand_total             TEXT,
     hsn_details             JSONB,
+    irn                     TEXT,
     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
