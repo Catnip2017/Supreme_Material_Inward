@@ -210,8 +210,10 @@
           </div>
           <div class="dropdown-menu" id="userDropdown">
             <a href="/history"><i class="fas fa-history"></i> History</a>
-            {% if is_admin %}
+            {% if is_superadmin or has_role('compliance') or allow_user_upload %}
             <a href="/new_entry"><i class="fas fa-plus"></i> New Entry</a>
+            {% endif %}
+            {% if is_superadmin %}
             <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
             {% endif %}
             <a href="/logout" style="color:#e74c3c;"><i class="fas fa-sign-out-alt"></i> Logout</a>
@@ -222,53 +224,80 @@
 
     {% if from_history %}
     <!-- NAV TABS -->
+    <!-- Each tab is gated to the role(s) that own it (see _has_role() in
+         app.py) on top of the existing system-wide is_step_enabled()
+         toggle. Documents + GST Approval are Compliance Officer/
+         SuperAdmin only; Extracted Data is visible to Compliance
+         Officer/SuperAdmin (full edit) or a staggered read-only reveal
+         to Gate Security/Stores/Quality/Accounts Payable as the record's
+         workflow progresses (see can_view_extracted/can_edit_extracted). -->
     <div class="nav-tabs">
-      <button class="nav-tab active" onclick="switchTab('documents')">Documents</button>
-      <button class="nav-tab" onclick="switchTab('extracted')">Extracted Data</button>
-      <button class="nav-tab" onclick="switchTab('gstApproval')">GST Approval</button>
-      {% if is_step_enabled('gate_in') %}
-      <button class="nav-tab" onclick="switchTab('gateIn')">Gate In</button>
+      {% if can_view_documents %}
+      <button class="nav-tab{% if default_tab_id == 'documents' %} active{% endif %}" onclick="switchTab('documents')">Documents</button>
       {% endif %}
-      {% if is_step_enabled('migo_103') %}
-      <button class="nav-tab" onclick="switchTab('migo103')">MIGO 103</button>
+      {% if can_view_extracted %}
+      <button class="nav-tab{% if default_tab_id == 'extracted' %} active{% endif %}" onclick="switchTab('extracted')">Extracted Data</button>
       {% endif %}
-      {% if is_step_enabled('migo_105') %}
-      <button class="nav-tab" onclick="switchTab('migo105')">MIGO 105</button>
+      {% if can_view_gst %}
+      <button class="nav-tab{% if default_tab_id == 'gstApproval' %} active{% endif %}" onclick="switchTab('gstApproval')">GST Approval</button>
       {% endif %}
-      {% if is_step_enabled('miro') %}
-      <button class="nav-tab" onclick="switchTab('miro')">MIRO</button>
+      {% if can_view_gate_in %}
+      <button class="nav-tab{% if default_tab_id == 'gateIn' %} active{% endif %}" onclick="switchTab('gateIn')">Gate In</button>
       {% endif %}
-      {% if is_step_enabled('gst') %}
-      <button class="nav-tab" onclick="switchTab('gst')">GST Report</button>
+      {% if can_view_migo_103 %}
+      <button class="nav-tab{% if default_tab_id == 'migo103' %} active{% endif %}" onclick="switchTab('migo103')">MIGO 103</button>
+      {% endif %}
+      {% if can_view_migo_105 %}
+      <button class="nav-tab{% if default_tab_id == 'migo105' %} active{% endif %}" onclick="switchTab('migo105')">MIGO 105</button>
+      {% endif %}
+      {% if can_view_miro %}
+      <button class="nav-tab{% if default_tab_id == 'miro' %} active{% endif %}" onclick="switchTab('miro')">MIRO</button>
+      {% endif %}
+      {% if is_step_enabled('gst') and (is_superadmin or has_role('compliance')) %}
+      <button class="nav-tab{% if default_tab_id == 'gst' %} active{% endif %}" onclick="switchTab('gst')">GST Report</button>
       {% endif %}
     </div>
 
     <div class="tab-content-wrapper">
-    <div id="documentsTab" class="tab-pane active">
+    {% if can_view_documents %}
+    <div id="documentsTab" class="tab-pane{% if default_tab_id == 'documents' %} active{% endif %}">
       {% include 'tabs/documents.html' %}
     </div>
-    <div id="extractedTab" class="tab-pane">
+    {% endif %}
+    {% if can_view_extracted %}
+    <div id="extractedTab" class="tab-pane{% if default_tab_id == 'extracted' %} active{% endif %}">
       {% include 'tabs/extracted_data.html' %}
     </div>
-    <div id="gstApprovalTab" class="tab-pane">
+    {% endif %}
+    {% if can_view_gst %}
+    <div id="gstApprovalTab" class="tab-pane{% if default_tab_id == 'gstApproval' %} active{% endif %}">
       {% include 'tabs/gst_approval.html' %}
     </div>
-      {% if is_step_enabled('gate_in') %}
-      <div id="gateInTab" class="tab-pane">{% include 'tabs/gate_in.html' %}</div>
+    {% endif %}
+      {% if can_view_gate_in %}
+      <div id="gateInTab" class="tab-pane{% if default_tab_id == 'gateIn' %} active{% endif %}">{% include 'tabs/gate_in.html' %}</div>
       {% endif %}
-      {% if is_step_enabled('migo_103') %}
-      <div id="migo103Tab" class="tab-pane">{% include 'tabs/migo_103.html' %}</div>
+      {% if can_view_migo_103 %}
+      <div id="migo103Tab" class="tab-pane{% if default_tab_id == 'migo103' %} active{% endif %}">{% include 'tabs/migo_103.html' %}</div>
       {% endif %}
-      {% if is_step_enabled('migo_105') %}
-      <div id="migo105Tab" class="tab-pane">{% include 'tabs/migo_105.html' %}</div>
+      {% if can_view_migo_105 %}
+      <div id="migo105Tab" class="tab-pane{% if default_tab_id == 'migo105' %} active{% endif %}">{% include 'tabs/migo_105.html' %}</div>
       {% endif %}
-      {% if is_step_enabled('miro') %}
-      <div id="miroTab" class="tab-pane">{% include 'tabs/miro.html' %}</div>
+      {% if can_view_miro %}
+      <div id="miroTab" class="tab-pane{% if default_tab_id == 'miro' %} active{% endif %}">{% include 'tabs/miro.html' %}</div>
       {% endif %}
-      {% if is_step_enabled('gst') %}
-      <div id="gstTab" class="tab-pane">{% include 'tabs/gst_report.html' %}</div>
+      {% if is_step_enabled('gst') and (is_superadmin or has_role('compliance')) %}
+      <div id="gstTab" class="tab-pane{% if default_tab_id == 'gst' %} active{% endif %}">{% include 'tabs/gst_report.html' %}</div>
       {% endif %}
     </div>
+
+    {% if not default_tab_id %}
+    <div style="max-width:600px;margin:60px auto;text-align:center;background:white;border-radius:12px;padding:40px;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+      <div style="font-size:40px;margin-bottom:16px;">🔒</div>
+      <div style="font-size:16px;color:#2c3e50;font-weight:600;margin-bottom:8px;">No access assigned yet</div>
+      <div style="font-size:14px;color:#777;">Your account doesn't have any workflow role assigned. Contact your SuperAdmin to get access to a tab.</div>
+    </div>
+    {% endif %}
 
     {% elif is_admin or allow_user_upload %}
     <!-- UPLOAD PAGE -->

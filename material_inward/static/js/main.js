@@ -29,6 +29,35 @@ function switchTab(tabName) {
   }
 }
 
+// Programmatic tab switch — for code-triggered navigation (e.g. auto-
+// advancing from Extracted Data to GST Approval once the review/approve
+// sequence finishes) where there's no click `event` to read the nav
+// button from. switchTab() above relies on the global `event` object,
+// which is only reliably set during a real click handler.
+function goToTabProgrammatic(tabName) {
+  document.querySelectorAll('.tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+
+  const selectedTab = document.getElementById(tabName + 'Tab');
+  if (selectedTab) {
+    selectedTab.classList.add('active');
+  }
+
+  document.querySelectorAll('.nav-tab').forEach(btn => {
+    if (btn.getAttribute('onclick') === `switchTab('${tabName}')`) {
+      btn.classList.add('active');
+    }
+  });
+
+  if (typeof window._onTabSwitch === 'function') {
+    window._onTabSwitch(tabName);
+  }
+}
+
 // File upload handling
 let uploadedFiles = {
   invoice: null,

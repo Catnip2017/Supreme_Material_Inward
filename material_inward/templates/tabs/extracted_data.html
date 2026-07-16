@@ -144,16 +144,34 @@
   <h3>📊 Extracted Data — Verify & Approve</h3>
 
   {% set status = (history.approval_status if history else 'pending') or 'pending' %}
-  {% set is_approved = status == 'approved' %}
+  {# can_edit_extracted comes from app.py's _extracted_data_view_state() --
+     False for every downstream role (Gate Security/Stores/Quality/
+     Accounts Payable) viewing this record read-only, and for a
+     view-only SuperAdmin. Folding it into is_approved reuses every
+     existing {% if is_approved %}disabled{% endif %} attribute below,
+     so downstream viewers get the same locked rendering as an approved
+     record without touching each field individually. #}
+  {% set can_edit_extracted = can_edit_extracted if can_edit_extracted is defined else true %}
+  {% set is_approved = (status == 'approved') or not can_edit_extracted %}
+
+  {# Sequential Invoice -> E-way -> LR -> GST Approval flow. doc_order only
+     lists whichever of the three documents actually exist for this record,
+     so a record missing (say) LR naturally skips it -- E-way becomes the
+     final step and shows the real Approve button instead of "Save & Next".
+     Nothing here is a new approval state: Invoice/E-way "Approve" clicks
+     are really just "Save & Next" (save that section, advance the sub-tab)
+     -- the one real approval (history.approval_status) still only happens
+     on the last present document, exactly as before this change. #}
+  {% set doc_order = [] %}
+  {% if invoice_data %}{% set _ = doc_order.append('invoice') %}{% endif %}
+  {% if ewaybill_data %}{% set _ = doc_order.append('ewaybill') %}{% endif %}
+  {% if lr_data %}{% set _ = doc_order.append('lr') %}{% endif %}
+  {% set last_doc = doc_order[-1] if doc_order else none %}
 
   <!-- Approval status banner -->
   {% if status == 'pending' %}
   <div class="approval-banner pending">
-    <div>⏳ <strong>Pending Verification</strong> — Review extracted fields below, edit if needed, then approve. GST Verification is also required before Gate In.</div>
-    <div class="approval-actions">
-      <button class="btn-hold" onclick="openHoldModal()">⏸ Hold</button>
-      <button class="btn-approve" onclick="approveRecord()">✓ Approve</button>
-    </div>
+    <div>⏳ <strong>Pending Verification</strong> — Review Invoice, then E-Way Bill, then LR below (each "Save &amp; Next" saves that section and moves you forward). Approve appears on the last section once all three are reviewed.</div>
   </div>
   {% elif status == 'approved' %}
   <div class="approval-banner approved">
@@ -168,9 +186,17 @@
     <div>
       ⏸ <strong>On Hold</strong> by {{ history.approval_by }}: {{ history.hold_reason or 'No reason given' }}
     </div>
+    {% if can_edit_extracted %}
     <div class="approval-actions">
       <button class="btn-approve" onclick="approveRecord()">✓ Approve</button>
     </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if history and not can_edit_extracted %}
+  <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#4a5568;">
+    👁 <strong>Read-only</strong> — this data has been validated and approved by the Compliance Officer. Fields are locked for your role.
   </div>
   {% endif %}
 
@@ -199,7 +225,9 @@
         </div>
         {% endif %}
       </div>
+      {% if can_edit_extracted %}
       <button class="btn-rerun-ocr" onclick="rerunOCR()">🔄 Re-run OCR</button>
+      {% endif %}
     </div>
   </div>
   {% endif %}
@@ -448,8 +476,17 @@
 
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
           {% if not is_approved %}
+            {% if last_doc == 'invoice' %}
           <button class="btn-save-section" onclick="saveExtractedInvoice()">💾 Save Invoice Changes</button>
           <span class="save-status" id="invSaveStatus"></span>
+              {% if can_edit_extracted %}
+          <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
+          <button class="btn-approve" onclick="approveRecord()" style="margin-left:6px;">✓ Approve</button>
+              {% endif %}
+            {% else %}
+          <button class="btn-save-section" onclick="saveAndNext('invoice')">💾 Save &amp; Next</button>
+          <span class="save-status" id="invSaveStatus"></span>
+            {% endif %}
           {% endif %}
           {% if invoice_data.get('filename') %}
           <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data['filename']) }}" target="_blank"
@@ -480,7 +517,7 @@
               <input class="editable-input" id="eway_generated_date" type="date" value="{{ ewaybill_data.get('generated_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
-              <div class="field-label">Validity Date</div>
+              <div class="field-label">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;font-weight:700;">* Validity Date Expired</span>{% endif %}</div>
               <input class="editable-input{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="date" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
@@ -548,8 +585,17 @@
 
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
           {% if not is_approved %}
+            {% if last_doc == 'ewaybill' %}
           <button class="btn-save-section" onclick="saveExtractedEway()">💾 Save E-Way Bill Changes</button>
           <span class="save-status" id="ewaySaveStatus"></span>
+              {% if can_edit_extracted %}
+          <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
+          <button class="btn-approve" onclick="approveRecord()" style="margin-left:6px;">✓ Approve</button>
+              {% endif %}
+            {% else %}
+          <button class="btn-save-section" onclick="saveAndNext('ewaybill')">💾 Save &amp; Next</button>
+          <span class="save-status" id="ewaySaveStatus"></span>
+            {% endif %}
           {% endif %}
           {% if ewaybill_data.get('filename') %}
           <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) }}" target="_blank"
@@ -640,8 +686,17 @@
 
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
           {% if not is_approved %}
+            {% if last_doc == 'lr' %}
           <button class="btn-save-section" onclick="saveExtractedLr()">💾 Save LR Changes</button>
           <span class="save-status" id="lrSaveStatus"></span>
+              {% if can_edit_extracted %}
+          <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
+          <button class="btn-approve" onclick="approveRecord()" style="margin-left:6px;">✓ Approve</button>
+              {% endif %}
+            {% else %}
+          <button class="btn-save-section" onclick="saveAndNext('lr')">💾 Save &amp; Next</button>
+          <span class="save-status" id="lrSaveStatus"></span>
+            {% endif %}
           {% endif %}
           {% if lr_data.get('filename') %}
           <a href="{{ url_for('view_document', doctype='lr', filename=lr_data['filename']) }}" target="_blank"
@@ -691,6 +746,13 @@
 <script>
 const HISTORY_ID = {{ history_id|tojson }};
 const IS_APPROVED = {{ 'true' if is_approved else 'false' }};
+// Sequential Invoice -> E-way -> LR flow -- only lists documents that
+// actually exist for this record (see doc_order in the template above).
+const DOC_ORDER = {{ doc_order|tojson }};
+function _nextDocStep(current) {
+  const i = DOC_ORDER.indexOf(current);
+  return (i >= 0 && i < DOC_ORDER.length - 1) ? DOC_ORDER[i + 1] : null;
+}
 // v7: original OCR line items — used to preserve per-line fields not shown
 // in the Goods Information table (material_code, unit, rate, taxes, total).
 const ORIGINAL_HSN = {{ ((invoice_data.get('hsn_details') or []) if invoice_data else []) | tojson }};
@@ -763,10 +825,12 @@ async function saveExtractedInvoice() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data.success) _showSaveStatus('invSaveStatus', true, '✓ Saved');
-    else _showSaveStatus('invSaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    if (data.success) { _showSaveStatus('invSaveStatus', true, '✓ Saved'); return true; }
+    _showSaveStatus('invSaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    return false;
   } catch (e) {
     _showSaveStatus('invSaveStatus', false, '❌ Network error');
+    return false;
   }
 }
 
@@ -794,10 +858,12 @@ async function saveExtractedEway() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data.success) _showSaveStatus('ewaySaveStatus', true, '✓ Saved');
-    else _showSaveStatus('ewaySaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    if (data.success) { _showSaveStatus('ewaySaveStatus', true, '✓ Saved'); return true; }
+    _showSaveStatus('ewaySaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    return false;
   } catch (e) {
     _showSaveStatus('ewaySaveStatus', false, '❌ Network error');
+    return false;
   }
 }
 
@@ -824,10 +890,30 @@ async function saveExtractedLr() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data.success) _showSaveStatus('lrSaveStatus', true, '✓ Saved');
-    else _showSaveStatus('lrSaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    if (data.success) { _showSaveStatus('lrSaveStatus', true, '✓ Saved'); return true; }
+    _showSaveStatus('lrSaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    return false;
   } catch (e) {
     _showSaveStatus('lrSaveStatus', false, '❌ Network error');
+    return false;
+  }
+}
+
+// "Save & Next": saves the given section (reusing the same save functions
+// the manual Save buttons already call, so edits are persisted immediately
+// -- not held only in the browser) and, if the save succeeded, advances to
+// the next document tab that actually exists for this record. Nothing is
+// "approved" here -- the one real approval still only happens via
+// approveRecord()/_doApprove() on the last present document.
+async function saveAndNext(step) {
+  let ok = false;
+  if (step === 'invoice') ok = await saveExtractedInvoice();
+  else if (step === 'ewaybill') ok = await saveExtractedEway();
+  else if (step === 'lr') ok = await saveExtractedLr();
+
+  if (ok) {
+    const next = _nextDocStep(step);
+    if (next) switchDataTab(next);
   }
 }
 
@@ -911,11 +997,18 @@ async function _doApprove() {
       }
       /* Lock all inputs */
       document.querySelectorAll('.editable-input').forEach(function(el) { el.disabled = true; });
-      /* Hide Save buttons */
+      /* Hide Save buttons (and the Hold/Approve buttons alongside them) */
       document.querySelectorAll('.btn-save-section').forEach(function(el) {
         var row = el.parentElement;
         if (row) row.style.display = 'none';
       });
+      /* Chain into GST Approval automatically -- this is the last step of
+         the Invoice -> E-way -> LR -> GST Approval review sequence. Does
+         NOT continue on to Gate In; that stays a separate, manual step for
+         whoever holds the Gate Security role. */
+      if (typeof goToTabProgrammatic === 'function') {
+        setTimeout(function () { goToTabProgrammatic('gstApproval'); }, 600);
+      }
     } else {
       showToast('❌ ' + (data.error || 'Failed to approve'), 'error');
     }
@@ -990,29 +1083,11 @@ function rerunOCR() {
 
 // E-way Bill validity expiry notice.
 // Server (app.py view_detail) computes ewb_expired fresh on every page load
-// by comparing today's date to the EWB's validity_date -- this is
-// informational only and never blocks approval/workflow. The red field
-// highlight (.field-expired, applied to #eway_validity_date above) is
-// persistent and reappears every time this tab is viewed while still
-// expired. The popup itself is shown only once per browser session per
-// record (tracked via sessionStorage, not the database), so re-visiting
-// the same record repeatedly in one sitting doesn't re-trigger it.
-document.addEventListener('DOMContentLoaded', function () {
-  const EWB_EXPIRED = {{ 'true' if ewb_expired else 'false' }};
-  if (!EWB_EXPIRED) return;
-
-  const sessionKey = 'ewb_expiry_alert_shown_' + HISTORY_ID;
-  if (sessionStorage.getItem(sessionKey)) return;
-
-  const validityInput = document.getElementById('eway_validity_date');
-  const validityDate = validityInput ? validityInput.value : '';
-
-  showConfirm(
-    'E-way Bill Expired',
-    'This E-way Bill\'s validity expired on ' + validityDate + '. Please verify before proceeding.',
-    function () {},
-    'OK'
-  );
-  sessionStorage.setItem(sessionKey, '1');
-});
+// by comparing today's date to the EWB's validity_date. This used to also
+// pop up a confirm dialog once per browser session (sessionStorage) -- that
+// popup was removed per client request; the red field highlight
+// (.field-expired, applied to #eway_validity_date) plus the small red
+// "* Validity Date Expired" note next to the field label (see the Validity
+// Date field-block above) are now the only indicators. Still purely
+// informational -- never blocks approval/workflow.
 </script>

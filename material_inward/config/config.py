@@ -82,8 +82,13 @@ class Config:
     MAX_FILE_SIZE_BYTES: int     = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
 
     # --- Document keyword detection ---
-    INVOICE_KEYWORD: str  = os.getenv("INVOICE_KEYWORD", "invoice").lower()
-    EWAYBILL_KEYWORD: str = os.getenv("EWAYBILL_KEYWORD", "eway").lower()
+    # Filenames arrive as INVOICENO_<KEYWORD>.pdf (any case) -- e.g.
+    # 4500012345_INV.pdf / 4500012345_EWB.pdf / 4500012345_LR.pdf.
+    # These are matched as the EXACT last underscore-segment of the filename
+    # (see services/folder_watcher.py _detect_doc_type), not a substring
+    # search -- so keep these short and exact, not partial words.
+    INVOICE_KEYWORD: str  = os.getenv("INVOICE_KEYWORD", "inv").lower()
+    EWAYBILL_KEYWORD: str = os.getenv("EWAYBILL_KEYWORD", "ewb").lower()
     LR_KEYWORD: str       = os.getenv("LR_KEYWORD", "lr").lower()
 
     # --- Folder-drop intake ---

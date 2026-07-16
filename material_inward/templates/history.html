@@ -182,8 +182,10 @@
         </div>
         <div class="dropdown-menu" id="userDropdown">
             <a href="/history"><i class="fas fa-history"></i> History</a>
-            {% if role == 'Admin' %}
+            {% if is_superadmin or has_role('compliance') or allow_user_upload %}
             <a href="/new_entry"><i class="fas fa-plus"></i> New Entry</a>
+            {% endif %}
+            {% if is_superadmin %}
             <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
             {% endif %}
             <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>

@@ -254,11 +254,73 @@
             background: linear-gradient(135deg, #e74c3c, #c0392b);
             color: white;
         }
- 
+
         .role-user {
             background: linear-gradient(135deg, #3498db, #2980b9);
             color: white;
         }
+
+        .access-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 14px;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 2px 4px 2px 0;
+            background: #eef3fb;
+            color: #1e5ca8;
+            border: 1px solid #c5d8f8;
+        }
+
+        .access-badge.view-only {
+            background: #fff8e1;
+            color: #856404;
+            border-color: #ffe6a1;
+        }
+
+        .role-picker {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .role-picker label {
+            font-weight: 400 !important;
+            font-size: 13px !important;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #f8f9fb;
+            padding: 8px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            border: 1.5px solid transparent;
+            transition: border-color .15s;
+        }
+
+        .role-picker label:has(input:checked) {
+            border-color: #1e5ca8;
+            background: #eef3fb;
+        }
+
+        .role-picker .role-desc {
+            display: block;
+            font-size: 11px;
+            color: #888;
+            font-weight: 400;
+        }
+
+        .superadmin-edit-toggle {
+            display: none;
+            background: #fff8e1;
+            border: 1.5px solid #ffe6a1;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-top: 10px;
+        }
+
+        .superadmin-edit-toggle.show { display: block; }
  
         .modal {
             display: none;
@@ -462,6 +524,14 @@
         </div>
     </div>
  
+    {% set ROLE_LABELS = {
+        'compliance': 'Compliance Officer (Extracted Data + GST Approval)',
+        'gate_in':    'Gate Security',
+        'migo_103':   'Stores Officer (MIGO 103)',
+        'migo_105':   'Quality / Release Officer (MIGO 105)',
+        'miro':       'Accounts Payable Officer (MIRO)'
+    } %}
+
     <div class="container">
         <div class="page-header">
             <h1 class="page-title">
@@ -481,11 +551,12 @@
                         <th>Username</th>
                         <th>Name</th>
                         <th>Role</th>
+                        <th>Access</th>
                         <th>Created At</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
- 
+
                 <tbody>
                     {% if users and users|length > 0 %}
                         {% for user in users %}
@@ -493,23 +564,45 @@
                                 <td>{{ user['username'] }}</td>
                                 <td>{{ user['name'] or '-' }}</td>
                                 <td>
-                                    <span class="role-badge {{ 'role-admin' if user['role'] == 'Admin' else 'role-user' }}">
+                                    <span class="role-badge {{ 'role-admin' if user['role'] == 'SuperAdmin' else 'role-user' }}">
                                         {{ user['role'] }}
                                     </span>
+                                </td>
+                                <td>
+                                    {% if user['role'] == 'SuperAdmin' %}
+                                        {% if user['admin_edit'] %}
+                                        <span class="access-badge">Full edit — all tabs</span>
+                                        {% else %}
+                                        <span class="access-badge view-only">View only — all tabs</span>
+                                        {% endif %}
+                                    {% else %}
+                                        {% set roles = (user['step_roles'] or '').split(',') | select | list %}
+                                        {% if roles %}
+                                            {% for r in roles %}
+                                            <span class="access-badge">{{ ROLE_LABELS.get(r, r) }}</span>
+                                            {% endfor %}
+                                        {% else %}
+                                            <span class="access-badge view-only">No access assigned</span>
+                                        {% endif %}
+                                    {% endif %}
                                 </td>
                                 <td>{{ user['created_at'].strftime('%Y-%m-%d %H:%M') if user['created_at'] else '-' }}</td>
                                 <td>
                                     <button class="action-btn edit-btn"
                                         data-username="{{ user['username'] }}"
                                         data-role="{{ user['role'] }}"
-                                        onclick="openEditModal(this.dataset.username, this.dataset.role)">
+                                        data-step-roles="{{ user['step_roles'] or '' }}"
+                                        data-email="{{ user['email'] or '' }}"
+                                        data-email-notif="{{ 'true' if user['email_notifications_enabled'] else 'false' }}"
+                                        data-admin-edit="{{ 'true' if user['admin_edit'] else 'false' }}"
+                                        onclick="openEditModal(this.dataset)">
                                         <i class="fas fa-edit"></i> Edit
                                     </button>
                                     <button class="action-btn delete-btn"
                                         data-username="{{ user['username'] }}"
                                         data-role="{{ user['role'] }}"
                                         onclick="openDeleteModal(this.dataset.username, this.dataset.role)"
-                                        {% if user['username'] == current_username or user['role'] == 'Admin' %}disabled{% endif %}>
+                                        {% if user['username'] == current_username or user['role'] == 'SuperAdmin' %}disabled{% endif %}>
                                         <i class="fas fa-trash"></i> Delete
                                     </button>
                                 </td>
@@ -517,7 +610,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="5" style="text-align:center;padding:40px;">No users found</td>
+                            <td colspan="6" style="text-align:center;padding:40px;">No users found</td>
                         </tr>
                     {% endif %}
                 </tbody>
@@ -546,21 +639,27 @@
             </div>
             <div class="form-group">
                 <label>Role <span style="color:red;">*</span></label>
-                <select id="create_role" required>
+                <select id="create_role" required onchange="onRoleChange('create')">
                     <option value="">Select Role</option>
-                    <option value="Admin">Admin</option>
                     <option value="User">User</option>
+                    <option value="SuperAdmin">SuperAdmin (IT)</option>
                 </select>
             </div>
-            <div class="form-group">
-                <label>Step Roles (which workflow steps this user handles)</label>
-                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:6px;">
-                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="all" id="create_step_all" onchange="toggleAllSteps('create')"> All Steps</label>
-                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="gate_in"> Gate In</label>
-                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="migo_103"> MIGO 103</label>
-                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="migo_105"> MIGO 105</label>
-                    <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="create_step" value="miro"> MIRO</label>
+            <div class="form-group" id="create_roles_group">
+                <label>Roles (a user can hold more than one)</label>
+                <div class="role-picker">
+                    <label><input type="checkbox" name="create_step" value="compliance"> Compliance Officer<span class="role-desc">Extracted Data + GST Approval</span></label>
+                    <label><input type="checkbox" name="create_step" value="gate_in"> Gate Security<span class="role-desc">Gate In</span></label>
+                    <label><input type="checkbox" name="create_step" value="migo_103"> Stores Officer<span class="role-desc">MIGO 103</span></label>
+                    <label><input type="checkbox" name="create_step" value="migo_105"> Quality / Release Officer<span class="role-desc">MIGO 105</span></label>
+                    <label><input type="checkbox" name="create_step" value="miro"> Accounts Payable Officer<span class="role-desc">MIRO</span></label>
                 </div>
+            </div>
+            <div class="superadmin-edit-toggle" id="create_superadmin_toggle">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px;color:#856404;">
+                    <input type="checkbox" id="create_admin_edit" checked> Allow this SuperAdmin to edit &amp; act (not just view)
+                </label>
+                <div style="font-size:12px;color:#856404;margin-top:4px;">Unchecked = this SuperAdmin can view every tab but cannot edit or act on anything anywhere, including User Management.</div>
             </div>
             <div class="form-group">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -606,21 +705,28 @@
                 </div>
                 <div class="form-group">
                     <label>Role <span style="color:red;">*</span></label>
-                    <select id="edit_role" required>
+                    <select id="edit_role" required onchange="onRoleChange('edit')">
                         <option value="">Select Role</option>
-                        <option value="Admin">Admin</option>
                         <option value="User">User</option>
+                        <option value="SuperAdmin">SuperAdmin (IT)</option>
                     </select>
+                    <input type="hidden" id="edit_original_role">
                 </div>
-                <div class="form-group">
-                    <label>Step Roles (which workflow steps this user handles)</label>
-                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:6px;">
-                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="all" id="edit_step_all" onchange="toggleAllSteps('edit')"> All Steps</label>
-                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="gate_in"> Gate In</label>
-                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="migo_103"> MIGO 103</label>
-                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="migo_105"> MIGO 105</label>
-                        <label style="font-weight:400;font-size:13px;"><input type="checkbox" name="edit_step" value="miro"> MIRO</label>
+                <div class="form-group" id="edit_roles_group">
+                    <label>Roles (a user can hold more than one)</label>
+                    <div class="role-picker">
+                        <label><input type="checkbox" name="edit_step" value="compliance"> Compliance Officer<span class="role-desc">Extracted Data + GST Approval</span></label>
+                        <label><input type="checkbox" name="edit_step" value="gate_in"> Gate Security<span class="role-desc">Gate In</span></label>
+                        <label><input type="checkbox" name="edit_step" value="migo_103"> Stores Officer<span class="role-desc">MIGO 103</span></label>
+                        <label><input type="checkbox" name="edit_step" value="migo_105"> Quality / Release Officer<span class="role-desc">MIGO 105</span></label>
+                        <label><input type="checkbox" name="edit_step" value="miro"> Accounts Payable Officer<span class="role-desc">MIRO</span></label>
                     </div>
+                </div>
+                <div class="superadmin-edit-toggle" id="edit_superadmin_toggle">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px;color:#856404;">
+                        <input type="checkbox" id="edit_admin_edit"> Allow this SuperAdmin to edit &amp; act (not just view)
+                    </label>
+                    <div style="font-size:12px;color:#856404;margin-top:4px;">Unchecked = this SuperAdmin can view every tab but cannot edit or act on anything anywhere, including User Management.</div>
                 </div>
                 <div class="form-group">
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -684,64 +790,64 @@
         function openCreateModal() {
             document.getElementById('createForm').reset();
             document.getElementById('create_password_error').style.display = 'none';
+            document.getElementById('create_admin_edit').checked = true;
+            onRoleChange('create');
             document.getElementById('createModal').classList.add('show');
         }
- 
-        function openEditModal(username, role) {
+
+        function onRoleChange(prefix) {
+            const role = document.getElementById(prefix + '_role').value;
+            const isSuperAdmin = role === 'SuperAdmin';
+            document.getElementById(prefix + '_roles_group').style.display = isSuperAdmin ? 'none' : 'block';
+            document.getElementById(prefix + '_superadmin_toggle').classList.toggle('show', isSuperAdmin);
+        }
+
+        function openEditModal(data) {
+            // data = the Edit button's dataset: username, role, stepRoles,
+            // email, emailNotif, adminEdit -- prefills every field with the
+            // user's current state so an admin adding a role sees (and
+            // keeps) whatever's already checked, instead of starting blank.
+            const username   = data.username;
+            const role       = data.role;
+            const stepRoles  = (data.stepRoles || '').split(',').map(s => s.trim()).filter(Boolean);
+            const email      = data.email || '';
+            const emailNotif = data.emailNotif === 'true';
+            const adminEdit  = data.adminEdit === 'true';
+
             document.getElementById('edit_username').value = username;
+            document.getElementById('edit_original_role').value = role;
             document.getElementById('edit_role').value = role;
+            document.getElementById('edit_email').value = email;
+            document.getElementById('edit_email_notif').checked = emailNotif;
+            document.getElementById('edit_admin_edit').checked = adminEdit;
             document.getElementById('edit_password').value = '';
             document.getElementById('edit_confirm_password').value = '';
             document.getElementById('edit_password_error').style.display = 'none';
-           
-            // const isCurrentUser = username === currentUsername;
-            // const roleSelect = document.getElementById('edit_role');
-            // const roleGroup = document.getElementById('edit_role_group');
-            // const warningDiv = document.getElementById('admin_warning');
-            
-            // // If current user is editing themselves, disable role change
-            // if (isCurrentUser) {
-            //     roleSelect.disabled = true;
-            //     roleGroup.style.display = 'block';
-            //     warningDiv.style.display = 'none';
-            // } 
-            // // If user is already Admin, disable role change
-            // else if (role === 'Admin') {
-            //     roleSelect.disabled = true;
-            //     roleGroup.style.display = 'block';
-            //     warningDiv.style.display = 'none';
-            // } 
-            // // Admin editing User - allow role change but show warning
-            // else {
-            //     roleSelect.disabled = false;
-            //     roleGroup.style.display = 'block';
-                
-            //     // Show warning when role changes to Admin
-            //     roleSelect.addEventListener('change', function() {
-            //         if (this.value === 'Admin') {
-            //             warningDiv.style.display = 'flex';
-            //         } else {
-            //             warningDiv.style.display = 'none';
-            //         }
-            //     });
-                
-            //     warningDiv.style.display = 'none';
-            // }
-           
+
+            document.querySelectorAll('input[name="edit_step"]').forEach(cb => {
+                cb.checked = stepRoles.includes(cb.value);
+            });
+
+            onRoleChange('edit');
+
+            // Editing your own account: role select stays enabled here
+            // deliberately (a SuperAdmin might need to flip their own
+            // admin_edit toggle), but the backend still blocks self-delete
+            // separately.
             document.getElementById('editModal').classList.add('show');
         }
- 
+
         function openDeleteModal(username, role) {
             if (username === currentUsername) {
                 showToast('You cannot delete your own account!', 'warning');
                 return;
             }
-            
-            if (role === 'Admin') {
-                showToast('Cannot delete Admin users!', 'warning');
+
+            if (role === 'SuperAdmin') {
+                showToast('Cannot delete SuperAdmin users!', 'warning');
                 return;
             }
-            
+
             document.getElementById('delete_username').value = username;
             document.getElementById('delete_username_display').textContent = username;
             document.getElementById('deleteModal').classList.add('show');
@@ -761,12 +867,14 @@
             }
             document.getElementById('create_password_error').style.display = 'none';
 
+            const role = document.getElementById('create_role').value;
             const userData = {
                 username: document.getElementById('create_username').value,
                 name: document.getElementById('create_name').value,
                 email: document.getElementById('create_email').value,
-                role: document.getElementById('create_role').value,
+                role: role,
                 step_roles: _collectStepRoles('create'),
+                admin_edit: role === 'SuperAdmin' ? document.getElementById('create_admin_edit').checked : true,
                 email_notifications_enabled: document.getElementById('create_email_notif').checked,
                 password: password,
                 confirm_password: confirmPassword
@@ -811,11 +919,14 @@
             const username = document.getElementById('edit_username').value;
             const role = document.getElementById('edit_role').value;
             const originalRole = document.getElementById('edit_original_role').value;
-            
-            // Confirm if changing User to Admin
+
             const userData = {
                 username: username,
                 role: role,
+                step_roles: _collectStepRoles('edit'),
+                admin_edit: role === 'SuperAdmin' ? document.getElementById('edit_admin_edit').checked : true,
+                email: document.getElementById('edit_email').value,
+                email_notifications_enabled: document.getElementById('edit_email_notif').checked,
                 password: newPassword,
                 confirm_password: confirmPassword
             };
@@ -839,10 +950,10 @@
                 }
             }
 
-            if (originalRole === 'User' && role === 'Admin') {
+            if (originalRole === 'User' && role === 'SuperAdmin') {
                 showConfirm(
-                    'Make Admin',
-                    'Are you sure you want to make this user an Admin? This action cannot be reversed!',
+                    'Make SuperAdmin',
+                    'Are you sure you want to make this user a SuperAdmin? This grants IT-level access across every tab.',
                     _submitEdit
                 );
             } else {
@@ -1161,18 +1272,13 @@ function toggleLocation(code, newActiveState) {
   });
 }
 
-function toggleAllSteps(prefix) {
-  const allCheck = document.getElementById(prefix + '_step_all');
-  document.querySelectorAll(`input[name="${prefix}_step"]:not(#${prefix}_step_all)`).forEach(cb => {
-    cb.disabled = allCheck.checked;
-    if (allCheck.checked) cb.checked = false;
-  });
-}
-
 function _collectStepRoles(prefix) {
-  const checked = Array.from(document.querySelectorAll(`input[name="${prefix}_step"]:checked`))
-    .map(cb => cb.value);
-  if (checked.includes('all')) return 'all';
-  return checked.join(',') || 'all';
+  // Returns the comma-joined list of checked role checkboxes, e.g.
+  // "compliance,gate_in". A SuperAdmin's roles group is hidden (see
+  // onRoleChange) since SuperAdmin already sees everything -- this only
+  // matters for role='User'.
+  return Array.from(document.querySelectorAll(`input[name="${prefix}_step"]:checked`))
+    .map(cb => cb.value)
+    .join(',');
 }
 </script>

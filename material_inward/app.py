@@ -190,10 +190,15 @@ def api_login_required(f):
 
 
 def admin_required(f):
+    """User Management + storage-location mutation routes: SuperAdmin only,
+    and only if admin_edit is True (a view-only SuperAdmin cannot edit
+    anything anywhere, including here)."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if session.get("role") != "Admin":
-            return jsonify({"success": False, "error": "Admin access required"}), 403
+        if session.get("role") != "SuperAdmin":
+            return jsonify({"success": False, "error": "SuperAdmin access required"}), 403
+        if not session.get("admin_edit"):
+            return jsonify({"success": False, "error": "View-only admin access — editing disabled."}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -203,7 +208,80 @@ def _current_user() -> str:
 
 
 def _is_admin() -> bool:
-    return session.get("role") == "Admin"
+    # Kept for template/route compatibility -- "admin" now means SuperAdmin.
+    return session.get("role") == "SuperAdmin"
+
+
+def _is_superadmin() -> bool:
+    return session.get("role") == "SuperAdmin"
+
+
+def _admin_can_edit() -> bool:
+    """True only for a SuperAdmin with admin_edit=True. Regular users are
+    governed by _has_role()/_require_role_edit() instead."""
+    return _is_superadmin() and bool(session.get("admin_edit"))
+
+
+def _current_roles() -> set:
+    raw = (session.get("step_roles") or "").strip().lower()
+    if not raw:
+        return set()
+    return {r.strip() for r in raw.split(",") if r.strip()}
+
+
+def _has_role(role_name: str) -> bool:
+    """View permission: SuperAdmin (any admin_edit value) can always view
+    every tab. Otherwise the user needs this specific role checked."""
+    if _is_superadmin():
+        return True
+    return role_name in _current_roles()
+
+
+def _require_role_edit(role_name: str):
+    """
+    Action-route guard. Returns None if the current session may perform
+    this action, or a (response, status) tuple to return immediately if
+    not. A SuperAdmin needs admin_edit=True to act (not just view); a
+    regular user needs role_name in their step_roles.
+    """
+    if _is_superadmin():
+        if _admin_can_edit():
+            return None
+        return jsonify({"success": False, "error": "View-only admin access — editing disabled."}), 403
+    if role_name in _current_roles():
+        return None
+    return jsonify({"success": False, "error": "You do not have permission to perform this action."}), 403
+
+
+def _extracted_data_view_state(history: dict) -> tuple:
+    """
+    Returns (can_view, can_edit) for the Extracted Data tab given the
+    current session's role(s) and this record's workflow progress.
+
+    Compliance Officer / SuperAdmin: always full view + edit (subject to
+    the existing approval_status lock, handled separately in the
+    template).
+
+    Downstream roles get a staggered read-only reveal, one stage at a
+    time, matching the SAP process order already enforced by
+    _check_step_allowed(): Gate Security sees it once GST is approved;
+    Stores Officer (103) once Gate In is done; Quality/Release (105)
+    once MIGO 103 is done; Accounts Payable (MIRO) once MIGO 105 is
+    done. None of these roles can ever edit it -- view only.
+    """
+    if _is_superadmin() or "compliance" in _current_roles():
+        return True, _admin_can_edit() if _is_superadmin() else True
+
+    roles = _current_roles()
+    if "gate_in" in roles and history.get("gst_check"):
+        return True, False
+    if "migo_103" in roles and history.get("gate_in"):
+        return True, False
+    if "migo_105" in roles and history.get("migo_103"):
+        return True, False
+    if "miro" in roles and history.get("migo_105"):
+        return True, False
+    return False, False
 
 
 def _check_step_allowed(history: dict, step: str) -> tuple:
@@ -298,10 +376,13 @@ def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: i
 @app.context_processor
 def inject_globals():
     return {
-        "config": config,  
+        "config": config,
         "enabled_steps": config._ENABLED_STEPS_RAW.lower(),
         "is_step_enabled": config.is_step_enabled,
         "is_admin": _is_admin(),
+        "is_superadmin": _is_superadmin(),
+        "admin_can_edit": _admin_can_edit(),
+        "has_role": _has_role,
         "current_role": session.get("role", ""),
         "current_username": session.get("username", ""),
         "allow_user_upload": config.ALLOW_USER_UPLOAD,
@@ -331,7 +412,8 @@ def login():
             session["username"]   = user["username"]
             session["role"]       = user["role"]
             session["name"]       = user["name"]
-            session["step_roles"] = user.get("step_roles", "all")
+            session["step_roles"] = user.get("step_roles", "")
+            session["admin_edit"] = bool(user.get("admin_edit", True))
             logger.info(f"Login: {username} ({user['role']})")
             return redirect(url_for("history_page"))
         logger.warning(f"Failed login: {username}")
@@ -451,6 +533,39 @@ def view_detail(history_id):
                     f"'{ewb_validity_raw}' for expiry check."
                 )
 
+        # Role-based tab access -- see _has_role()/_extracted_data_view_state()
+        # in the helpers section above. Documents + GST Approval are the
+        # Compliance Officer's exclusive tabs (or SuperAdmin); Extracted
+        # Data gets a staggered read-only reveal for downstream roles as
+        # the record's workflow progresses; Gate In/MIGO/MIRO tabs are
+        # each gated to their own role, on top of the existing system-wide
+        # is_step_enabled() toggle (unchanged).
+        can_view_extracted, can_edit_extracted = _extracted_data_view_state(history)
+        can_view_documents = _has_role("compliance")
+        can_view_gst       = _has_role("compliance")
+        can_view_gate_in   = config.is_step_enabled("gate_in")   and _has_role("gate_in")
+        can_view_migo_103  = config.is_step_enabled("migo_103")  and _has_role("migo_103")
+        can_view_migo_105  = config.is_step_enabled("migo_105")  and _has_role("migo_105")
+        can_view_miro      = config.is_step_enabled("miro")      and _has_role("miro")
+
+        # First tab this user is allowed to see, in pipeline order -- used
+        # to mark the initial active nav button/pane so a downstream-only
+        # role (e.g. Gate Security) doesn't land on a blank "Documents"
+        # pane they can't view.
+        default_tab_id = None
+        for _tab_id, _visible in (
+            ("documents",   can_view_documents),
+            ("extracted",   can_view_extracted),
+            ("gstApproval", can_view_gst),
+            ("gateIn",      can_view_gate_in),
+            ("migo103",     can_view_migo_103),
+            ("migo105",     can_view_migo_105),
+            ("miro",        can_view_miro),
+        ):
+            if _visible:
+                default_tab_id = _tab_id
+                break
+
         return render_template(
             "index.html",
             history=history,
@@ -465,7 +580,16 @@ def view_detail(history_id):
             po_data=po_data,
             username=session.get("username"),
             role=session.get("role"),
-            from_history=True
+            from_history=True,
+            can_view_documents=can_view_documents,
+            can_view_extracted=can_view_extracted,
+            can_edit_extracted=can_edit_extracted,
+            can_view_gst=can_view_gst,
+            can_view_gate_in=can_view_gate_in,
+            can_view_migo_103=can_view_migo_103,
+            can_view_migo_105=can_view_migo_105,
+            can_view_miro=can_view_miro,
+            default_tab_id=default_tab_id
         )
     except Exception as e:
         logger.error(f"view_detail error {history_id}: {e}", exc_info=True)
@@ -475,7 +599,7 @@ def view_detail(history_id):
 @app.route("/new_entry")
 @login_required
 def new_entry():
-    if not _is_admin() and not config.ALLOW_USER_UPLOAD:
+    if not _is_superadmin() and "compliance" not in _current_roles() and not config.ALLOW_USER_UPLOAD:
         return redirect(url_for("history_page"))
     session.pop("current_history_id", None)
     return render_template(
@@ -492,7 +616,11 @@ def new_entry():
 @app.route("/user_management")
 @login_required
 def user_management():
-    if not _is_admin():
+    # View access: SuperAdmin only, regardless of admin_edit (a view-only
+    # SuperAdmin can still see the user list, just can't create/edit/
+    # delete -- those mutating routes are separately gated by
+    # @admin_required, which also checks admin_edit).
+    if not _is_superadmin():
         return redirect(url_for("history_page"))
     users = get_all_users()
     storage_locations = get_all_storage_locations(active_only=False)
@@ -502,7 +630,8 @@ def user_management():
         storage_locations=storage_locations,
         username=session.get("username"),
         current_username=session.get("username"),
-        role=session.get("role")
+        role=session.get("role"),
+        admin_can_edit=_admin_can_edit()
     )
 
 
@@ -526,6 +655,9 @@ def api_queue_status(job_id):
 @app.route("/api/save_extracted_invoice/<int:history_id>", methods=["POST"])
 @api_login_required
 def save_extracted_invoice(history_id):
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -542,6 +674,9 @@ def save_extracted_invoice(history_id):
 @app.route("/api/save_extracted_eway/<int:history_id>", methods=["POST"])
 @api_login_required
 def save_extracted_eway(history_id):
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -558,6 +693,9 @@ def save_extracted_eway(history_id):
 @app.route("/api/save_extracted_lr/<int:history_id>", methods=["POST"])
 @api_login_required
 def save_extracted_lr(history_id):
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -578,6 +716,9 @@ def save_extracted_lr(history_id):
 @app.route("/api/approve/<int:history_id>", methods=["POST"])
 @api_login_required
 def api_approve(history_id):
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -608,6 +749,9 @@ def api_approve(history_id):
 @app.route("/api/hold/<int:history_id>", methods=["POST"])
 @api_login_required
 def api_hold(history_id):
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -639,6 +783,9 @@ def api_hold(history_id):
 @app.route("/api/rerun_ocr/<int:history_id>", methods=["POST"])
 @api_login_required
 def api_rerun_ocr(history_id):
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -742,8 +889,9 @@ def api_migo_matched_pairs(history_id):
 @app.route("/upload/<doctype>", methods=["POST"])
 @api_login_required
 def upload_document(doctype):
-    if not _is_admin():
-        return jsonify({"error": "Admin access required"}), 403
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     valid_types = ["invoice", "ewaybill", "lr"]
     if doctype not in valid_types:
         return jsonify({"error": f"Invalid document type: {doctype}"}), 400
@@ -780,8 +928,10 @@ def upload_document(doctype):
 @app.route("/process_all", methods=["POST"])
 @api_login_required
 def process_all():
-    if not _is_admin() and not config.ALLOW_USER_UPLOAD:
-        return jsonify({"error": "Admin access required"}), 403
+    if not config.ALLOW_USER_UPLOAD:
+        blocked = _require_role_edit("compliance")
+        if blocked:
+            return blocked
 
     files = {
         "invoice":  request.files.get("invoice"),
@@ -821,6 +971,9 @@ def process_all():
 @app.route("/save_gatein", methods=["POST"])
 @api_login_required
 def save_gatein():
+    blocked = _require_role_edit("gate_in")
+    if blocked:
+        return blocked
     data = request.get_json(silent=True) or {}
     history_id = data.get("history_id")
     if not history_id:
@@ -846,6 +999,9 @@ def save_gatein():
 @app.route("/api/run_migo_103", methods=["POST"])
 @api_login_required
 def run_migo_103():
+    blocked = _require_role_edit("migo_103")
+    if blocked:
+        return blocked
     data = request.get_json(silent=True) or {}
     history_id = data.get("history_id")
     if not history_id:
@@ -868,6 +1024,9 @@ def run_migo_103():
 @app.route("/api/run_migo_105", methods=["POST"])
 @api_login_required
 def run_migo_105():
+    blocked = _require_role_edit("migo_105")
+    if blocked:
+        return blocked
     data = request.get_json(silent=True) or {}
     history_id = data.get("history_id")
     if not history_id:
@@ -987,6 +1146,9 @@ def run_migo_105():
 @app.route("/api/run_miro", methods=["POST"])
 @api_login_required
 def run_miro():
+    blocked = _require_role_edit("miro")
+    if blocked:
+        return blocked
     data = request.get_json(silent=True) or {}
     history_id = data.get("history_id")
     if not history_id:
@@ -1207,14 +1369,15 @@ def add_user_web():
     name     = data.get("name", "").strip()
     email    = data.get("email", "").strip()
     email_notif = bool(data.get("email_notifications_enabled", False))
-    step_roles  = data.get("step_roles", "all").strip() or "all"
+    step_roles  = (data.get("step_roles", "") or "").strip()
+    admin_edit  = bool(data.get("admin_edit", True))
 
     if not all([username, password, confirm, role, name]):
         return jsonify({"status": False, "message": "Username, name, role and password required"}), 400
     if password != confirm:
         return jsonify({"status": False, "message": "Passwords do not match"}), 400
 
-    success = add_user(username, password, role, name, email, email_notif, step_roles)
+    success = add_user(username, password, role, name, email, email_notif, step_roles, admin_edit)
     return jsonify({"status": success, "message": "User created" if success else "Failed — username may exist"})
 
 
@@ -1230,6 +1393,7 @@ def edit_user_web():
     email    = data.get("email")
     email_notif = data.get("email_notifications_enabled")
     step_roles  = data.get("step_roles")
+    admin_edit  = data.get("admin_edit")
 
     if not username:
         return jsonify({"status": False, "message": "Username required"}), 400
@@ -1242,7 +1406,8 @@ def edit_user_web():
         role=role if role else None,
         email=email,
         email_notifications_enabled=email_notif,
-        step_roles=step_roles
+        step_roles=step_roles,
+        admin_edit=admin_edit
     )
     return jsonify({"status": success, "message": "Updated" if success else "Not found"})
 
@@ -1257,6 +1422,9 @@ def delete_user_web():
         return jsonify({"status": False, "message": "Username required"}), 400
     if username == _current_user():
         return jsonify({"status": False, "message": "Cannot delete own account"}), 403
+    target = next((u for u in get_all_users() if u["username"] == username), None)
+    if target and target.get("role") == "SuperAdmin":
+        return jsonify({"status": False, "message": "Cannot delete SuperAdmin users"}), 403
     return jsonify({"status": delete_user(username), "message": "Deleted"})
 
 
@@ -1365,6 +1533,9 @@ def get_document_thumbnail(doctype, filename):
 @app.route("/delete_document/<doctype>/<filename>", methods=["DELETE"])
 @api_login_required
 def delete_document(doctype, filename):
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     if ".." in filename or "/" in filename or "\\" in filename:
         return jsonify({"success": False, "error": "Invalid filename"}), 400
 
@@ -1399,6 +1570,9 @@ def delete_all_documents(history_id):
     matching JS function and no backend route -- clicking it did nothing
     but throw a console ReferenceError. First real implementation.
     """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     details = get_history_details_by_id(history_id)
     if not details.get("history"):
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -1481,6 +1655,9 @@ def api_gst_status(history_id):
 @api_login_required
 def api_gst_approve(history_id):
     """Approve the GST verification for this record, unlocking Gate In."""
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -1502,6 +1679,9 @@ def api_gst_approve(history_id):
 @api_login_required
 def api_gst_hold(history_id):
     """Place the GST verification on hold. Reason is optional."""
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -1531,6 +1711,9 @@ def api_gst_save_irn(history_id):
     client-side check that also blocks the Approve button on an
     unsaved edit).
     """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
@@ -1555,6 +1738,9 @@ def api_gst_rerun(history_id):
     Re-run GST verification — resets existing results and fires bots again.
     Used when the user suspects the extracted GSTIN was wrong.
     """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404

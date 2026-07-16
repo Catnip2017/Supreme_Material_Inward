@@ -10,6 +10,20 @@ v4 changes:
 - 60-day orphan cleanup: incomplete groups in grouped/ moved to failed/orphan_*
 - ocr_status set on history record
 
+v5 changes (filename convention):
+- Incoming files are named INVOICENO_<KEYWORD>.pdf, any case
+  (e.g. 4500012345_INV.pdf / 4500012345_EWB.pdf / 4500012345_LR.pdf).
+- Doc type is matched on the EXACT last underscore-segment, not a
+  substring search anywhere in the filename (avoids false matches from
+  invoice numbers that happen to contain "inv"/"ewb"/"lr" as a substring).
+- group_key = the invoice-number portion of the filename itself --
+  reliable and available before OCR even runs, unlike OCR's own
+  invoice_number field (which can come back empty/garbled).
+- On success, all 3 files AND the folder are renamed to
+  <invoice_no>_<SUFFIX>_<DD_MM_YY> before moving to ocr_done/, using
+  today's processing date. This filename-derived value is used for
+  file/folder naming ONLY -- invoice_data.invoice_number in the database
+  still comes from OCR, unchanged.
 """
 
 import os
@@ -42,30 +56,50 @@ STABLE_SECONDS = 30      # File must be unmodified this long before being touche
 ORPHAN_DAYS    = 60      #Must match DB_RETENTION_DAYS in app.py cleanup
 POLL_INTERVAL  = 30      # Watcher cycle interval
 
+# Uppercase suffix used when renaming files into ocr_done/ on success --
+# matches the incoming INVOICENO_<SUFFIX>.pdf convention, just re-applied
+# with a fresh date stamp. Keyed by the internal doc_type name.
+DOC_TYPE_SUFFIX = {"invoice": "INV", "ewaybill": "EWB", "lr": "LR"}
+
 
 # ============================================================
 # UTILITIES
 # ============================================================
 
 def _detect_doc_type(filename: str):
-    name = filename.lower()
-    if config.INVOICE_KEYWORD in name:  return "invoice"
-    if config.EWAYBILL_KEYWORD in name: return "ewaybill"
-    if config.LR_KEYWORD in name:       return "lr"
+    """
+    Filenames arrive as INVOICENO_<KEYWORD>.pdf (any case), e.g.
+    4500012345_INV.pdf / 4500012345_EWB.pdf / 4500012345_LR.pdf.
+
+    Matches the EXACT last underscore-segment (before the extension)
+    against the configured keyword -- NOT a substring search anywhere in
+    the filename. A substring search would misfire here: e.g. an invoice
+    number like "SINV20240091_INV.pdf" contains "inv" inside "SINV" too,
+    so a substring match could cut the group key at the wrong position.
+    Anchoring to the exact final segment avoids that entirely.
+    """
+    stem = os.path.splitext(filename)[0]
+    if "_" not in stem:
+        return None
+    suffix = stem.rsplit("_", 1)[1].strip().lower()
+    if suffix == config.INVOICE_KEYWORD:  return "invoice"
+    if suffix == config.EWAYBILL_KEYWORD: return "ewaybill"
+    if suffix == config.LR_KEYWORD:       return "lr"
     return None
 
 
 def _get_group_key(filename: str) -> str:
     """
-    Group key = everything before the doc type keyword.
-    VendorName_INV2024001_invoice.pdf → vendorname_inv2024001
+    Group key = the invoice-number portion of INVOICENO_<KEYWORD>.pdf --
+    everything before the final underscore, lowercased for consistent
+    folder naming. E.g. 4500012345_INV.pdf → 4500012345
+    (rsplit on the LAST underscore only, so an invoice number that itself
+    contains an underscore is still handled correctly.)
     """
-    name_lower = filename.lower()
-    for keyword in [config.INVOICE_KEYWORD, config.EWAYBILL_KEYWORD, config.LR_KEYWORD]:
-        if keyword in name_lower:
-            idx = name_lower.index(keyword)
-            return filename[:idx].rstrip("_- ").lower()
-    return filename.lower()
+    stem = os.path.splitext(filename)[0]
+    if "_" not in stem:
+        return filename.lower()
+    return stem.rsplit("_", 1)[0].strip().lower()
 
 
 def _is_stable(file_path: str) -> bool:
@@ -206,18 +240,35 @@ def _process_batch(group_key: str, group_folder: str, files_by_type: dict):
         upsert_migo_entry(history_id, map_ocr_to_migo(inv, eway, lr))
         upsert_miro_entry(history_id, map_ocr_to_miro(inv, eway, lr))
 
-        # Move group folder to ocr_done/<invoice_number>/
-        invoice_number = (inv or {}).get("invoice_number", "")
-        safe_inv = "".join(c for c in invoice_number if c.isalnum() or c in "-_") or f"history_{history_id}"
+        # Rename the 3 files + the folder itself to
+        # <group_key>_<SUFFIX>_<DD_MM_YY>, then move to ocr_done/.
+        # group_key comes straight from the incoming filename convention
+        # (INVOICENO_INV.pdf etc.) -- it's guaranteed present and
+        # well-formed the moment the file arrives, unlike OCR's
+        # invoice_number field, which can come back empty or garbled if
+        # OCR misreads the document. Deliberately NOT the same value as
+        # invoice_data.invoice_number in the DB -- that stays whatever OCR
+        # actually read off the document; this is file/folder naming only.
+        date_stamp = datetime.now().strftime("%d_%m_%y")
+        safe_key = "".join(c for c in group_key if c.isalnum() or c in "-_") or f"history_{history_id}"
 
-        dest_folder = os.path.join(OCR_DONE_FOLDER, safe_inv)
+        for doc_type, old_path in files_by_type.items():
+            suffix = DOC_TYPE_SUFFIX[doc_type]
+            new_name = f"{safe_key}_{suffix}_{date_stamp}.pdf"
+            new_path = os.path.join(group_folder, new_name)
+            try:
+                os.rename(old_path, new_path)
+            except Exception as e:
+                logger.error(f"Could not rename {old_path} → {new_name}: {e}")
+
+        dest_folder = os.path.join(OCR_DONE_FOLDER, f"{safe_key}_{date_stamp}")
         if os.path.exists(dest_folder):
             dest_folder = f"{dest_folder}_{history_id}"
 
         try:
             shutil.move(group_folder, dest_folder)
             set_ocr_status(history_id, "success")
-            logger.info(f"Batch complete — history_id={history_id} → ocr_done/{safe_inv}")
+            logger.info(f"Batch complete — history_id={history_id} → ocr_done/{safe_key}_{date_stamp}")
         except Exception as e:
             logger.error(f"Could not move group folder to ocr_done: {e}")
             set_ocr_status(history_id, "success", failed_path=group_folder)
