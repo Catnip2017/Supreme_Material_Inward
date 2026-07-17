@@ -248,7 +248,7 @@
         <div class="filter-group">
             <label>Search</label>
             <input type="text" class="filter-input" id="searchInput"
-                placeholder="Invoice No, Vendor Name, Gate In No, PO No, E-Way Bill No..."
+                placeholder="Invoice No, Vendor Name, Gate In No, PO No, Vehicle Number..."
                 oninput="debounceSearch()">
         </div>
         <div class="filter-group">
@@ -280,7 +280,7 @@
                 <tr>
                     <th>Invoice No</th>
                     <th>Vendor Name</th>
-                    <th>E-Way Bill No</th>
+                    <th>Vehicle Number</th>
                     <th>LR No</th>
                     <th>Status</th>
                     <th>Date</th>
@@ -358,15 +358,26 @@ function renderTable(records) {
     }
 
     tbody.innerHTML = records.map(r => {
-        const statusBadge = getStatusBadge(r.status);
+        // ocr_status is 'success' or 'failed' once OCR has actually run;
+        // still null/blank means the record was just created by the folder
+        // watcher and OCR is running right now -- distinct from "Pending"
+        // (OCR done, just waiting on Gate In), so it gets its own badge/row
+        // treatment instead of silently showing as a bunch of blank cells.
+        const isProcessing = !r.ocr_status;
+        const statusBadge = isProcessing
+            ? '<span class="status-badge status-pending"><i class="fas fa-spinner fa-spin"></i> Processing OCR...</span>'
+            : getStatusBadge(r.status);
         const date = r.created_at ? r.created_at.split('T')[0] : '-';
         const rowId = `stepTimes-${r.id}`;
+        const cell = (val) => isProcessing
+            ? '<i class="fas fa-spinner fa-spin" style="color:#aaa;"></i>'
+            : (val || '-');
         return `
-        <tr>
-            <td>${r.invoice_number || '-'}</td>
-            <td>${r.vendor_name || '-'}</td>
-            <td>${r.ewaybill_number || '-'}</td>
-            <td>${r.lr_number || '-'}</td>
+        <tr${isProcessing ? ' class="history-row-processing" data-history-id="' + r.id + '"' : ''}>
+            <td>${cell(r.invoice_number)}</td>
+            <td>${cell(r.vendor_name)}</td>
+            <td>${cell(r.vehicle_number)}</td>
+            <td>${cell(r.lr_number)}</td>
             <td>${statusBadge}</td>
             <td>${date}</td>
             <td>
@@ -380,6 +391,22 @@ function renderTable(records) {
             <td colspan="8">${renderStepTimes(r)}</td>
         </tr>`;
     }).join('');
+
+    _scheduleProcessingPoll();
+}
+
+// Lightweight per-row "still processing" poll -- only runs while at least
+// one row on the currently-loaded page has no ocr_status yet. Re-fetches
+// the whole page (cheap, same as any filter change) after a delay rather
+// than diffing individual rows, so a completed row just naturally stops
+// showing the spinner on the next render. Stops rescheduling itself once
+// no processing rows remain, so it doesn't poll forever in the background.
+let _historyPollTimer = null;
+function _scheduleProcessingPoll() {
+    clearTimeout(_historyPollTimer);
+    const stillProcessing = document.querySelectorAll('.history-row-processing').length > 0;
+    if (!stillProcessing) return;
+    _historyPollTimer = setTimeout(() => loadHistory(currentPage), 5000);
 }
 
 function toggleStepTimes(rowId, btn) {

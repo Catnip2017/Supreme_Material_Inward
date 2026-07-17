@@ -120,6 +120,7 @@ def get_all_history() -> list:
             COALESCE(eway.ewaybill_number, h.ewaybill_number) AS ewaybill_number,
             COALESCE(lr.lr_number, h.lr_number)              AS lr_number,
             COALESCE(inv.po_number, h.po_number)             AS po_number,
+            COALESCE(gatein.truck_no, eway.vehicle_number)   AS vehicle_number,
             h.mail_subject,
             h.gate_in,
             h.migo_103,
@@ -143,9 +144,10 @@ def get_all_history() -> list:
                 ELSE 'Pending'
             END AS status
         FROM history h
-        LEFT JOIN invoice_data  inv  ON inv.id  = h.id
-        LEFT JOIN ewaybill_data eway ON eway.id = h.id
-        LEFT JOIN lr_data       lr   ON lr.id   = h.id
+        LEFT JOIN invoice_data     inv    ON inv.id  = h.id
+        LEFT JOIN ewaybill_data    eway   ON eway.id = h.id
+        LEFT JOIN lr_data          lr     ON lr.id   = h.id
+        LEFT JOIN gate_in_entries  gatein ON gatein.history_id = h.id
         ORDER BY h.created_at DESC
     """
     try:
@@ -555,10 +557,11 @@ def get_history_search(
             COALESCE(lr.lr_number, h.lr_number, '') ILIKE %s OR
             COALESCE(inv.po_number, h.po_number, '') ILIKE %s OR
             COALESCE(h.gate_in_number, '') ILIKE %s OR
-            COALESCE(gatein.vendor_name, inv.seller_name, '') ILIKE %s
+            COALESCE(gatein.vendor_name, inv.seller_name, '') ILIKE %s OR
+            COALESCE(gatein.truck_no, eway.vehicle_number, '') ILIKE %s
         )""")
         like = f"%{search}%"
-        params.extend([like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like])
 
     if status == "pending":
         conditions.append("h.gate_in = 0")
@@ -602,6 +605,7 @@ def get_history_search(
             COALESCE(eway.ewaybill_number, h.ewaybill_number) AS ewaybill_number,
             COALESCE(lr.lr_number, h.lr_number)               AS lr_number,
             COALESCE(inv.po_number, h.po_number)              AS po_number,
+            COALESCE(gatein.truck_no, eway.vehicle_number)    AS vehicle_number,
             h.gate_in, h.migo_103, h.migo_105, h.miro,
             h.gate_in_number, h.material_doc_number,
             h.approval_status, h.ocr_status,

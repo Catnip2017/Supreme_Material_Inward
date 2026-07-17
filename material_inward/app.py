@@ -44,7 +44,7 @@ from database.db_operations import (
     update_invoice_irn
 )
 from database.vehicle_master_operations import get_drivers_by_truck
-from database.supplier_operations import search_suppliers
+from database.supplier_operations import search_suppliers, get_supplier_by_code
 from database.gatein_operations import (
     upsert_gatein_entry, get_gatein_entry, map_ocr_to_gatein
 )
@@ -1228,6 +1228,28 @@ def vendor_lookup():
         return jsonify({"success": True, "candidates": candidates, "count": len(candidates)})
     except Exception as e:
         logger.error(f"vendor_lookup error name={query}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/vendor_lookup/verify")
+@api_login_required
+def vendor_lookup_verify():
+    """
+    Exact-match check: is whatever's currently sitting in the Vendor Name
+    field an actual SAP vendor code (from supplier_master), or is it still
+    free-text (OCR'd name, or a name the user typed but never resolved via
+    Fetch/type-ahead)? Used by Gate In's submit-time validation to block
+    posting to SAP with a vendor NAME in the vendor_name slot -- SAP needs
+    the code there, not the name.
+    """
+    code = request.args.get("code", "").strip()
+    if not code:
+        return jsonify({"success": False, "error": "code required"}), 400
+    try:
+        supplier = get_supplier_by_code(code)
+        return jsonify({"success": True, "valid": bool(supplier), "supplier": supplier or None})
+    except Exception as e:
+        logger.error(f"vendor_lookup_verify error code={code}: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 

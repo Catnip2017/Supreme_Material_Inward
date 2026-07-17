@@ -27,7 +27,8 @@
   padding:10px 22px; border-radius:8px; font-size:14px; font-weight:600;
   cursor:pointer;
 }
-.btn-rerun-ocr:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(243,156,18,0.4); }
+.btn-rerun-ocr:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(243,156,18,0.4); }
+.btn-rerun-ocr:disabled { background:#b0bec5; cursor:not-allowed; }
 
 .editable-input {
   width:100%; padding:8px 12px; border:1.5px solid #e0e0e0;
@@ -1064,6 +1065,12 @@ function rerunOCR() {
     'Re-run OCR',
     'Re-run OCR on the failed documents?',
     async function () {
+      // Grey the button out immediately -- without this, users kept
+      // double/triple-clicking while the request was in flight, queuing up
+      // multiple OCR re-runs for the same record. Re-enabled on failure so
+      // they can retry; on success the page reloads anyway.
+      const btn = document.getElementById('rerunOcrBtn');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-running...'; }
       try {
         const res = await fetch(`/api/rerun_ocr/${HISTORY_ID}`, { method:'POST' });
         const data = await res.json();
@@ -1072,9 +1079,11 @@ function rerunOCR() {
           window.location.reload();
         } else {
           showToast('❌ ' + (data.error || 'OCR retry failed') + (data.retry_count ? ` (retry #${data.retry_count})` : ''), 'error');
+          if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-run OCR'; }
         }
       } catch (e) {
         showToast('❌ Network error', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-run OCR'; }
       }
     },
     'Yes, Re-run OCR'

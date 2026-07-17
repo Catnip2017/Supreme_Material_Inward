@@ -21,42 +21,82 @@ MIN_SIMILARITY = 0.25
 
 def search_suppliers(query: str, limit: int = 10) -> list:
     """
-    Fuzzy-search supplier_master by name, ranked by trigram similarity
-    (requires the pg_trgm extension -- see schema_migration_v8.sql).
-    Matches against name_1 first (primary SAP name field), falling back to
-    name for suppliers where name_1 is blank.
+    Search supplier_master two ways at once, merged into one ranked list:
+      1. Fuzzy name match (trigram similarity, requires pg_trgm -- see
+         schema_migration_v8.sql), against name_1 first, falling back to
+         name for suppliers where name_1 is blank.
+      2. Vendor-code prefix match against the `supplier` column itself --
+         covers the case where a guard/user remembers/types part of the
+         6-digit SAP code directly instead of the vendor's name. Code
+         matches are ranked first (score forced to 1.0) since a typed code
+         is a much stronger signal than a fuzzy name guess.
 
     Returns a list of dicts:
-      [{supplier, name_1, name, city, district, postal_code, score}]
+      [{supplier, name_1, name, city, district, postal_code,
+        street_2, street_3, street_4, street_5, building, floor, score}]
     ordered by closest match first. Deliberately does NOT auto-pick a single
     result even if only one row comes back -- the caller (Gate In tab) still
-    shows it as a one-item pick-list so the disambiguating city/district is
-    visible before the user commits to it.
+    shows it as a one-item pick-list so the disambiguating city/district (and,
+    for same-name/same-postal-code duplicates, the full address) is visible
+    before the user commits to it.
     """
     query = (query or "").strip()
     if not query:
         return []
 
-    sql = """
-        SELECT
-            supplier, name_1, name, city, district, postal_code,
-            GREATEST(
-                similarity(COALESCE(name_1, ''), %s),
-                similarity(COALESCE(name, ''), %s)
-            ) AS score
-        FROM supplier_master
-        WHERE similarity(COALESCE(name_1, ''), %s) > %s
-           OR similarity(COALESCE(name, ''), %s)   > %s
-        ORDER BY score DESC
+    address_cols = "street_2, street_3, street_4, street_5, building, floor"
+
+    sql = f"""
+        SELECT supplier, name_1, name, city, district, postal_code,
+               {address_cols}, score
+        FROM (
+            SELECT
+                supplier, name_1, name, city, district, postal_code,
+                {address_cols},
+                GREATEST(
+                    similarity(COALESCE(name_1, ''), %s),
+                    similarity(COALESCE(name, ''), %s)
+                ) AS score
+            FROM supplier_master
+            WHERE similarity(COALESCE(name_1, ''), %s) > %s
+               OR similarity(COALESCE(name, ''), %s)   > %s
+
+            UNION ALL
+
+            SELECT
+                supplier, name_1, name, city, district, postal_code,
+                {address_cols},
+                1.0 AS score
+            FROM supplier_master
+            WHERE supplier ILIKE %s
+        ) matches
+        ORDER BY score DESC, supplier
         LIMIT %s
     """
-    params = (query, query, query, MIN_SIMILARITY, query, MIN_SIMILARITY, limit)
+    code_prefix = query + "%"
+    params = (
+        query, query,               # GREATEST(...) similarity args
+        query, MIN_SIMILARITY,      # name_1 filter
+        query, MIN_SIMILARITY,      # name filter
+        code_prefix,                # supplier code prefix match
+        limit,
+    )
 
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(sql, params)
-                return [dict(r) for r in cur.fetchall()]
+                rows = [dict(r) for r in cur.fetchall()]
+                # UNION ALL can duplicate a row if it matches both by name
+                # and by code prefix -- dedupe by supplier code, keeping the
+                # first (highest-scored) occurrence.
+                seen, deduped = set(), []
+                for r in rows:
+                    if r["supplier"] in seen:
+                        continue
+                    seen.add(r["supplier"])
+                    deduped.append(r)
+                return deduped
     except Exception as e:
         logger.error(f"search_suppliers failed for query={query!r}: {e}")
         return []

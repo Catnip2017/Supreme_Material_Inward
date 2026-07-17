@@ -233,6 +233,11 @@ Read Status Bar With Retry
     RETURN    ${msg}
 
 Clean Value
+    # NOTE: previously ended with Split String + ${parts}[0], returning only
+    # the first word -- e.g. multi-word remarks/storage-location values got
+    # silently truncated. Fixed to match the corrected pattern used in
+    # gate_in.robot's Clean Value/Clean Material: strip whitespace and
+    # currency symbols, but keep the full multi-word value intact.
     [Arguments]    ${raw_value}
     ${val}=        Convert To String    ${raw_value}
     ${cleaned}=    Strip String    ${val}
@@ -241,8 +246,8 @@ Clean Value
     ${cleaned}=    Replace String    ${cleaned}    €    ${EMPTY}
     ${cleaned}=    Replace String    ${cleaned}    £    ${EMPTY}
     ${cleaned}=    Replace String    ${cleaned}    ,    ${EMPTY}
-    @{parts}=      Split String      ${cleaned}    ${SPACE}
-    RETURN         ${parts}[0]
+    ${cleaned}=    Strip String    ${cleaned}
+    RETURN         ${cleaned}
 
 
 Dismiss Any Popup
