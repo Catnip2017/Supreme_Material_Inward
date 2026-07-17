@@ -313,11 +313,7 @@
       {% set inv_goods_qty = (inv_hsn[0].get('quantity','') if inv_hsn else '') %}
       <div class="form-group">
         <label>Material <span class="req">*</span></label>
-<<<<<<< HEAD:material_inward/templates/tabs/gate_in.html
-        <input type="text" id="material" class="form-input"
-=======
         <input type="text" id="material" class="form-input" maxlength="40"
->>>>>>> origin/branch:templates/tabs/gate_in.html
                value="{{ (gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_material">Required</div>
@@ -334,11 +330,7 @@
       </div>
       <div class="form-group">
         <label>Challan Quantity <span class="req">*</span></label>
-<<<<<<< HEAD:material_inward/templates/tabs/gate_in.html
-        <input type="text" id="challanQty" class="form-input"
-=======
         <input type="text" id="challanQty" class="form-input" maxlength="17"
->>>>>>> origin/branch:templates/tabs/gate_in.html
               value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '' }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanQty">Required</div>
