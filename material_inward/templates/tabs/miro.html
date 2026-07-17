@@ -145,6 +145,11 @@
       </button>
     </div>
   </form>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'miro' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
 </div>
 
 

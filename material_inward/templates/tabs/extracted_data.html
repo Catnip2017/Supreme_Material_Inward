@@ -39,6 +39,12 @@
 .editable-input.field-expired { border-color:#e74c3c; background:#fee; }
 .editable-input.field-expired:focus { border-color:#e74c3c; }
 
+/* Re-used for IRN short-length warning and GSTIN format/checksum errors --
+   same red-flag visual language as .field-expired above, just with an
+   inline text message under the field instead of a static label note. */
+.field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
+.field-error-msg-inline.show { display:block; }
+
 .field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:14px; }
 .field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px; border-left:3px solid #1e5ca8; }
 .field-label { font-size:11px; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:5px; }
@@ -268,6 +274,13 @@
               <input class="editable-input" id="inv_po_number" value="{{ invoice_data.get('po_number','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
+          <div class="field-row">
+            <div class="field-block">
+              <div class="field-label">IRN (Invoice Reference Number)</div>
+              <input class="editable-input" id="inv_irn" value="{{ invoice_data.get('irn','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_irn"></div>
+            </div>
+          </div>
         </div>
 
         <div class="section-card">
@@ -280,6 +293,7 @@
             <div class="field-block">
               <div class="field-label">Buyer GSTIN</div>
               <input class="editable-input" id="inv_buyer_gstin" value="{{ invoice_data.get('buyer_gstin','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_buyer_gstin"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Buyer Address</div>
@@ -298,6 +312,7 @@
             <div class="field-block">
               <div class="field-label">Seller GSTIN</div>
               <input class="editable-input" id="inv_seller_gstin" value="{{ invoice_data.get('seller_gstin','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_seller_gstin"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Company PAN</div>
@@ -451,6 +466,7 @@
                   <th>Goods Description</th>
                   <th>HSN Code</th>
                   <th>Quantity</th>
+                  <th>UOM</th>
                   <th>Value of Goods</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -460,10 +476,11 @@
                 {% for hsn in hsn_list %}
                 <tr data-orig-idx="{{ loop.index0 }}">
                   <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                  <td><input type="text" value="{{ hsn.get('description','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('hsn_sac','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('quantity','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('taxable_value','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="description" value="{{ hsn.get('description','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="hsn_sac" value="{{ hsn.get('hsn_sac','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="quantity" value="{{ hsn.get('quantity','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="unit" value="{{ hsn.get('unit','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="taxable_value" value="{{ hsn.get('taxable_value','') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td>{% if not is_approved %}<button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button>{% endif %}</td>
                 </tr>
                 {% endfor %}
@@ -563,7 +580,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
-              <input class="editable-input" id="eway_vehicle_number" value="{{ ewaybill_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_vehicle_number" maxlength="10" value="{{ ewaybill_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
@@ -572,6 +589,7 @@
             <div class="field-block">
               <div class="field-label">Transporter GSTIN</div>
               <input class="editable-input" id="eway_transporter_gstin" value="{{ ewaybill_data.get('transporter_gstin','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_transporter_gstin"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Transport Doc No</div>
@@ -628,7 +646,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
-              <input class="editable-input" id="lr_vehicle_number" value="{{ lr_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ lr_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -672,15 +690,11 @@
             </div>
             <div class="field-block">
               <div class="field-label">Delivery Address</div>
-              <input class="editable-input" id="lr_delivery_address" value="{{ lr_data.get('delivery_address','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_delivery_address" value="{{ lr_data.get('delivery_address') or '' }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
               <input class="editable-input" id="lr_transporter_name" value="{{ lr_data.get('transporter_name','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Freight Amount</div>
-              <input class="editable-input" id="lr_freight_amount" value="{{ lr_data.get('freight_amount','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -716,6 +730,11 @@
       <h3>No Data Available</h3>
       <p>Upload documents to extract and view data here</p>
     </div>
+  {% endif %}
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'extracted' %}
+  {% include 'tabs/_remarks_panel.html' %}
   {% endif %}
 </div>
 
@@ -793,6 +812,7 @@ async function saveExtractedInvoice() {
     invoice_number: document.getElementById('inv_invoice_number').value,
     invoice_date:   document.getElementById('inv_invoice_date').value,
     po_number:      document.getElementById('inv_po_number').value,
+    irn:            document.getElementById('inv_irn').value,
     buyer_name:     document.getElementById('inv_buyer_name').value,
     buyer_gstin:    document.getElementById('inv_buyer_gstin').value,
     buyer_address:  document.getElementById('inv_buyer_address').value,
@@ -882,7 +902,6 @@ async function saveExtractedLr() {
     from_location:   document.getElementById('lr_from_location').value,
     to_location:     document.getElementById('lr_to_location').value,
     transporter_name: document.getElementById('lr_transporter_name').value,
-    freight_amount:  document.getElementById('lr_freight_amount').value,
   };
   try {
     const res = await fetch(`/api/save_extracted_lr/${HISTORY_ID}`, {
@@ -931,10 +950,11 @@ function addGoodsRow() {
   tr.setAttribute('data-orig-idx', '-1');
   tr.innerHTML = `
     <td class="goods-row-num" style="color:#888;font-size:11px;"></td>
-    <td><input type="text" placeholder="Goods Description"></td>
-    <td><input type="text" placeholder="HSN Code"></td>
-    <td><input type="text" placeholder="Quantity"></td>
-    <td><input type="text" placeholder="Value of Goods"></td>
+    <td><input type="text" data-field="description" placeholder="Goods Description"></td>
+    <td><input type="text" data-field="hsn_sac" placeholder="HSN Code"></td>
+    <td><input type="text" data-field="quantity" placeholder="Quantity"></td>
+    <td><input type="text" data-field="unit" placeholder="UOM"></td>
+    <td><input type="text" data-field="taxable_value" placeholder="Value of Goods"></td>
     <td><button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button></td>
   `;
   tbody.appendChild(tr);
@@ -957,17 +977,21 @@ function _collectInvHsn() {
   const tbody = document.getElementById('invGoodsBody');
   if (!tbody) return ORIGINAL_HSN;  // safety: never wipe hsn_details
   const items = [];
+  // Read each input by its data-field attribute rather than positional
+  // index -- a positional inputs[0]/[1]/[2]/[3] mapping is fragile: adding,
+  // removing, or reordering a visible column (e.g. UOM) silently shifts
+  // every index after it and writes values into the wrong keys with no
+  // error. data-field is immune to column order/count changes.
   tbody.querySelectorAll('tr').forEach(row => {
-    const inputs = row.querySelectorAll('input');
+    const inputs = row.querySelectorAll('input[data-field]');
     if (inputs.length < 4) return;
     const origIdx = parseInt(row.getAttribute('data-orig-idx'), 10);
     const base = (origIdx >= 0 && ORIGINAL_HSN[origIdx]) ? ORIGINAL_HSN[origIdx] : {};
-    items.push(Object.assign({}, base, {
-      description:   inputs[0].value,
-      hsn_sac:       inputs[1].value,
-      quantity:      inputs[2].value,
-      taxable_value: inputs[3].value,
-    }));
+    const rowData = {};
+    inputs.forEach(input => {
+      rowData[input.getAttribute('data-field')] = input.value;
+    });
+    items.push(Object.assign({}, base, rowData));
   });
   return items;
 }
@@ -1099,4 +1123,90 @@ function rerunOCR() {
 // "* Validity Date Expired" note next to the field label (see the Validity
 // Date field-block above) are now the only indicators. Still purely
 // informational -- never blocks approval/workflow.
+
+// ============================================================
+// IRN length check (client requested: highlight if a non-empty IRN is
+// under 64 characters -- a genuine IRN is always exactly 64 characters).
+// Purely visual -- never blocks Save or Approve. Runs once on load (in
+// case a value is already present from OCR or a prior save) and again on
+// every keystroke.
+// ============================================================
+function _checkIrnLength() {
+  const el = document.getElementById('inv_irn');
+  const err = document.getElementById('err_inv_irn');
+  if (!el) return;
+  const val = el.value.trim();
+  const short = val.length > 0 && val.length < 64;
+  el.classList.toggle('field-expired', short);
+  if (err) {
+    err.textContent = short ? `IRN is ${val.length} characters -- a valid IRN is 64 characters.` : '';
+    err.classList.toggle('show', short);
+  }
+}
+(function () {
+  const el = document.getElementById('inv_irn');
+  if (el) {
+    el.addEventListener('input', _checkIrnLength);
+    _checkIrnLength();
+  }
+})();
+
+// ============================================================
+// GSTIN format + checksum validation (client requested: visual flag only,
+// never blocks Save/Approve). Applies to Buyer GSTIN / Seller GSTIN
+// (Invoice tab) and Transporter GSTIN (E-way tab).
+//
+// A GSTIN is 15 characters: 2-digit state code, 10-character PAN, 1-digit
+// entity code, the literal letter "Z", and a final checksum character.
+// Format check confirms the shape; checksum recomputes the 15th character
+// from the first 14 (ISO 7064 MOD-36 style check-character scheme used by
+// GSTIN) and compares it against what's actually there -- catches typos
+// that still happen to match the basic shape.
+// ============================================================
+const GSTIN_FORMAT_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+const GSTIN_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+function _gstinChecksumValid(gstin) {
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const code = GSTIN_CHARSET.indexOf(gstin[i]);
+    const factor = (i % 2 === 0) ? 1 : 2;
+    const product = code * factor;
+    sum += Math.floor(product / 36) + (product % 36);
+  }
+  const checksum = (36 - (sum % 36)) % 36;
+  return GSTIN_CHARSET[checksum] === gstin[14];
+}
+
+function _validateGstinField(fieldId, errId) {
+  const el = document.getElementById(fieldId);
+  const err = document.getElementById(errId);
+  if (!el) return;
+  const val = el.value.trim().toUpperCase();
+  let msg = '';
+  if (val) {
+    if (!GSTIN_FORMAT_RE.test(val)) {
+      msg = 'Does not match standard GSTIN format.';
+    } else if (!_gstinChecksumValid(val)) {
+      msg = 'GSTIN checksum character does not match -- possible typo.';
+    }
+  }
+  el.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+
+[
+  ['inv_buyer_gstin', 'err_inv_buyer_gstin'],
+  ['inv_seller_gstin', 'err_inv_seller_gstin'],
+  ['eway_transporter_gstin', 'err_eway_transporter_gstin'],
+].forEach(function ([fieldId, errId]) {
+  const el = document.getElementById(fieldId);
+  if (el) {
+    el.addEventListener('blur', function () { _validateGstinField(fieldId, errId); });
+    _validateGstinField(fieldId, errId);
+  }
+});
 </script>

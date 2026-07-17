@@ -262,6 +262,38 @@ CREATE TABLE IF NOT EXISTS miro_entries (
 );
 
 -- ============================================================
+-- HISTORY REMARKS TABLE — one root Remark per record, set/edited only by
+-- the Compliance role (or a SuperAdmin with edit rights). Visible to every
+-- role across every tab. See schema_migration_v12.sql.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS history_remarks (
+    history_id      INTEGER PRIMARY KEY REFERENCES history(id) ON DELETE CASCADE,
+    remark_text     TEXT,
+    updated_by_role VARCHAR(50),
+    updated_by      VARCHAR(255),
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================
+-- HISTORY COMMENTS TABLE — append-only log of per-role comments on the
+-- Remark above. Attributed to the ROLE that posted, not the username. The
+-- UI only ever shows the latest row per (history_id, role), but rows are
+-- never updated or deleted -- full history is preserved for audit.
+-- See schema_migration_v12.sql.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS history_comments (
+    id              SERIAL PRIMARY KEY,
+    history_id      INTEGER NOT NULL REFERENCES history(id) ON DELETE CASCADE,
+    role            VARCHAR(50) NOT NULL,
+    comment_text    TEXT NOT NULL,
+    created_by      VARCHAR(255),
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_comments_history_role_created
+    ON history_comments(history_id, role, created_at DESC);
+
+-- ============================================================
 -- ============================================================
 -- STORAGE LOCATIONS MASTER TABLE (Admin managed, Plant 1010)
 -- ============================================================

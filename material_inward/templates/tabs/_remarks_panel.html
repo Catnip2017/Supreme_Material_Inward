@@ -1,0 +1,348 @@
+<!--
+  _remarks_panel.html — shared Remarks & Comments panel.
+
+  Included at the bottom of every tab (below that tab's primary action
+  button/row) so it's visible regardless of which tab is currently active
+  -- all tabs are rendered into the same page at once (see index.html),
+  just toggled via CSS, so this partial is literally included six times
+  on one page load. To avoid colliding with itself across those six
+  inclusions (or with any other tab's script), the caller must set a
+  unique `remarks_panel_id` variable immediately before each include, e.g.:
+
+    {% set remarks_panel_id = 'extracted' %}
+    {% include 'tabs/_remarks_panel.html' %}
+
+  and every element/script below is scoped off that unique id -- no bare
+  global const/let/var, no un-namespaced element ids, so six copies can
+  coexist on one page safely.
+-->
+<style>
+.remarks-panel {
+  background:white; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,0.06);
+  margin-top:18px; overflow:hidden;
+}
+.remarks-toggle {
+  display:flex; align-items:center; gap:10px; padding:14px 18px;
+  cursor:pointer; user-select:none; font-weight:700; color:#1e5ca8; font-size:14px;
+}
+.remarks-toggle:hover { background:#f8f9fb; }
+.remarks-badge {
+  background:#1e5ca8; color:white; border-radius:10px; padding:1px 9px;
+  font-size:11px; font-weight:700; min-width:16px; text-align:center;
+}
+.remarks-badge.zero { background:#c5d0e0; }
+.remarks-chevron { margin-left:auto; color:#888; transition:transform .2s; font-size:12px; }
+.remarks-panel.open .remarks-chevron { transform:rotate(180deg); }
+.remarks-body { display:none; padding:0 18px 18px; border-top:1px solid #f0f0f0; }
+.remarks-panel.open .remarks-body { display:block; }
+
+.remarks-remark-section { padding-top:16px; margin-bottom:18px; }
+.remarks-remark-label {
+  font-size:11px; color:#666; font-weight:600; text-transform:uppercase;
+  letter-spacing:0.4px; margin-bottom:6px;
+}
+.remarks-remark-text {
+  background:#f8f9fb; border-left:3px solid #1e5ca8; border-radius:6px;
+  padding:10px 14px; font-size:13px; color:#2c3e50; white-space:pre-wrap;
+  word-break:break-word;
+}
+.remarks-remark-text.empty { color:#999; font-style:italic; }
+.remarks-remark-meta { font-size:11px; color:#888; margin-top:5px; }
+.remarks-edit-btn {
+  background:#f0f4ff; color:#1e5ca8; border:1px solid #c5d8f8;
+  padding:5px 14px; border-radius:6px; font-size:12px; font-weight:600;
+  cursor:pointer; margin-top:8px;
+}
+.remarks-edit-btn:hover { background:#dbeafe; }
+.remarks-remark-edit { margin-top:10px; }
+.remarks-remark-edit textarea, .remarks-comment-composer textarea {
+  width:100%; box-sizing:border-box; padding:10px 12px; border:1.5px solid #e0e0e0;
+  border-radius:6px; font-size:13px; font-family:inherit; resize:vertical; min-height:60px;
+}
+.remarks-remark-edit textarea:focus, .remarks-comment-composer textarea:focus {
+  outline:none; border-color:#1e5ca8;
+}
+.remarks-save-row { display:flex; align-items:center; gap:10px; margin-top:8px; }
+.remarks-save-btn, .remarks-post-btn {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; border:none;
+  padding:8px 20px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;
+}
+.remarks-save-btn:hover, .remarks-post-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.remarks-save-btn:disabled, .remarks-post-btn:disabled { background:#ccc; cursor:not-allowed; transform:none; box-shadow:none; }
+.remarks-cancel-btn {
+  background:#ecf0f1; color:#333; border:none; padding:8px 16px;
+  border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;
+}
+.remarks-char-count { font-size:11px; color:#999; margin-left:auto; }
+
+.remarks-comments-section-title {
+  font-size:11px; color:#666; font-weight:600; text-transform:uppercase;
+  letter-spacing:0.4px; margin-bottom:8px;
+}
+.remarks-comment-item {
+  padding:10px 14px; background:#f8f9fb; border-radius:6px; margin-bottom:8px;
+}
+.remarks-comment-role { font-weight:700; color:#1e5ca8; font-size:12px; }
+.remarks-comment-time { font-size:11px; color:#999; margin-left:8px; }
+.remarks-comment-text { font-size:13px; color:#2c3e50; margin-top:4px; white-space:pre-wrap; word-break:break-word; }
+.remarks-no-comments { font-size:12px; color:#999; font-style:italic; margin-bottom:12px; }
+
+.remarks-comment-composer { margin-top:14px; padding-top:14px; border-top:1px solid #f0f0f0; }
+.remarks-role-select {
+  padding:6px 10px; border:1.5px solid #e0e0e0; border-radius:6px; font-size:12px;
+  margin-bottom:8px; background:white;
+}
+.remarks-status-msg { font-size:12px; margin-top:6px; font-weight:600; }
+.remarks-status-msg.ok { color:#1a7a3c; }
+.remarks-status-msg.err { color:#c0392b; }
+</style>
+
+<div class="remarks-panel" id="remarksPanel-{{ remarks_panel_id }}">
+  <div class="remarks-toggle">
+    <span>📝 Remarks &amp; Comments</span>
+    <span class="remarks-badge zero" data-role="count">0</span>
+    <span class="remarks-chevron">▾</span>
+  </div>
+  <div class="remarks-body">
+
+    <div class="remarks-remark-section">
+      <div class="remarks-remark-label">Remark</div>
+      <div class="remarks-remark-text empty" data-role="remark-text">Loading…</div>
+      <div class="remarks-remark-meta" data-role="remark-meta"></div>
+
+      {% if (is_superadmin and admin_can_edit) or (not is_superadmin and has_role('compliance')) %}
+      <button type="button" class="remarks-edit-btn" data-role="remark-edit-btn">✏️ Edit Remark</button>
+      <div class="remarks-remark-edit" data-role="remark-edit-box" style="display:none;">
+        <textarea data-role="remark-textarea" maxlength="1000" placeholder="Add a remark visible to every role on this record…"></textarea>
+        <div class="remarks-save-row">
+          <button type="button" class="remarks-save-btn" data-role="remark-save-btn">💾 Save Remark</button>
+          <button type="button" class="remarks-cancel-btn" data-role="remark-cancel-btn">Cancel</button>
+          <span class="remarks-char-count" data-role="remark-char-count">0 / 1000</span>
+        </div>
+        <div class="remarks-status-msg" data-role="remark-status"></div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="remarks-comments-section">
+      <div class="remarks-comments-section-title">Comments</div>
+      <div data-role="comments-list"></div>
+
+      {% if (is_superadmin and admin_can_edit) or (not is_superadmin and current_roles_list) %}
+      <div class="remarks-comment-composer">
+        {% if not is_superadmin and current_roles_list|length > 1 %}
+        <div>
+          <select class="remarks-role-select" data-role="role-picker">
+            {% set ROLE_LABELS = {
+              'compliance': 'Compliance Officer',
+              'gate_in':    'Gate Security',
+              'migo_103':   'Stores Officer',
+              'migo_105':   'Quality / Release Officer',
+              'miro':       'Accounts Payable Officer'
+            } %}
+            {% for r in current_roles_list %}
+            <option value="{{ r }}">Comment as: {{ ROLE_LABELS.get(r, r) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <textarea data-role="comment-textarea" maxlength="500" placeholder="Add your comment…"></textarea>
+        <div class="remarks-save-row">
+          <button type="button" class="remarks-post-btn" data-role="comment-post-btn">💬 Post Comment</button>
+          <span class="remarks-char-count" data-role="comment-char-count">0 / 500</span>
+        </div>
+        <div class="remarks-status-msg" data-role="comment-status"></div>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var HISTORY_ID = {{ history_id|tojson }};
+  var root = document.getElementById('remarksPanel-{{ remarks_panel_id }}');
+  if (!root || !HISTORY_ID) return;
+
+  var ROLE_LABELS = {
+    'compliance': 'Compliance Officer',
+    'gate_in':    'Gate Security',
+    'migo_103':   'Stores Officer',
+    'migo_105':   'Quality / Release Officer',
+    'miro':       'Accounts Payable Officer',
+    'SuperAdmin': 'SuperAdmin'
+  };
+
+  function q(role) { return root.querySelector('[data-role="' + role + '"]'); }
+  function escHtml(str) {
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Collapse/expand ──────────────────────────────────────────────────
+  root.querySelector('.remarks-toggle').addEventListener('click', function () {
+    root.classList.toggle('open');
+  });
+
+  // ── Load ─────────────────────────────────────────────────────────────
+  function load() {
+    fetch('/api/remarks/' + HISTORY_ID)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.success) return;
+        _renderRemark(d.remark);
+        _renderComments(d.comments);
+      })
+      .catch(function () { /* silent -- panel just stays on "Loading…" */ });
+  }
+
+  function _renderRemark(remark) {
+    var el = q('remark-text');
+    var meta = q('remark-meta');
+    if (!el) return;
+    if (remark && remark.text) {
+      el.textContent = remark.text;
+      el.classList.remove('empty');
+      if (meta) {
+        var label = ROLE_LABELS[remark.updated_by_role] || remark.updated_by_role || '';
+        meta.textContent = label ? ('Last updated by ' + label + (remark.updated_at ? ' on ' + remark.updated_at : '')) : '';
+      }
+      var ta = q('remark-textarea');
+      if (ta) ta.value = remark.text;
+    } else {
+      el.textContent = 'No remark added yet.';
+      el.classList.add('empty');
+      if (meta) meta.textContent = '';
+    }
+  }
+
+  function _renderComments(comments) {
+    var listEl = q('comments-list');
+    var badge = q('count');
+    if (badge) {
+      var n = (comments || []).length;
+      badge.textContent = n;
+      badge.classList.toggle('zero', n === 0);
+    }
+    if (!listEl) return;
+    if (!comments || comments.length === 0) {
+      listEl.innerHTML = '<div class="remarks-no-comments">No comments yet.</div>';
+      return;
+    }
+    listEl.innerHTML = comments.map(function (c) {
+      var label = ROLE_LABELS[c.role] || c.role;
+      return '<div class="remarks-comment-item">' +
+        '<span class="remarks-comment-role">' + escHtml(label) + '</span>' +
+        '<span class="remarks-comment-time">' + escHtml(c.updated_at || '') + '</span>' +
+        '<div class="remarks-comment-text">' + escHtml(c.text) + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── Remark edit ──────────────────────────────────────────────────────
+  var editBtn = q('remark-edit-btn');
+  if (editBtn) {
+    editBtn.addEventListener('click', function () {
+      var box = q('remark-edit-box');
+      if (box) box.style.display = (box.style.display === 'none') ? 'block' : 'none';
+    });
+  }
+  var cancelBtn = q('remark-cancel-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', function () {
+      var box = q('remark-edit-box');
+      if (box) box.style.display = 'none';
+    });
+  }
+  var remarkTa = q('remark-textarea');
+  if (remarkTa) {
+    remarkTa.addEventListener('input', function () {
+      var cc = q('remark-char-count');
+      if (cc) cc.textContent = remarkTa.value.length + ' / 1000';
+    });
+  }
+  var saveBtn = q('remark-save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', function () {
+      var ta = q('remark-textarea');
+      var status = q('remark-status');
+      var text = ta ? ta.value.trim() : '';
+      if (!text) {
+        if (status) { status.textContent = 'Remark cannot be empty.'; status.className = 'remarks-status-msg err'; }
+        return;
+      }
+      saveBtn.disabled = true;
+      fetch('/api/remarks/' + HISTORY_ID, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          saveBtn.disabled = false;
+          if (d.success) {
+            if (status) { status.textContent = '✓ Saved'; status.className = 'remarks-status-msg ok'; }
+            var box = q('remark-edit-box');
+            if (box) box.style.display = 'none';
+            load();
+          } else {
+            if (status) { status.textContent = '❌ ' + (d.error || 'Save failed'); status.className = 'remarks-status-msg err'; }
+          }
+        })
+        .catch(function () {
+          saveBtn.disabled = false;
+          if (status) { status.textContent = '❌ Network error'; status.className = 'remarks-status-msg err'; }
+        });
+    });
+  }
+
+  // ── Comment post ─────────────────────────────────────────────────────
+  var commentTa = q('comment-textarea');
+  if (commentTa) {
+    commentTa.addEventListener('input', function () {
+      var cc = q('comment-char-count');
+      if (cc) cc.textContent = commentTa.value.length + ' / 500';
+    });
+  }
+  var postBtn = q('comment-post-btn');
+  if (postBtn) {
+    postBtn.addEventListener('click', function () {
+      var ta = q('comment-textarea');
+      var status = q('comment-status');
+      var picker = q('role-picker');
+      var text = ta ? ta.value.trim() : '';
+      if (!text) {
+        if (status) { status.textContent = 'Comment cannot be empty.'; status.className = 'remarks-status-msg err'; }
+        return;
+      }
+      var payload = { text: text };
+      if (picker) payload.role = picker.value;
+      postBtn.disabled = true;
+      fetch('/api/comments/' + HISTORY_ID, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          postBtn.disabled = false;
+          if (d.success) {
+            if (status) { status.textContent = '✓ Posted as ' + (ROLE_LABELS[d.role] || d.role); status.className = 'remarks-status-msg ok'; }
+            if (ta) ta.value = '';
+            var cc = q('comment-char-count');
+            if (cc) cc.textContent = '0 / 500';
+            load();
+          } else {
+            if (status) { status.textContent = '❌ ' + (d.error || 'Post failed'); status.className = 'remarks-status-msg err'; }
+          }
+        })
+        .catch(function () {
+          postBtn.disabled = false;
+          if (status) { status.textContent = '❌ Network error'; status.className = 'remarks-status-msg err'; }
+        });
+    });
+  }
+
+  load();
+})();
+</script>

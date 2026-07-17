@@ -35,7 +35,12 @@ _running_lock = threading.Lock()
 # Track auto-retry attempts per history_id: {history_id: {"count": int, "last": datetime}}
 _attempts: dict = {}
 
-MAX_AUTO_RETRIES = 3            # after this many failures, stop auto-retrying (poll still returns last error)
+# 5, not 3 -- now that approve/hold hard-stop retries below (see trigger_async),
+# the only case this cap still governs is a genuinely unresolved record where the
+# portal or bot glitched transiently. A little more headroom for a slow/flaky
+# portal is safe now that it can no longer run indefinitely on an already-decided
+# record. At 60s cooldown between attempts, 5 attempts spans ~5 minutes.
+MAX_AUTO_RETRIES = 5            # after this many failures, stop auto-retrying (poll still returns last error)
 RETRY_COOLDOWN = timedelta(seconds=60)   # minimum gap between auto-retries
 
 # Error substrings that mean "the portal gave a definitive, correct answer" rather than
@@ -63,7 +68,42 @@ def trigger_async(history_id: int, force: bool = False) -> bool:
     force=True: skip the "results already exist" / retry-cap checks (used by the Re-run button)
     and resets the retry counter.
     Returns True if a thread was started, False otherwise.
+
+    Human-decision gate (checked before anything else, including force=True):
+      - approval_status == 'approved': NEVER runs again, unconditionally. A human
+        has already signed off on this record; nothing here should touch it again,
+        automatically or manually. (api_gst_rerun() in app.py also blocks the
+        Re-run button itself on an approved record, as a second line of defense --
+        this check is what actually enforces it either way.)
+      - approval_status == 'hold': the automatic poll path (force=False, fired
+        every 5s by the GST Approval tab just from having the page open) does
+        NOT retry -- a human put this on hold and hasn't asked for anything to
+        happen yet. force=True (an explicit Re-run button click) still works,
+        since that's a deliberate human action, not the page silently retrying
+        in the background.
+    Previously neither of these was checked at all: a record could be approved
+    or held with a lingering bot_error on its row, and every subsequent poll
+    (page open, page reload, anyone viewing the record) would still see that
+    stale error and keep auto-retrying in bursts of MAX_AUTO_RETRIES, resetting
+    every time the app process restarted since _attempts is in-memory only --
+    effectively unbounded over time despite the per-burst cap.
     """
+    existing = get_gst_approval(history_id)
+    approval_status = (existing or {}).get("approval_status")
+
+    if approval_status == "approved":
+        logger.info(
+            f"[gst_runner] history_id={history_id} is approved -- re-run permanently blocked"
+        )
+        return False
+
+    if approval_status == "hold" and not force:
+        logger.info(
+            f"[gst_runner] history_id={history_id} is on hold -- auto-retry skipped, "
+            "manual Re-run required"
+        )
+        return False
+
     with _running_lock:
         if history_id in _running:
             logger.info(f"[gst_runner] already running for history_id={history_id}")
@@ -73,7 +113,6 @@ def trigger_async(history_id: int, force: bool = False) -> bool:
             _attempts.pop(history_id, None)
         else:
             # Don't re-run if clean results already exist
-            existing = get_gst_approval(history_id)
             if existing and not existing.get("bot_error"):
                 logger.info(f"[gst_runner] results already exist for history_id={history_id}")
                 return False

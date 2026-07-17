@@ -40,8 +40,7 @@ from database.db_operations import (
     get_history_search, get_today_counts,
     set_approval_status, set_hold_status,
     set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
-    set_dms_status, set_po_flow_type,
-    update_invoice_irn
+    set_dms_status, set_po_flow_type
 )
 from database.vehicle_master_operations import get_drivers_by_truck
 from database.supplier_operations import search_suppliers, get_supplier_by_code
@@ -385,6 +384,10 @@ def inject_globals():
         "has_role": _has_role,
         "current_role": session.get("role", ""),
         "current_username": session.get("username", ""),
+        # Used by templates/tabs/_remarks_panel.html to decide whether to
+        # show a role-picker before posting a comment -- only needed when
+        # the signed-in user holds more than one operational role.
+        "current_roles_list": sorted(_current_roles()),
         "allow_user_upload": config.ALLOW_USER_UPLOAD,
         "show_dashboard_counts": config.SHOW_DASHBOARD_COUNTS,
         "enable_inapp_notifications": config.ENABLE_INAPP_NOTIFICATIONS,
@@ -1639,6 +1642,7 @@ from database.gst_operations import (
     get_gst_approval, approve_gst, hold_gst, reset_gst_for_rerun
 )
 from services.gst_runner import trigger_async, is_running
+from database.remarks_operations import get_remark, upsert_remark, get_comments, add_comment
 
 
 @app.route("/api/gst/status/<int:history_id>")
@@ -1722,37 +1726,6 @@ def api_gst_hold(history_id):
     return jsonify({"success": True, "message": "GST placed on hold", "held_by": user})
 
 
-@app.route("/api/gst/save_irn/<int:history_id>", methods=["POST"])
-@api_login_required
-def api_gst_save_irn(history_id):
-    """
-    Save an edited IRN (Invoice Reference Number) from the GST Approval
-    tab. Targeted update of invoice_data.irn only -- see
-    database.db_operations.update_invoice_irn(). Editable until GST
-    approval_status becomes 'approved' (server-side lock, mirrors the
-    client-side check that also blocks the Approve button on an
-    unsaved edit).
-    """
-    blocked = _require_role_edit("compliance")
-    if blocked:
-        return blocked
-    history = get_history_by_id(history_id)
-    if not history:
-        return jsonify({"success": False, "error": "Record not found"}), 404
-
-    row = get_gst_approval(history_id)
-    if row and row.get("approval_status") == "approved":
-        return jsonify({"success": False, "error": "GST already approved — IRN is locked."}), 403
-
-    body = request.get_json(silent=True) or {}
-    irn = (body.get("irn") or "").strip()
-
-    if not update_invoice_irn(history_id, irn):
-        return jsonify({"success": False, "error": "DB update failed"}), 500
-
-    return jsonify({"success": True, "message": "IRN saved"})
-
-
 @app.route("/api/gst/rerun/<int:history_id>", methods=["POST"])
 @api_login_required
 def api_gst_rerun(history_id):
@@ -1766,6 +1739,39 @@ def api_gst_rerun(history_id):
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
+
+    # Hard block on an approved record. Previously missing entirely --
+    # reset_gst_for_rerun() unconditionally sets approval_status back to
+    # 'pending' and clears approval_by/approval_at, so clicking this button
+    # on an already-approved record would have silently un-approved it with
+    # no warning. A human decision to approve should never be reversible by
+    # a re-run click. (trigger_async() in gst_runner.py enforces this same
+    # rule at the bot-trigger level too, as a second line of defense -- this
+    # check exists so the user gets a clear error instead of the DB reset
+    # happening first and the bot trigger only silently declining after.)
+    row = get_gst_approval(history_id)
+    if row and row.get("approval_status") == "approved":
+        return jsonify({"success": False, "error": "Record is already approved — re-run is disabled."}), 403
+
+    # Refuse if a bot run is already in progress for this record. Previously
+    # missing: reset_gst_for_rerun() below wipes the gst_approval row back to
+    # blank/pending and re-locks Gate In (gst_check=0) UNCONDITIONALLY, with
+    # no check for whether a bot thread was already actively running. Two
+    # Re-run clicks close together -- e.g. an impatient double-click, or a
+    # second click while the first run's 30-90s bot cycle is still going --
+    # would wipe the row out from under the still-running first attempt,
+    # which then finishes later and overwrites that reset with its own
+    # result anyway. trigger_async(force=True)'s own _running check silently
+    # no-ops the second bot launch, so no second thread actually starts --
+    # but the DB reset and the "re-verification started" response already
+    # happened, telling the user something restarted when nothing did.
+    # Checking is_running() first stops the reset from ever firing in that
+    # case, and gives the user an honest, specific reason instead.
+    if is_running(history_id):
+        return jsonify({
+            "success": False,
+            "error": "A GST check is already in progress for this record — please wait for it to finish."
+        }), 409
 
     if not reset_gst_for_rerun(history_id):
         return jsonify({"success": False, "error": "DB reset failed"}), 500
@@ -1793,6 +1799,129 @@ def api_gst_screenshot(history_id, portal):
         return "Screenshot not found on disk", 404
 
     return send_file(path, mimetype="image/png")
+
+
+# ============================================================
+# REMARKS & COMMENTS
+# One record-wide Remark (set/edited only by Compliance) plus one comment
+# per role (posting again overwrites what's shown, full history kept in
+# the DB -- see database/remarks_operations.py). Rendered by the shared
+# templates/tabs/_remarks_panel.html partial, included at the bottom of
+# every tab so it's visible regardless of which tab is active.
+# ============================================================
+
+@app.route("/api/remarks/<int:history_id>")
+@login_required
+def api_get_remarks(history_id):
+    """
+    Read-only: returns the Remark plus the latest comment per role.
+    Anyone who can view the record at all can read this -- same visibility
+    as the record itself, no per-role gating on reads. Username is never
+    included in the response; only role, text, and timestamps.
+    """
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    remark = get_remark(history_id)
+    comments = get_comments(history_id)
+
+    def _fmt(dt):
+        return dt.strftime("%d-%m-%Y %H:%M") if hasattr(dt, "strftime") else dt
+
+    return jsonify({
+        "success": True,
+        "remark": {
+            "text": (remark or {}).get("remark_text") or "",
+            "updated_by_role": (remark or {}).get("updated_by_role") or "",
+            "updated_at": _fmt((remark or {}).get("updated_at")) if remark else None,
+        },
+        "comments": [
+            {
+                "role": c["role"],
+                "text": c["comment_text"],
+                "updated_at": _fmt(c["created_at"]),
+            }
+            for c in comments
+        ],
+    })
+
+
+@app.route("/api/remarks/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_save_remark(history_id):
+    """
+    Set/edit the single record-wide Remark. Gated to the Compliance role
+    (or a SuperAdmin with edit rights) -- same rule as every other field
+    Compliance owns on Extracted Data / GST Approval, since the Remark is
+    meant to be authored by whoever is reviewing those two tabs.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return jsonify({"success": False, "error": "Remark cannot be empty"}), 400
+    if len(text) > 1000:
+        return jsonify({"success": False, "error": "Remark is too long (max 1000 characters)"}), 400
+
+    role_tag = "SuperAdmin" if _is_superadmin() else "compliance"
+    if not upsert_remark(history_id, text, role_tag, _current_user()):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "message": "Remark saved"})
+
+
+@app.route("/api/comments/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_add_comment(history_id):
+    """
+    Add (or, from the UI's point of view, overwrite) the current user's
+    role's comment. Role is never trusted from the client body as-is --
+    a SuperAdmin with edit rights always posts as "SuperAdmin" regardless
+    of what's sent; a regular user must hold the role they're posting as
+    (their own current_roles_list), so nobody can post a comment
+    attributed to a role they don't actually have.
+    """
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return jsonify({"success": False, "error": "Comment cannot be empty"}), 400
+    if len(text) > 500:
+        return jsonify({"success": False, "error": "Comment is too long (max 500 characters)"}), 400
+
+    if _is_superadmin():
+        if not _admin_can_edit():
+            return jsonify({"success": False, "error": "View-only admin access — editing disabled."}), 403
+        role_tag = "SuperAdmin"
+    else:
+        requested_role = (body.get("role") or "").strip()
+        my_roles = _current_roles()
+        if not my_roles:
+            return jsonify({"success": False, "error": "Your account has no assigned role to comment as."}), 403
+        if requested_role and requested_role in my_roles:
+            role_tag = requested_role
+        elif len(my_roles) == 1:
+            role_tag = next(iter(my_roles))
+        else:
+            return jsonify({
+                "success": False,
+                "error": "You hold more than one role — please specify which role to comment as."
+            }), 400
+
+    if not add_comment(history_id, role_tag, text, _current_user()):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "message": "Comment saved", "role": role_tag})
 
 
 # ============================================================

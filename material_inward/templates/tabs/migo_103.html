@@ -448,6 +448,11 @@
         {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
     </button>
   </div>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'migo103' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
 </div>
 
 <!-- Compare Documents Modal -->

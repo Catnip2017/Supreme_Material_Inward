@@ -372,6 +372,7 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             total_amount = EXCLUDED.total_amount,
             grand_total = EXCLUDED.grand_total,
             hsn_details = EXCLUDED.hsn_details,
+            irn = EXCLUDED.irn,
             updated_at = CURRENT_TIMESTAMP
     """
     values = (
@@ -387,14 +388,15 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
         data.get("total_tax_amount"), data.get("total_amount"), data.get("grand_total"), hsn,
         data.get("irn")
     )
-    # NOTE: "irn" is in the INSERT column list (so the OCR-extracted value is
-    # stored the first time this row is created) but deliberately NOT in the
-    # ON CONFLICT DO UPDATE SET list above. IRN is only ever displayed/edited
-    # on the GST Approval tab (see update_invoice_irn() below), never on the
-    # Extracted Data > Invoice tab -- that tab's save payload never includes
-    # "irn" at all, so if it were included in DO UPDATE SET, every routine
-    # Invoice-tab save would silently overwrite irn back to NULL using
-    # data.get("irn") = None from a payload that was never meant to carry it.
+    # "irn" is now a regular Invoice-tab field like any other -- editable on
+    # Extracted Data > Invoice, included in this row's INSERT and its
+    # ON CONFLICT DO UPDATE SET, and saved via the same saveExtractedInvoice()
+    # payload/route as everything else. Previously IRN was exclusively
+    # edited from the GST Approval tab via a separate targeted-update
+    # function (update_invoice_irn(), now removed) specifically to avoid
+    # this save silently overwriting it -- that carve-out is no longer
+    # needed now that the Invoice tab is the single place IRN gets edited;
+    # GST Approval just displays it read-only.
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -403,30 +405,6 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
                 return True
     except Exception as e:
         logger.error(f"Failed to save invoice for history_id {history_id}: {e}")
-        return False
-
-
-def update_invoice_irn(history_id: int, irn: str) -> bool:
-    """
-    Targeted update of ONLY invoice_data.irn -- used by the GST Approval
-    tab's IRN save action. Deliberately does not touch any other invoice
-    column, unlike save_invoice_to_db() which rewrites the whole row.
-    Requires the row to already exist (created by the initial OCR save).
-    """
-    try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE invoice_data SET irn = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    (irn, history_id)
-                )
-                if cur.rowcount == 0:
-                    logger.warning(f"update_invoice_irn: no invoice_data row for history_id {history_id}")
-                    return False
-                logger.info(f"IRN saved for history_id {history_id}")
-                return True
-    except Exception as e:
-        logger.error(f"Failed to save IRN for history_id {history_id}: {e}")
         return False
 
 

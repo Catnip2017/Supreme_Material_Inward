@@ -40,6 +40,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.edge.options import Options
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from services.edge_driver_check import ensure_matching_edge_driver
 
@@ -130,12 +131,34 @@ class EInvoiceBot:
         try:
             passed = self._solve_captcha_and_submit(gstin)
             if not passed:
-                result["error"] = "Captcha bypass failed after max retries"
+                # If most attempts failed on connectivity specifically (not
+                # elements just missing from an otherwise-loaded page), say so
+                # -- points at the portal/network rather than our scraping logic.
+                conn_fails = getattr(self, "_last_connectivity_failures", 0)
+                if conn_fails >= (self.MAX_CAP // 2):
+                    result["error"] = (
+                        f"Captcha bypass failed after {self.MAX_CAP} attempts -- {conn_fails} of them "
+                        "failed on connectivity/timeout errors specifically. The E-Invoice portal is "
+                        "likely slow, down, or unreachable rather than this being a data problem."
+                    )
+                else:
+                    result["error"] = "Captcha bypass failed after max retries"
                 return result
 
             self._scrape_result(result)
             result["screenshot"] = self._save_screenshot(gstin)
 
+        except (TimeoutException, WebDriverException) as exc:
+            # See the matching comment in taxpayer_search_bot.py's search() --
+            # same reasoning: a connectivity/portal-availability failure is
+            # categorically different from a bug in our own scraping logic,
+            # and is worth labelling distinctly so it's obvious from the error
+            # text alone that this likely isn't a data or code problem.
+            result["error"] = (
+                f"E-Invoice portal appears unreachable or timed out (connectivity "
+                f"issue, not a data problem) — will retry automatically: {exc}"
+            )
+            logger.error(f"[EInvoiceBot] search({gstin}) connectivity failure: {exc}", exc_info=True)
         except Exception as exc:
             result["error"] = str(exc)
             logger.error(f"[EInvoiceBot] search({gstin}): {exc}", exc_info=True)
@@ -147,6 +170,11 @@ class EInvoiceBot:
         self._driver.get(self.URL)
         time.sleep(2)
 
+        self._last_connectivity_failures = 0   # exposed to search() for a
+                                                 # clearer error message if this
+                                                 # loop exhausts its attempts --
+                                                 # see the matching counter/
+                                                 # comment in taxpayer_search_bot.py
         for attempt in range(1, self.MAX_CAP + 1):
             logger.info(f"[cap] attempt {attempt}/{self.MAX_CAP}")
             try:
@@ -219,6 +247,10 @@ class EInvoiceBot:
                 logger.warning(f"[cap] attempt {attempt}: unclear response")
                 self._refresh_captcha()
 
+            except (TimeoutException, WebDriverException) as exc:
+                self._last_connectivity_failures += 1
+                logger.error(f"[cap] attempt {attempt} connectivity error: {exc}")
+                time.sleep(2)
             except RuntimeError as exc:
                 logger.error(f"[cap] attempt {attempt} failed: {exc}")
                 time.sleep(2)

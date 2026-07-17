@@ -36,6 +36,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.edge.options import Options
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from services.edge_driver_check import ensure_matching_edge_driver
 
@@ -171,6 +172,22 @@ class TaxpayerSearchBot:
             self._load_filing_table()   # click SHOW FILING TABLE → SEARCH for FY
             self._scrape_result(result)
 
+        except (TimeoutException, WebDriverException) as exc:
+            # Connectivity/portal-availability failure -- the browser couldn't
+            # load the page, an element never appeared in time, or the driver
+            # itself lost its connection. This is categorically different from
+            # a bug in our scraping logic: it usually means the GST portal is
+            # slow, down for maintenance, or the network hiccuped, and it will
+            # very likely resolve on its own on a later attempt. Labelled
+            # distinctly here so the error shown on the GST Approval tab (and
+            # in logs) tells the user/ops "this looks like the portal, not us"
+            # instead of surfacing a raw Selenium exception that reads like an
+            # application bug either way.
+            result["error"] = (
+                f"GST portal appears unreachable or timed out (connectivity issue, "
+                f"not a data problem) — will retry automatically: {exc}"
+            )
+            logger.error(f"[TaxpayerSearchBot] search({gstin}) connectivity failure: {exc}", exc_info=True)
         except Exception as exc:
             result["error"] = str(exc)
             logger.error(f"[TaxpayerSearchBot] search({gstin}): {exc}", exc_info=True)
@@ -206,6 +223,11 @@ class TaxpayerSearchBot:
         time.sleep(3)
 
         attempt = 0
+        connectivity_failures = 0   # tracks how many attempts failed due to a
+                                     # timeout/WebDriver-level error specifically,
+                                     # as opposed to an element genuinely not
+                                     # being on the page -- used below to give a
+                                     # clearer final message if the cap is reached.
         while attempt < self.MAX_SEARCH_ATTEMPTS:
             attempt += 1
             logger.info(f"[cap] attempt {attempt}/{self.MAX_SEARCH_ATTEMPTS}")
@@ -303,6 +325,10 @@ class TaxpayerSearchBot:
                 )
                 self._refresh_captcha()
 
+            except (TimeoutException, WebDriverException) as exc:
+                connectivity_failures += 1
+                logger.error(f"[cap] attempt {attempt} connectivity error: {exc}")
+                time.sleep(2)
             except RuntimeError as exc:
                 logger.error(f"[cap] attempt {attempt} failed: {exc}")
                 time.sleep(2)
@@ -315,6 +341,18 @@ class TaxpayerSearchBot:
         # rather than transient (e.g. GSTIN input never appearing). Raising
         # here lets search()'s existing except Exception handler catch it and
         # populate result["error"] cleanly, same as any other bot failure.
+        #
+        # If most/all attempts failed on connectivity specifically (rather than
+        # elements just not being found on an otherwise-loaded page), say so --
+        # that distinction matters to whoever reads this error later: it points
+        # at the portal/network being unavailable, not at the page structure
+        # having changed or our scraping logic being broken.
+        if connectivity_failures >= (self.MAX_SEARCH_ATTEMPTS // 2):
+            raise RuntimeError(
+                f"Gave up after {self.MAX_SEARCH_ATTEMPTS} attempts -- {connectivity_failures} of them "
+                "failed on connectivity/timeout errors specifically. The GST portal is likely slow, "
+                "down, or unreachable rather than this being a data or scraping-logic problem."
+            )
         raise RuntimeError(
             f"Gave up after {self.MAX_SEARCH_ATTEMPTS} attempts -- page never "
             "reached a recognizable state (captcha/search element issue)."
