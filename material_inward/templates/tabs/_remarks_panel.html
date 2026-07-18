@@ -1,4 +1,4 @@
-<!--
+{#
   _remarks_panel.html — shared Remarks & Comments panel.
 
   Included at the bottom of every tab (below that tab's primary action
@@ -9,13 +9,24 @@
   inclusions (or with any other tab's script), the caller must set a
   unique `remarks_panel_id` variable immediately before each include, e.g.:
 
-    {% set remarks_panel_id = 'extracted' %}
-    {% include 'tabs/_remarks_panel.html' %}
+    [[ set remarks_panel_id = 'extracted' ]]
+    [[ include 'tabs/_remarks_panel.html' ]]
 
   and every element/script below is scoped off that unique id -- no bare
   global const/let/var, no un-namespaced element ids, so six copies can
   coexist on one page safely.
--->
+
+  NOTE: this whole block must stay a Jinja-comment block (curly-brace +
+  hash, opening and closing), not a plain HTML comment. Jinja parses its
+  template tags anywhere in the file regardless of HTML comments, so a
+  real, working include directive written as an "example" here would
+  literally re-include this file into itself -- infinite recursion,
+  "maximum recursion depth exceeded" crash on every view. That is why
+  the example above uses double square brackets instead of real tag
+  delimiters, and why this note deliberately avoids spelling out the
+  actual comment/tag delimiter characters -- doing so would close this
+  comment block early and break the page exactly the same way.
+#}
 <style>
 .remarks-panel {
   background:white; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,0.06);

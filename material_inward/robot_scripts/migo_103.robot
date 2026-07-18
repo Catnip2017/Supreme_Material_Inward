@@ -79,7 +79,7 @@ Fill MIGO 103 And Post
     # --- Parse ITEMS_JSON ---
     ${items_json}=    Evaluate    __import__('base64').b64decode('${ITEMS_JSON_B64}').decode()
 
-    ${items}=    Evaluate    __import__('json').loads('${ITEMS_JSON}'.replace("'", '"'))
+    ${items}=    Evaluate    __import__('json').loads('${items_json}'.replace("'", '"'))
     ${total}=    Get Length    ${items}
     Log To Console    Total matched pairs to fill: ${total}
 

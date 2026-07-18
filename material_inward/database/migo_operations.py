@@ -227,6 +227,54 @@ def get_migo_entry(history_id: int) -> Optional[dict]:
 
 
 
+def shape_invoice_items_for_migo(hsn_details) -> list:
+    """
+    Reshape invoice_data.hsn_details (raw OCR/goods-table field names) into
+    the MIGO line-item schema used by the MIGO 103 "Invoice Line Items"
+    table and by the bot payload:
+      - material_code: SAP material code from invoice
+      - short_text: human-readable description (consolidated; no more
+        'material'/'mat_short_text')
+      - hsn_sac
+      - qty_expected, qty_actual (UI shows qty_actual as "Delivery Note Qty")
+      - rate, amount
+      - batch: empty by default; filled in MIGO 105
+
+    This is the single place that defines the hsn_details -> MIGO item
+    mapping. It's called both when pre-seeding migo_entries.items_data
+    (map_ocr_to_migo, below) and when rendering the MIGO 103 tab's
+    "Invoice Line Items (from OCR)" table live from the current
+    invoice_data (see view_detail() in app.py) -- so the two never drift
+    apart the way items_data and hsn_details could before.
+    """
+    hsn_list = hsn_details or []
+    if isinstance(hsn_list, str):
+        try:
+            hsn_list = json.loads(hsn_list)
+        except Exception:
+            hsn_list = []
+    if not isinstance(hsn_list, list):
+        return []
+
+    items = []
+    for idx, hsn in enumerate(hsn_list, 1):
+        if not isinstance(hsn, dict):
+            continue
+        items.append({
+            "line":          idx,
+            "material_code": hsn.get("material_code") or "",
+            "short_text":    hsn.get("description") or "",
+            "hsn_sac":       hsn.get("hsn_sac") or "",
+            "qty_expected":  hsn.get("quantity") or "",
+            "qty_actual":    hsn.get("quantity") or "",  # pre-fill = qty_expected (delivery note qty)
+            "unit":          hsn.get("unit") or "",
+            "rate":          hsn.get("rate") or "",
+            "amount":        hsn.get("taxable_value") or "",
+            "batch":         "",
+        })
+    return items
+
+
 def map_ocr_to_migo(
     invoice_data: Optional[dict],
     ewaybill_data: Optional[dict],
@@ -235,13 +283,8 @@ def map_ocr_to_migo(
     """
     Map OCR-extracted data to MIGO 103 form fields.
 
-    Per-line items use clean schema:
-      - material_code: SAP material code from invoice
-      - short_text: human-readable description (consolidated; no more 'material'/'mat_short_text')
-      - hsn_sac
-      - qty_expected, qty_actual (UI shows qty_actual as "Delivery Note Qty")
-      - rate, amount
-      - batch: empty by default; filled in MIGO 105
+    Per-line items use the shared schema built by
+    shape_invoice_items_for_migo() -- see that function's docstring.
     """
     data = {}
 
@@ -264,32 +307,12 @@ def map_ocr_to_migo(
     if ewaybill_data:
         data["migoGRSlipNo"] = ewaybill_data.get("ewaybill_number") or ""
 
-    items = []
-    if invoice_data and invoice_data.get("hsn_details"):
-        hsn_list = invoice_data["hsn_details"]
-        if isinstance(hsn_list, str):
-            try:
-                hsn_list = json.loads(hsn_list)
-            except Exception:
-                hsn_list = []
-        for idx, hsn in enumerate(hsn_list, 1):
-            items.append({
-                "line":          idx,
-                "material_code": hsn.get("material_code") or "",
-                "short_text":    hsn.get("description") or "",
-                "hsn_sac":       hsn.get("hsn_sac") or "",
-                "qty_expected":  hsn.get("quantity") or "",
-                "qty_actual":    hsn.get("quantity") or "",  # pre-fill = qty_expected (delivery note qty)
-                "unit":          hsn.get("unit") or "",
-                "rate":          hsn.get("rate") or "",
-                "amount":        hsn.get("taxable_value") or "",
-                "batch":         "",
-            })
     # v7: EWB goods fallback removed — invoice_data.hsn_details is the
     # single source of goods lines. If invoice OCR failed, items stay
     # empty until the invoice data is corrected on the Extracted Data tab.
-
-    data["items_data"] = items
+    data["items_data"] = shape_invoice_items_for_migo(
+        invoice_data.get("hsn_details") if invoice_data else None
+    )
     return data
 
 def save_miro_doc_number(history_id: int, miro_doc_number: str) -> bool:

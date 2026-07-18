@@ -323,7 +323,12 @@
               </tr>
             </thead>
             <tbody id="invoiceItemsBody">
-              {% set items = (migo_data.get('items_data') if migo_data else []) or [] %}
+              {# Rendered live from invoice_data.hsn_details (see view_detail()
+                 in app.py), not from the migo_entries.items_data snapshot --
+                 that snapshot goes stale once Gate In posts, so corrections
+                 made afterward on the Extracted Data tab were previously
+                 never reflected here. #}
+              {% set items = invoice_line_items or [] %}
               {% for item in items %}
               <tr data-idx="{{ loop.index0 }}">
                 <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)" {% if step_locked %}disabled{% endif %}></button></td>

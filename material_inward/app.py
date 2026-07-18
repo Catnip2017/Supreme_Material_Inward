@@ -50,7 +50,8 @@ from database.gatein_operations import (
 from database.migo_operations import (
     upsert_migo_entry, save_migo_105_fields,
     get_migo_entry, map_ocr_to_migo,
-    update_migo_105_items_with_batches
+    update_migo_105_items_with_batches,
+    shape_invoice_items_for_migo
 )
 from database.miro_operations import (
     upsert_miro_entry, get_miro_entry, map_ocr_to_miro
@@ -551,6 +552,19 @@ def view_detail(history_id):
         can_view_migo_105  = config.is_step_enabled("migo_105")  and _has_role("migo_105")
         can_view_miro      = config.is_step_enabled("miro")      and _has_role("miro")
 
+        # MIGO 103's "Invoice Line Items (from OCR)" table is rendered live
+        # from the current invoice_data.hsn_details, not from the one-time
+        # migo_entries.items_data snapshot -- that snapshot goes stale the
+        # moment Gate In posts (see _auto_populate_form_tables()'s
+        # early-return), so any correction made to the Invoice tab's Goods
+        # Information table afterward was previously never reflected here.
+        # Reading it live means this table always shows whatever is
+        # currently saved (and, once GST is approved, exactly what was
+        # approved, since Extracted Data is locked from then on).
+        invoice_line_items = shape_invoice_items_for_migo(
+            (details.get("invoice_data") or {}).get("hsn_details")
+        )
+
         # First tab this user is allowed to see, in pipeline order -- used
         # to mark the initial active nav button/pane so a downstream-only
         # role (e.g. Gate Security) doesn't land on a blank "Documents"
@@ -579,6 +593,7 @@ def view_detail(history_id):
             lr_data=details.get("lr_data"),
             gatein_data=gatein_data,
             migo_data=migo_data,
+            invoice_line_items=invoice_line_items,
             miro_data=miro_data,
             po_data=po_data,
             username=session.get("username"),
