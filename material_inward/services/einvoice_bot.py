@@ -49,6 +49,18 @@ logger = logging.getLogger(__name__)
 SCREENSHOT_DIR = r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward\gst_screenshots\einvoice"
 SCREENSHOT_TTL = 10 * 24 * 3600   # 10 days in seconds
 
+# Persistent Edge profile -- was previously unset, so every run got a fresh
+# temp profile that Selenium deletes on driver.quit(). That meant the native
+# Windows/Edge "wants to Access other apps and services on this device"
+# permission prompt (seen interfering with the bot -- it sits on top of the
+# page as a browser-chrome dialog Selenium can't dismiss via normal DOM
+# calls) could never be permanently resolved: even if someone clicked
+# Allow/Block on the physical screen, that choice vanished with the profile
+# and the prompt just came back on the next run. Pointing at a real,
+# reused folder means a single manual Allow/Block click here sticks for
+# every future run against this same site.
+EDGE_PROFILE_DIR = r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward\gst_edge_profile\einvoice"
+
 
 class EInvoiceBot:
     # ── Confirmed working URL from GSTPortalBot ────────────────────────────────
@@ -83,6 +95,8 @@ class EInvoiceBot:
         self._cleanup_old_screenshots()
         ensure_matching_edge_driver(logger)
 
+        os.makedirs(EDGE_PROFILE_DIR, exist_ok=True)
+
         opts = Options()
         if headless:
             opts.add_argument("--headless=new")
@@ -90,6 +104,7 @@ class EInvoiceBot:
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--window-size=1280,800")
+        opts.add_argument(f"--user-data-dir={EDGE_PROFILE_DIR}")
         opts.add_experimental_option("excludeSwitches", ["enable-automation"])
         opts.add_experimental_option("useAutomationExtension", False)
 

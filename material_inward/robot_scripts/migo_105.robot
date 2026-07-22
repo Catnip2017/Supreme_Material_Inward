@@ -79,7 +79,7 @@ Fill MIGO 105 And Post
     Sleep    0.5s
 
     Set Focus     ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/txtGODYNPRO-MAT_DOC
-    Input Text    ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/txtGODYNPRO-MAT_DOC
+    Safe Input Text    ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/txtGODYNPRO-MAT_DOC
     ...    ${mat_doc_clean}
     Send VKey    0
     Sleep    3s
@@ -90,7 +90,7 @@ Fill MIGO 105 And Post
 
     # ── LINE 1 ONLY: Where tab — storage location + remarks ────────
     # Navigate to line 1 first
-    Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    1
+    Safe Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    1
     Set Focus     ${det_base}/txtGODYNPRO-DETAIL_ZEILE
     Send VKey    0
     Sleep    1s
@@ -103,7 +103,7 @@ Fill MIGO 105 And Post
     Dismiss Any Popup
 
     # Fill storage location
-    Input Text
+    Safe Input Text
     ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT./ssubSUB_TS_GOITEM_DESTINATION:SAPLMIGO:0325/ctxtGOITEM-LGOBE
     ...    ${storage_clean}
     Send VKey    0
@@ -112,7 +112,7 @@ Fill MIGO 105 And Post
 
     # Fill remarks if provided
     IF    '${rem_clean}' != ''
-        Input Text
+        Safe Input Text
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT./ssubSUB_TS_GOITEM_DESTINATION:SAPLMIGO:0325/txtGOITEM-SGTXT
         ...    ${rem_clean}
         Send VKey    0
@@ -127,7 +127,7 @@ Fill MIGO 105 And Post
         ${line_num_str}=    Convert To String    ${line_num}
 
         # Navigate to line
-        Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num_str}
+        Safe Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num_str}
         Set Focus     ${det_base}/txtGODYNPRO-DETAIL_ZEILE
         Send VKey    0
         Sleep    1s
@@ -164,7 +164,7 @@ Fill MIGO 105 And Post
             ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_BATCH
             Sleep    1s
             Dismiss Any Popup
-            Input Text
+            Safe Input Text
             ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_BATCH/ssubSUB_TS_GOITEM_BATCH:SAPLMIGO:0335/ctxtGOITEM-CHARG
             ...    ${batch_for_line}
             Set Focus
@@ -191,7 +191,7 @@ Fill MIGO 105 And Post
         Sleep    1s
         Set Focus
         ...    ${hdr_ext}/ssubSUB_TS_GOHEAD_EXT_1:SAPLZIBS_MIRO_MIGO:0901/txtZIBS_AUTO_MIRO-DMBTR
-        Input Text
+        Safe Input Text
         ...    ${hdr_ext}/ssubSUB_TS_GOHEAD_EXT_1:SAPLZIBS_MIRO_MIGO:0901/txtZIBS_AUTO_MIRO-DMBTR
         ...    ${invoice_clean}
         Send VKey    0
@@ -200,9 +200,14 @@ Fill MIGO 105 And Post
     END
 
 
-    # --- Step 5: Post — commented out, not executing in prod yet ---
-    Set Focus        wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/btnMIGO_OK_GO
-    Click Element    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/btnMIGO_OK_GO
+    # --- Step 5: Post ---
+    # FIX: this used to click btnMIGO_OK_GO -- the PO-check/execute button,
+    # not a Save/Post action (same bug found and confirmed in migo_103.robot
+    # via SAP GUI Script Recording). Real Post button is
+    # wnd[0]/tbar[1]/btn[23]. The stale "commented out, not executing in
+    # prod yet" comment above was misleading -- this click was never
+    # actually commented out, it was live and silently doing nothing.
+    Click Element    wnd[0]/tbar[1]/btn[23]
     Sleep    3s
     Dismiss Any Popup
    ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
@@ -231,6 +236,21 @@ Read Status Bar With Retry
     END
     Log    Status bar check timed out. Last: "${msg}"    level=WARN
     RETURN    ${msg}
+
+Safe Input Text
+    # Retries once on failure -- covers the "Property text can not be set"
+    # AttributeError (stale/dead SAP GUI COM element reference, seen on
+    # migo_103.robot and gate_in.robot). Applied here too since migo_105.robot
+    # fills a similar set of header/item fields and is exposed to the same
+    # intermittent SAP GUI timing glitch.
+    [Arguments]    ${locator}    ${value}
+    ${status}=    Run Keyword And Return Status    Input Text    ${locator}    ${value}
+    IF    not ${status}
+        Log    Input Text failed on first attempt for ${locator} -- likely a stale SAP GUI element reference. Retrying once after a short pause.    level=WARN
+        Sleep    1s
+        Input Text    ${locator}    ${value}
+    END
+
 
 Clean Value
     # NOTE: previously ended with Split String + ${parts}[0], returning only

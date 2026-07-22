@@ -114,49 +114,49 @@ Fill Gate In Form And Submit
     Dismiss Any Popup
  
     # --- Step 3: Truck Details ---
-    Set Focus     wnd[0]/usr/ctxtP_ZVEN
-    Input Text    wnd[0]/usr/ctxtP_ZVEN      ${vendor_clean}
- 
-    Set Focus     wnd[0]/usr/ctxtP_TRANS
-    Input Text    wnd[0]/usr/ctxtP_TRANS     ${trans_clean}
- 
-    Input Text    wnd[0]/usr/ctxtP_TR_NO     ${truck_clean}
- 
+    Set Focus          wnd[0]/usr/ctxtP_ZVEN
+    Safe Input Text    wnd[0]/usr/ctxtP_ZVEN      ${vendor_clean}
+
+    Set Focus          wnd[0]/usr/ctxtP_TRANS
+    Safe Input Text    wnd[0]/usr/ctxtP_TRANS     ${trans_clean}
+
+    Safe Input Text    wnd[0]/usr/ctxtP_TR_NO     ${truck_clean}
+
     # --- Step 4: Category and Material Handling ---
-    Set Focus     wnd[0]/usr/ctxtP_ZCAT
-    Input Text    wnd[0]/usr/ctxtP_ZCAT      ${CATEGORY}
+    Set Focus          wnd[0]/usr/ctxtP_ZCAT
+    Safe Input Text    wnd[0]/usr/ctxtP_ZCAT      ${CATEGORY}
     Send VKey     0
     Sleep    2s
     Dismiss Any Popup
- 
-    Set Focus     wnd[0]/usr/txtP_MATNR
-    Input Text    wnd[0]/usr/txtP_MATNR      ${material_clean}
+
+    Set Focus          wnd[0]/usr/txtP_MATNR
+    Safe Input Text    wnd[0]/usr/txtP_MATNR      ${material_clean}
     Send VKey     0
     Sleep    2s
     Dismiss Any Popup
- 
+
     # --- Step 5: Challan and PO Details ---
-    Input Text    wnd[0]/usr/txtP_CH_NO      ${challan_no_clean}
- 
-    Set Focus     wnd[0]/usr/txtP_CHAN
-    Input Text    wnd[0]/usr/txtP_CHAN       ${challan_qty_clean}
- 
+    Safe Input Text    wnd[0]/usr/txtP_CH_NO      ${challan_no_clean}
+
+    Set Focus          wnd[0]/usr/txtP_CHAN
+    Safe Input Text    wnd[0]/usr/txtP_CHAN       ${challan_qty_clean}
+
     Send VKey     0
     Sleep    2s
     Dismiss Any Popup
- 
-    Input Text    wnd[0]/usr/txtP_BOENO      ${BOE_NO}
-    Input Text    wnd[0]/usr/ctxtP_EBELN     ${PURCHASE_ORDER}
- 
+
+    Safe Input Text    wnd[0]/usr/txtP_BOENO      ${BOE_NO}
+    Safe Input Text    wnd[0]/usr/ctxtP_EBELN     ${PURCHASE_ORDER}
+
     # --- Driver / Personnel Details ---
-    Input Text    wnd[0]/usr/txtP_DRI_N      ${DRIVER_NAME}
-    Input Text    wnd[0]/usr/txtP_PER        ${NUM_PERSONS}
- 
+    Safe Input Text    wnd[0]/usr/txtP_DRI_N      ${DRIVER_NAME}
+    Safe Input Text    wnd[0]/usr/txtP_PER        ${NUM_PERSONS}
+
     # --- License, Container, Gate Pass, Note ---
-    Input Text    wnd[0]/usr/txtP_DIR_LI     ${LICENSE_NO}
-    Input Text    wnd[0]/usr/txtP_ZCON       ${CONTAINER_NO}
-    Input Text    wnd[0]/usr/ctxtP_AUFNR     ${GATE_PASS_NO}
-    Input Text    wnd[0]/usr/txtP_NOTE1      ${NOTE}
+    Safe Input Text    wnd[0]/usr/txtP_DIR_LI     ${LICENSE_NO}
+    Safe Input Text    wnd[0]/usr/txtP_ZCON       ${CONTAINER_NO}
+    Safe Input Text    wnd[0]/usr/ctxtP_AUFNR     ${GATE_PASS_NO}
+    Safe Input Text    wnd[0]/usr/txtP_NOTE1      ${NOTE}
  
     # --- Step 6: Final Submit ---
     Set Focus        wnd[0]/tbar[1]/btn[8]
@@ -174,7 +174,7 @@ Fill Gate In Form And Submit
  
        IF    ${popup_present}
  
-         Input Text
+         Safe Input Text
          ...    wnd[1]/usr/ctxtP_SUB1
          ...    ${SUBCATEGORY}
          Send VKey    0
@@ -230,10 +230,33 @@ Clean Numeric
     ${cleaned}=    Strip String    ${cleaned}
     RETURN         ${cleaned}
  
+Safe Input Text
+    # Retries once on failure -- covers the "Property text can not be set"
+    # AttributeError (a stale/dead COM element reference, usually because
+    # SAP GUI was still mid-repaint/settling when the reference was grabbed,
+    # most often right after Dismiss Any Popup closed a dialog). Seen twice
+    # in production on two different fields; this makes every field-fill
+    # call in the main form resilient to that same class of transient
+    # timing glitch instead of failing the whole ~30s SAP session outright.
+    [Arguments]    ${locator}    ${value}
+    ${status}=    Run Keyword And Return Status    Input Text    ${locator}    ${value}
+    IF    not ${status}
+        Log    Input Text failed on first attempt for ${locator} -- likely a stale SAP GUI element reference. Retrying once after a short pause.    level=WARN
+        Sleep    1s
+        Input Text    ${locator}    ${value}
+    END
+
 Dismiss Any Popup
     ${present}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
     IF    ${present}
         Run Keyword And Ignore Error    Click Element    wnd[1]/tbar[0]/btn[0]
+        # Give SAP GUI a moment to finish closing the popup and repaint
+        # wnd[0] before the caller grabs a new element reference from it.
+        # Without this, an Input Text called immediately after can grab a
+        # stale/dead COM reference and fail with "Property text can not be
+        # set" -- seen twice now (vendor field, then Material field), both
+        # times on the very next Input Text right after this keyword ran.
+        Sleep    1s
     END
  
 # Close SAP Session

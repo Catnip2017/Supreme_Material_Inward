@@ -1,7 +1,21 @@
-
-
 *** Settings ***
-Documentation     MIGO 103 SAP Automation — GR into Blocked Stock
+Documentation     STANDALONE TEST — MIGO 103 SAP Automation, GR into Blocked Stock.
+...               Run this file directly (no Flask app / queue needed) to test
+...               the item-fill logic with hardcoded dummy data and multiple
+...               line items. All business data below is hardcoded in
+...               *** Variables *** -- edit those values for your test PO
+...               before running. SAP login credentials still come from
+...               your existing .env file (not hardcoded here, since those
+...               are real secrets).
+...
+...               SAFETY: ${DRY_RUN} defaults to ${TRUE}, meaning this will
+...               fill every field and do the diagnostic read-back of what
+...               SAP actually captured, but will NOT click Post and will
+...               NOT create a real material document. Once you've confirmed
+...               the read-back values look correct, set ${DRY_RUN} to
+...               ${FALSE} below to also test the real Post click -- only do
+...               that against a PO you don't mind actually posting a GR
+...               against (ideally a test/UAT PO, not a live production one).
 Library           SapGuiLibrary
 Library           Process
 Library           OperatingSystem
@@ -10,20 +24,27 @@ Library           DateTime
 Library           Collections
 
 *** Variables ***
-${PO_NUMBER}        ${EMPTY}
-${DOC_DATE}         ${EMPTY}
-${POST_DATE}        ${EMPTY}
-${DELIVERY_NOTE}    ${EMPTY}
-${BILL_OF_LADING}   ${EMPTY}
-${GR_SLIP_NO}       ${EMPTY}
-${HEADER_TEXT}      ${EMPTY}
-${REMARKS}          ${EMPTY}
-${ITEMS_JSON}       []
-${ITEMS_JSON_B64}    W10=
+# --- Toggle: keep as ${TRUE} until you've verified the read-back log lines
+# look correct. Only flip to ${FALSE} to test an actual Post click.
+${DRY_RUN}          ${TRUE}
 
+# --- Hardcoded dummy header data -- EDIT these for your test PO ---
+${PO_NUMBER}        4500001234
+${DOC_DATE}         17.07.2026
+${POST_DATE}        17.07.2026
+${DELIVERY_NOTE}    DN-TEST-001
+${BILL_OF_LADING}   BOL-TEST-001
+${GR_SLIP_NO}       GRSLIP-TEST-001
+${HEADER_TEXT}      Test GR header text
+${REMARKS}          Automated test run -- dummy data
+
+# --- Hardcoded dummy line items -- 3 lines, edit material_code/qty to match
+# real lines on your test PO. qty_expected = DN qty, qty_actual = actual
+# received qty (can differ from expected to test partial-receipt handling).
+${ITEMS_JSON}       [{"material_code": "100000123", "qty_expected": "10", "qty_actual": "10"}, {"material_code": "100000456", "qty_expected": "5", "qty_actual": "5"}, {"material_code": "100000789", "qty_expected": "20", "qty_actual": "18"}]
 
 *** Test Cases ***
-Execute MIGO 103
+Execute MIGO 103 Test
     [Setup]    Initialize SAP And Login
     ${mat_doc}=    Fill MIGO 103 And Post
     Log To Console    RESULT:MATERIAL_DOC_NUMBER:${mat_doc}
@@ -32,7 +53,6 @@ Execute MIGO 103
 
 *** Keywords ***
 Initialize SAP And Login
-    # Evaluate    __import__('dotenv').load_dotenv()
     Evaluate    __import__('dotenv').load_dotenv(__import__('os').getenv('DOTENV_PATH', '.env'), override=True)
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
     ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
@@ -43,7 +63,7 @@ Initialize SAP And Login
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Sleep    2s
 
-    Start Process    ${LOGON_PATH}   
+    Start Process    ${LOGON_PATH}
     Sleep    5s
 
     Connect To Session
@@ -76,19 +96,11 @@ Fill MIGO 103 And Post
     ${hdr_clean}=     Clean Value    ${HEADER_TEXT}
     ${rem_clean}=     Clean Value    ${REMARKS}
 
-    # --- Parse ITEMS_JSON ---
-    # FIX: this used to decode ITEMS_JSON_B64 into ${items_json} and then
-    # immediately discard it, instead parsing the unrelated ${ITEMS_JSON}
-    # variable -- which defaults to "[]" in *** Variables *** and is never
-    # actually set by rf_runner.py (only ITEMS_JSON_B64 is passed in from
-    # the app). That meant ${items} was always empty and ${total} was
-    # always 0, so this whole line-item loop silently never ran on any
-    # real run -- Material/Qty were never being filled at all, regardless
-    # of what the app sent. Now parsing the actual decoded payload.
-    ${items_json}=    Evaluate    __import__('base64').b64decode('${ITEMS_JSON_B64}').decode()
-    ${items}=         Evaluate    __import__('json').loads('''${items_json}''')
+    # --- Parse hardcoded ITEMS_JSON directly (no base64 round-trip needed
+    # for a standalone test -- ITEMS_JSON above is already plain JSON) ---
+    ${items}=    Evaluate    __import__('json').loads('''${ITEMS_JSON}''')
     ${total}=    Get Length    ${items}
-    Log To Console    Total matched pairs to fill: ${total}
+    Log To Console    Total dummy line items to fill: ${total}
 
     # --- Step 1: Navigate to MIGO ---
     Run Transaction    MIGO
@@ -99,29 +111,30 @@ Fill MIGO 103 And Post
     ${firstline}=    Set Variable
     ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011
 
-    # Force action to Goods Receipt (A01)
     Select From List By Label
     ...    ${firstline}/cmbGODYNPRO-ACTION
     ...    Goods Receipt
     Sleep    0.5s
 
-    # Force reference to Purchase Order (R01)
     Select From List By Label
     ...    ${firstline}/cmbGODYNPRO-REFDOC
     ...    Purchase Order
     Sleep    0.5s
 
-    # Movement type 103
     Set Focus     ${firstline}/ctxtGODEFAULT_TV-BWART
     Safe Input Text    ${firstline}/ctxtGODEFAULT_TV-BWART    103
 
-    # PO number
     Set Focus     ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER
     Safe Input Text    ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER    ${po_clean}
 
     Send VKey    0
     Sleep    3s
     Dismiss Any Popup
+
+    # --- Diagnostic: confirm the PO was actually accepted before we go any
+    # further -- read back the header status bar right after loading the PO.
+    ${po_load_msg}=    Get Value    wnd[0]/sbar
+    Log To Console    After PO load, status bar says: "${po_load_msg}"
 
     # --- Step 3: Header Fields ---
     ${hdr_base}=    Set Variable
@@ -133,20 +146,9 @@ Fill MIGO 103 And Post
     Set Focus     ${hdr_base}/ctxtGOHEAD-BUDAT
     Safe Input Text    ${hdr_base}/ctxtGOHEAD-BUDAT    ${POST_DATE}
 
-    # FIX: interleaving Dismiss Any Popup between each field now, not just
-    # around the whole block. On a PO with multiple line items, entering
-    # Delivery Note (LFSNR) can silently trigger a split/allocation popup
-    # that sits on top of wnd[0] -- if left uncleared, the very next
-    # Input Text (FRBNR) hits a blocked/stale reference and fails, and a
-    # bare retry doesn't help because the popup is still there. Confirmed
-    # in production: FRBNR failed twice in a row, back-to-back, on a PO
-    # with multiple lines.
     Safe Input Text    ${hdr_base}/txtGOHEAD-LFSNR     ${dn_clean}
-    Dismiss Any Popup
     Safe Input Text    ${hdr_base}/txtGOHEAD-FRBNR     ${bol_clean}
-    Dismiss Any Popup
     Safe Input Text    ${hdr_base}/txtGOHEAD-XABLN     ${slip_clean}
-    Dismiss Any Popup
     Safe Input Text    ${hdr_base}/txtGOHEAD-BKTXT     ${hdr_clean}
 
     Send VKey    0
@@ -163,8 +165,9 @@ Fill MIGO 103 And Post
 
         ${qty_actual}=    Clean Value    ${item}[qty_actual]
         ${qty_dn}=        Clean Value    ${item}[qty_expected]
+        ${mat_expected}=  Clean Value    ${item}[material_code]
 
-        Log To Console    Line ${line_num}: qty_actual=${qty_actual} qty_dn=${qty_dn}
+        Log To Console    Line ${line_num}: material_code(expected)=${mat_expected} qty_actual=${qty_actual} qty_dn=${qty_dn}
 
         # Navigate to correct line
         Safe Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num}
@@ -172,18 +175,16 @@ Fill MIGO 103 And Post
         Sleep    1s
         Dismiss Any Popup
 
-        # --- Diagnostic: confirm the line actually loaded from the PO and
-        # Material auto-populated, BEFORE we touch quantities. We don't have
-        # a verified field ID for the Material tab's MATNR control in this
-        # environment, so this is a best-effort guess wrapped in Run Keyword
-        # And Ignore Error -- if the ID is wrong it just logs "N/A" instead
-        # of failing the whole run. If the real ID differs, send us this
-        # log line and we'll correct it.
+        # --- Diagnostic: did Material auto-populate from the PO line? Best
+        # effort -- field ID for this screen isn't confirmed, so wrapped in
+        # Run Keyword And Ignore Error. If this logs "field ID not
+        # confirmed", grab the real technical ID from SAP GUI Script
+        # Recording and send it over so we can fix this properly.
         ${matnr_status}    ${matnr_check}=    Run Keyword And Ignore Error
         ...    Get Value
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_MATERIAL/ssubSUB_TS_GOITEM_MATERIAL:SAPLMIGO:0301/ctxtGOITEM-MATNR
         IF    '${matnr_status}' == 'PASS'
-            Log To Console    Line ${line_num} READBACK: MATNR (material)="${matnr_check}"
+            Log To Console    Line ${line_num} READBACK: MATNR (material)="${matnr_check}" (expected ${mat_expected})
         ELSE
             Log To Console    Line ${line_num} READBACK: MATNR field ID not confirmed for this screen -- could not read back (${matnr_check})
         END
@@ -206,16 +207,10 @@ Fill MIGO 103 And Post
         Sleep    1s
         Dismiss Any Popup
 
-        # --- Diagnostic read-back: confirm SAP actually kept what we typed
-        # before we ever reach the (previously broken) Post step. If these
-        # come back blank/zero, the line itself never loaded from the PO
-        # (navigation/PO-reference problem). If they come back correct, the
-        # values ARE in the screen and the earlier "material not fetched"
-        # symptom was actually just the missing/wrong Post click discarding
-        # everything when the session closed without saving.
+        # --- Diagnostic read-back: confirm SAP actually kept the qty values ---
         ${erfmg_check}=    Get Value    ${qty_base}/txtGOITEM-ERFMG
         ${lsmng_check}=    Get Value    ${qty_base}/txtGOITEM-LSMNG
-        Log To Console    Line ${line_num} READBACK: ERFMG(actual qty)="${erfmg_check}" LSMNG(DN qty)="${lsmng_check}"
+        Log To Console    Line ${line_num} READBACK: ERFMG(actual qty)="${erfmg_check}" (expected ${qty_actual}) LSMNG(DN qty)="${lsmng_check}" (expected ${qty_dn})
 
         # Where tab — fill remarks/text
         Click Element
@@ -237,12 +232,17 @@ Fill MIGO 103 And Post
         ...    ${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE
         Sleep    0.5s
     END
-    # --- Step 5: Post ---
-    # FIX: this used to click btnMIGO_OK_GO -- the PO-check/execute button
-    # from Step 2, not a Save/Post action. Confirmed via SAP GUI Script
-    # Recording that the real Post button is wnd[0]/tbar[1]/btn[23]. That's
-    # why every prior run returned MANUAL_CHECK_REQUIRED with an empty
-    # status bar -- nothing was ever actually being saved to SAP.
+
+    # --- Step 5: Post (skipped entirely if ${DRY_RUN} is ${TRUE}) ---
+    IF    ${DRY_RUN}
+        Log To Console    DRY_RUN is TRUE -- skipping Post click. No material document will be created. Review the READBACK log lines above, then set \${DRY_RUN} to \${FALSE} once you're confident, to also test a real Post.
+        RETURN    DRY_RUN_NO_POST
+    END
+
+    # FIX: confirmed via SAP GUI Script Recording -- the real Post button
+    # is wnd[0]/tbar[1]/btn[23] (previously this clicked btnMIGO_OK_GO,
+    # the PO-check/execute button from Step 2, which never actually saved
+    # anything).
     Click Element    wnd[0]/tbar[1]/btn[23]
 
     Sleep    3s
@@ -277,36 +277,18 @@ Read Status Bar With Retry
 
 Safe Input Text
     # Retries once on failure -- covers the "Property text can not be set"
-    # AttributeError (a stale/dead COM element reference). Two known causes
-    # seen in production: (1) SAP GUI still mid-repaint/settling when the
-    # reference was grabbed -- a plain wait fixes it; (2) a popup (e.g. a
-    # split/allocation dialog on a multi-line PO) silently opened on top of
-    # wnd[0] and is blocking it -- a plain wait does NOT fix this, the
-    # popup has to actually be dismissed first. First retry attempt tried
-    # only (1) and still failed twice in a row on the same field when the
-    # real cause was (2), so now dismissing any popup before retrying too.
+    # AttributeError (stale/dead SAP GUI COM element reference). Mirrors
+    # the same fix applied to production migo_103.robot and gate_in.robot.
     [Arguments]    ${locator}    ${value}
     ${status}=    Run Keyword And Return Status    Input Text    ${locator}    ${value}
     IF    not ${status}
-        Log    Input Text failed on first attempt for ${locator} -- likely a stale SAP GUI element reference or an uncleared popup. Dismissing any popup and retrying after a short pause.    level=WARN
-        Dismiss Any Popup
+        Log    Input Text failed on first attempt for ${locator} -- likely a stale SAP GUI element reference. Retrying once after a short pause.    level=WARN
         Sleep    1s
-        ${status2}=    Run Keyword And Return Status    Input Text    ${locator}    ${value}
-        IF    not ${status2}
-            Log    Input Text failed on second attempt for ${locator} too. Retrying once more after another popup check and longer pause.    level=WARN
-            Dismiss Any Popup
-            Sleep    2s
-            Input Text    ${locator}    ${value}
-        END
+        Input Text    ${locator}    ${value}
     END
 
 
 Clean Value
-    # NOTE: previously ended with Split String + ${parts}[0], returning only
-    # the first word -- e.g. "Storage bin A12" became just "Storage". Fixed
-    # to match the same corrected pattern used in gate_in.robot's Clean
-    # Value/Clean Material: strip whitespace and currency symbols, but keep
-    # the full multi-word value intact.
     [Arguments]    ${raw_value}
     ${val}=        Convert To String    ${raw_value}
     ${cleaned}=    Strip String    ${val}
@@ -331,10 +313,6 @@ Dismiss Any Popup
         Sleep    1s
     END
 
-
-# Close SAP Session
-#     # Log    Execution finished. Session kept open.
-#     # RETURN
 
 Close SAP Session
     Log    Closing SAP session...

@@ -45,6 +45,17 @@ logger = logging.getLogger(__name__)
 SCREENSHOT_DIR = r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward\gst_screenshots\taxpayer"
 SCREENSHOT_TTL = 10 * 24 * 3600   # 10 days in seconds
 
+# Persistent Edge profile -- was previously unset, so every run got a fresh
+# temp profile Selenium deletes on driver.quit(). That meant the native
+# Windows/Edge "wants to Access other apps and services on this device"
+# permission prompt (a browser-chrome dialog Selenium can't dismiss via
+# normal DOM calls, seen sitting on top of the page and likely contributing
+# to the "page never reached a recognizable state" captcha/search-element
+# failures) could never be permanently resolved -- even a manual Allow/Block
+# click vanished with the temp profile. Reusing a real folder means one
+# manual click here sticks for every future run against this site.
+EDGE_PROFILE_DIR = r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward\gst_edge_profile\taxpayer"
+
 
 class TaxpayerSearchBot:
     URL     = "https://services.gst.gov.in/services/searchtp"
@@ -90,6 +101,8 @@ class TaxpayerSearchBot:
         self._cleanup_old_screenshots()
         ensure_matching_edge_driver(logger)
 
+        os.makedirs(EDGE_PROFILE_DIR, exist_ok=True)
+
         opts = Options()
         if headless:
             opts.add_argument("--headless=new")
@@ -97,6 +110,7 @@ class TaxpayerSearchBot:
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--window-size=1366,768")
+        opts.add_argument(f"--user-data-dir={EDGE_PROFILE_DIR}")
         opts.add_experimental_option("excludeSwitches", ["enable-automation"])
         opts.add_experimental_option("useAutomationExtension", False)
 

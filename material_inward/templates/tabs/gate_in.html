@@ -183,7 +183,7 @@
         <div class="form-group">
           <label>Transporter</label>
           <input type="text" id="transporter" class="form-input" maxlength="40"
-                 value="{{ (gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '' }}"
+                 value="{{ ((gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '')|truncate(40, True, '', 0) }}"
                  {% if gate_in_locked %}disabled{% endif %}>
         </div>
       </div>
@@ -197,7 +197,7 @@
         <div class="form-group">
           <label>Container No</label>
           <input type="text" id="containerNo" class="form-input" maxlength="20"
-                 value="{{ (gatein_data.get('container_no') if gatein_data else '') or '' }}"
+                 value="{{ ((gatein_data.get('container_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
                  {% if gate_in_locked %}disabled{% endif %}>
         </div>
         <div class="form-group" aria-hidden="true"></div>
@@ -208,7 +208,7 @@
           <label>Truck No <span class="req">*</span> <span class="manual-hint">Max 12 chars · auto-caps</span></label>
           <div class="vehicle-lookup-row">
             <input type="text" id="truckNo" class="form-input" maxlength="12"
-                   value="{{ (gatein_data.get('truck_no') if gatein_data else '') or '' }}"
+                   value="{{ ((gatein_data.get('truck_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
                    {% if gate_in_locked %}disabled{% endif %}>
             <button type="button" class="btn-lookup" id="fetchDriverBtn" onclick="lookupVehicle()"
                     {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch Driver</button>
@@ -219,7 +219,7 @@
         <div class="form-group">
           <label>License No <span class="req">*</span> <span class="manual-hint">e.g. HR06 1234567890123</span></label>
           <input type="text" id="licenseNo" class="form-input" maxlength="20"
-                 value="{{ (gatein_data.get('license_no') if gatein_data else '') or '' }}"
+                 value="{{ ((gatein_data.get('license_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
                  placeholder="e.g. HR06 1234567890123"
                  {% if gate_in_locked %}disabled{% endif %}>
           <div class="field-error-msg" id="err_licenseNo">Required</div>
@@ -251,7 +251,7 @@
         <div class="form-group">
           <label>Transporter</label>
           <input type="text" id="transporterHand" class="form-input" maxlength="40"
-                 value="{{ (gatein_data.get('transporter') if gatein_data else '') or '' }}"
+                 value="{{ ((gatein_data.get('transporter') if gatein_data else '') or '')|truncate(40, True, '', 0) }}"
                  {% if gate_in_locked %}disabled{% endif %}>
         </div>
       </div>
@@ -262,7 +262,7 @@
       <div class="form-group">
         <label><span id="driverNameLabelText">Driver Name</span><span class="req" id="driverNameReq"> *</span> <span class="manual-hint">Manual</span></label>
         <input type="text" id="driverName" class="form-input" maxlength="30"
-               value="{{ (gatein_data.get('driver_name') if gatein_data else '') or '' }}"
+               value="{{ ((gatein_data.get('driver_name') if gatein_data else '') or '')|truncate(30, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_driverName">Required</div>
       </div>
@@ -314,7 +314,7 @@
       <div class="form-group">
         <label>Material <span class="req">*</span></label>
         <input type="text" id="material" class="form-input" maxlength="40"
-               value="{{ (gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '' }}"
+               value="{{ ((gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '')|truncate(40, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_material">Required</div>
       </div>
@@ -324,14 +324,14 @@
       <div class="form-group">
         <label>Challan No <span class="req">*</span></label>
         <input type="text" id="challanNo" class="form-input" maxlength="20"
-               value="{{ (gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
+               value="{{ ((gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '')|truncate(20, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanNo">Required</div>
       </div>
       <div class="form-group">
         <label>Challan Quantity <span class="req">*</span></label>
         <input type="text" id="challanQty" class="form-input" maxlength="17"
-              value="{{ (gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '' }}"
+              value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(17, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanQty">Required</div>
       </div>
@@ -341,7 +341,7 @@
       <div class="form-group">
         <label>Import BOE No</label>
         <input type="text" id="boeNo" class="form-input" maxlength="10"
-               value="{{ (gatein_data.get('boe_no') if gatein_data else '') or '' }}"
+               value="{{ ((gatein_data.get('boe_no') if gatein_data else '') or '')|truncate(10, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
       </div>
 
@@ -353,7 +353,7 @@
         </label>
         <div class="po-field-wrap" style="position:relative;">
           <input type="text" id="purchaseOrder" class="form-input" maxlength="10"
-                 value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '' }}"
+                 value="{{ ((gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '')|truncate(10, True, '', 0) }}"
                  autocomplete="off" {% if gate_in_locked %}disabled{% endif %}>
           <button type="button" class="btn-fetch-po" id="fetchPoBtn" onclick="fetchPoList()"
                   {% if gate_in_locked %}disabled{% endif %}>
@@ -391,7 +391,7 @@
       <div class="form-group">
         <label>Gate Pass No (RTGP)</label>
         <input type="text" id="gatePassNo" class="form-input" maxlength="12"
-               value="{{ (gatein_data.get('gate_pass_no') if gatein_data else '') or '' }}"
+               value="{{ ((gatein_data.get('gate_pass_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_gatePassNo">Required</div>
       </div>
@@ -400,7 +400,7 @@
     <div class="form-group">
       <label>Note</label>
       <textarea id="note" class="form-textarea" rows="3" maxlength="100"
-                {% if gate_in_locked %}disabled{% endif %}>{{ (gatein_data.get('note') if gatein_data else '') or '' }}</textarea>
+                {% if gate_in_locked %}disabled{% endif %}>{{ ((gatein_data.get('note') if gatein_data else '') or '')|truncate(100, True, '', 0) }}</textarea>
     </div>
 
     <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;"></div>
@@ -550,6 +550,11 @@ function validateGateIn() {
       valid = false;
     }
   }
+
+  // Material (and every other SAP-length-limited field) is now auto-capped
+  // server-side at page-render time via Jinja's |truncate filter, so the
+  // pre-filled value can never exceed its SAP max length in the first
+  // place -- no submit-blocking check needed here any more.
 
   // Vendor Name must end up holding the SAP vendor code (LIFNR, max 10
   // chars) before posting -- doesn't have to come from picking a
