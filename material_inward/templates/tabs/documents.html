@@ -10,6 +10,12 @@
   MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
 </div>
 {% endif %}
+{% if dms_document_link %}
+<div style="background:#ecfdf5;border:1px solid #b8f0d4;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1a7a3c;display:flex;align-items:center;gap:10px;">
+  <span>✓ Consolidated document uploaded to DMS</span>
+  <a href="{{ dms_document_link }}" target="_blank" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;text-decoration:none;background:#1a7a3c;color:white;">🔗 Open in DMS</a>
+</div>
+{% endif %}
 <div class="content-card" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
   <h3 style="color: #333; margin-bottom: 20px;">📁 Original Documents</h3>
   

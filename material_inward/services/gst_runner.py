@@ -23,7 +23,7 @@ import threading
 from datetime import datetime, timedelta
 
 from database.db_operations import get_history_details_by_id
-from database.gst_operations import upsert_gst_approval, get_gst_approval
+from database.gst_operations import upsert_gst_approval, get_gst_approval, mark_auto_retry_exhausted
 from config.logger import get_logger
 
 logger = get_logger(__name__)
@@ -117,6 +117,25 @@ def trigger_async(history_id: int, force: bool = False) -> bool:
                 logger.info(f"[gst_runner] results already exist for history_id={history_id}")
                 return False
 
+            # v16 FIX: this must be checked BEFORE the in-memory _attempts
+            # dict, and survives an app restart -- _attempts does not. Bug
+            # this closes: a record that had already burned through its 5
+            # auto-retries, with the cap noted only in _attempts, would
+            # look completely fresh to a restarted process. The very next
+            # poll from anyone simply opening this record's view page
+            # would then start a brand-new burst of auto-retries, and keep
+            # doing so indefinitely on every restart, with no user action
+            # at all -- not what "auto-retry cap reached, wait for a
+            # manual Re-run" was ever supposed to mean. Once this flag is
+            # set, only an explicit Re-run (force=True) can clear it (see
+            # reset_gst_for_rerun()).
+            if existing and existing.get("auto_retry_exhausted"):
+                logger.info(
+                    f"[gst_runner] history_id={history_id} auto-retry already exhausted "
+                    "(persisted) -- manual Re-run required, not retrying just from a page view"
+                )
+                return False
+
             if existing and existing.get("bot_error"):
                 attempt = _attempts.get(history_id)
                 if attempt:
@@ -125,6 +144,13 @@ def trigger_async(history_id: int, force: bool = False) -> bool:
                             f"[gst_runner] auto-retry cap ({MAX_AUTO_RETRIES}) reached for "
                             f"history_id={history_id} -- waiting for manual Re-run"
                         )
+                        try:
+                            mark_auto_retry_exhausted(history_id)
+                        except Exception as e:
+                            logger.error(
+                                f"[gst_runner] failed to persist auto_retry_exhausted "
+                                f"for history_id={history_id}: {e}"
+                            )
                         return False
                     if datetime.now() - attempt["last"] < RETRY_COOLDOWN:
                         logger.info(
@@ -230,6 +256,10 @@ def _run_bots(history_id: int) -> None:
                     "(portal gave a definitive answer) -- will not auto-retry; "
                     "manual Re-run required"
                 )
+                # v16: persisted alongside the result in the same upsert
+                # below (not just the in-memory _attempts dict -- see the
+                # restart-survival note in trigger_async).
+                result["auto_retry_exhausted"] = True
                 with _running_lock:
                     _attempts[history_id] = {"count": MAX_AUTO_RETRIES, "last": datetime.now()}
         else:

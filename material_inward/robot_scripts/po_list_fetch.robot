@@ -34,10 +34,15 @@ Execute PO List Fetch
 Initialize SAP And Login
     Evaluate    __import__('dotenv').load_dotenv()
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
-    ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
-    ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
     ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
     ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
+
+    # v16: PO List Fetch (ME2N open-PO lookup by vendor) ALWAYS uses the
+    # shared spl_rpa .env account -- same reasoning as po_fetch.robot:
+    # read-only lookup, not an attributable posting, never checks for a
+    # per-user SAP_USER_OVERRIDE/SAP_PASS_OVERRIDE credential. See .env.
+    ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
+    ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
 
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Sleep    2s

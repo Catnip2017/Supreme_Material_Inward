@@ -35,10 +35,26 @@ Initialize SAP And Login
     # Evaluate    __import__('dotenv').load_dotenv()
     Evaluate    __import__('dotenv').load_dotenv(__import__('os').getenv('DOTENV_PATH', '.env'), override=True)
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
-    ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
-    ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
     ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
     ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
+
+    # v16: per-user SAP credential pass-through (LDAP users only) -- see
+    # gate_in.robot for the full explanation. SAP_USER_OVERRIDE/
+    # SAP_PASS_OVERRIDE come from rf_runner.py's subprocess environment,
+    # never from this .env file (load_dotenv above uses override=True
+    # for SAP_CLIENT/SAP_CONNECTION_NAME/etc, but these two names are
+    # never defined in .env at all, so they're unaffected either way).
+    ${USER_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_USER_OVERRIDE', '')
+    ${PASS_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_PASS_OVERRIDE', '')
+    IF    $USER_OVERRIDE != '' and $PASS_OVERRIDE != ''
+        ${USERNAME}=    Set Variable    ${USER_OVERRIDE}
+        ${PASSWORD}=    Set Variable    ${PASS_OVERRIDE}
+        Log To Console    SAP LOGIN: using per-user credential for ${USERNAME}
+    ELSE
+        ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
+        ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
+        Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
+    END
 
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Sleep    2s
@@ -75,6 +91,10 @@ Fill MIGO 103 And Post
     ${slip_clean}=    Clean Value    ${GR_SLIP_NO}
     ${hdr_clean}=     Clean Value    ${HEADER_TEXT}
     ${rem_clean}=     Clean Value    ${REMARKS}
+
+    # Diagnostic: log every header variable as received + after cleaning,
+    # for its designated SAP field, before any of it is typed into SAP.
+    Log To Console    HEADER VALUES -- PO_NUMBER="${PO_NUMBER}"->"${po_clean}" (ctxtGODYNPRO-PO_NUMBER) | DELIVERY_NOTE="${DELIVERY_NOTE}"->"${dn_clean}" (txtGOHEAD-LFSNR) | BILL_OF_LADING="${BILL_OF_LADING}"->"${bol_clean}" (txtGOHEAD-FRBNR) | GR_SLIP_NO="${GR_SLIP_NO}"->"${slip_clean}" (txtGOHEAD-XABLN) | HEADER_TEXT="${HEADER_TEXT}"->"${hdr_clean}" (txtGOHEAD-BKTXT) | REMARKS="${REMARKS}"->"${rem_clean}" (txtGOITEM-SGTXT, applied per line below)
 
     # --- Parse ITEMS_JSON ---
     # FIX: this used to decode ITEMS_JSON_B64 into ${items_json} and then
@@ -163,8 +183,14 @@ Fill MIGO 103 And Post
 
         ${qty_actual}=    Clean Value    ${item}[qty_actual]
         ${qty_dn}=        Clean Value    ${item}[qty_expected]
+        ${item_short_text}=    Run Keyword And Ignore Error    Set Variable    ${item}[short_text]
 
-        Log To Console    Line ${line_num}: qty_actual=${qty_actual} qty_dn=${qty_dn}
+        # Diagnostic: log this item's own short_text alongside the header
+        # REMARKS value that actually gets typed into SGTXT today (see FIX
+        # note at the Post step below) -- makes it easy to see, per run,
+        # whether they match coincidentally (single-item runs) or diverge
+        # (multi-item runs), without having to guess from SAP afterwards.
+        Log To Console    Line ${line_num}: qty_actual=${qty_actual} qty_dn=${qty_dn} item_short_text=${item_short_text}[1] (SGTXT actually filled from REMARKS="${rem_clean}" for every line -- see Step 4 note)
 
         # Navigate to correct line
         Safe Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num}
@@ -218,6 +244,16 @@ Fill MIGO 103 And Post
         Log To Console    Line ${line_num} READBACK: ERFMG(actual qty)="${erfmg_check}" LSMNG(DN qty)="${lsmng_check}"
 
         # Where tab — fill remarks/text
+        # NOTE (flagged for review, not yet changed): SGTXT below is filled
+        # from ${rem_clean} -- the single header-level REMARKS value -- for
+        # EVERY line item, not from this item's own short_text (item[short_text]
+        # from items_data is read and logged above for visibility, but not
+        # used here). With a single line item this is indistinguishable from
+        # "per-item text working correctly", since there's only one value
+        # either way -- it only becomes visible with 2+ items that have
+        # genuinely different short_text from each other and from REMARKS.
+        # Left as-is pending an explicit decision on whether SGTXT should
+        # switch to using ${item}[short_text] per line instead.
         Click Element
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT.
         Sleep    1s

@@ -226,11 +226,15 @@
     <!-- NAV TABS -->
     <!-- Each tab is gated to the role(s) that own it (see _has_role() in
          app.py) on top of the existing system-wide is_step_enabled()
-         toggle. Documents + GST Approval are Compliance Officer/
-         SuperAdmin only; Extracted Data is visible to Compliance
-         Officer/SuperAdmin (full edit) or a staggered read-only reveal
-         to Gate Security/Stores/Quality/Accounts Payable as the record's
-         workflow progresses (see can_view_extracted/can_edit_extracted). -->
+         toggle. FIX (v14): Documents is now open to every authenticated
+         user (view/download only, delete still Compliance-only) -- it
+         used to be Compliance Officer/SuperAdmin only, which is what was
+         actually causing documents to appear to "vanish" for other roles.
+         GST Approval remains Compliance Officer/SuperAdmin only. Extracted
+         Data is visible to Compliance Officer/SuperAdmin (full edit) or a
+         staggered read-only reveal to Gate Security/Stores/Quality/
+         Accounts Payable as the record's workflow progresses (see
+         can_view_extracted/can_edit_extracted). -->
     <div class="nav-tabs">
       {% if can_view_documents %}
       <button class="nav-tab{% if default_tab_id == 'documents' %} active{% endif %}" onclick="switchTab('documents')">Documents</button>

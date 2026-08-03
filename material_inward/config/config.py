@@ -44,6 +44,13 @@ class Config:
     SAP_USERNAME: str = os.getenv("SAP_USERNAME", "")
     SAP_PASSWORD: str = os.getenv("SAP_PASSWORD", "")
 
+    # --- Active Directory / LDAP (login) ---
+    # Same spl.com domain / server used by the Password Reset app and the
+    # Ecosystem Dashboard -- confirmed with the client to be the correct
+    # domain for Material Inward's own login too, not a different one.
+    AD_SERVER: str = os.getenv("AD_SERVER", "192.168.203.117")
+    AD_DOMAIN: str = os.getenv("AD_DOMAIN", "spl.com")
+
     # --- Email SMTP (outgoing) ---
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.office365.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", 587))
@@ -77,6 +84,12 @@ class Config:
     # --- File Handling ---
     UPLOAD_FOLDER: str           = os.getenv("UPLOAD_FOLDER", "uploads")
     DMS_STAGING_FOLDER: str      = os.getenv("DMS_STAGING_FOLDER", r"C:\material_inward\dms_staging")
+    # v16: where dms_upload.robot's document-link step (Send To > Generate
+    # Document link) writes {filename, Contentverse URL} rows, and where
+    # services/dms_links_import.py reads them from afterward. Kept
+    # app-relative by default (next to robot_scripts/) instead of a
+    # personal Downloads folder.
+    DMS_LINKS_EXCEL_PATH: str    = os.getenv("DMS_LINKS_EXCEL_PATH", r"C:\material_inward\dms_staging\document_links.xlsx")
     UPLOAD_PROCESSED_FOLDER: str = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "processed")
     UPLOAD_FAILED_FOLDER: str    = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "failed")
     MAX_FILE_SIZE_BYTES: int     = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
@@ -90,6 +103,11 @@ class Config:
     INVOICE_KEYWORD: str  = os.getenv("INVOICE_KEYWORD", "inv").lower()
     EWAYBILL_KEYWORD: str = os.getenv("EWAYBILL_KEYWORD", "ewb").lower()
     LR_KEYWORD: str       = os.getenv("LR_KEYWORD", "lr").lower()
+    # v14: 4th document type -- miscellaneous supporting docs, pre-merged by
+    # the sender into a single PDF, not run through OCR but merged into the
+    # DMS-bound consolidated PDF alongside invoice/eway/lr. At most one per
+    # invoice group, same as the other three.
+    OTHERS_KEYWORD: str   = os.getenv("OTHERS_KEYWORD", "oth").lower()
 
     # --- Folder-drop intake ---
     INTAKE_METHOD: str = os.getenv("INTAKE_METHOD", "folder").lower()

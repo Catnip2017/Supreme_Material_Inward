@@ -20,8 +20,16 @@ def save_po_line_items(history_id: int, items: list) -> bool:
     Save PO line items fetched from SAP for a given history_id.
     Replaces any existing rows — re-fetch replaces old data.
 
-    Each item dict expected keys:
-        item_no, material, short_text, po_qty, unit, hsn_sac
+    Each item dict, as actually emitted by po_fetch.robot's RESULT:PO_DATA:
+    JSON (see po_fetch.robot ~line 251), has keys:
+        item_no, material_code, short_text, qty, rate, amount, hsn_sac
+
+    FIX: this used to read item.get("material", "") / item.get("po_qty", "")
+    -- key names that don't exist in the robot's actual output (it emits
+    "material_code" / "qty"), so every fetch silently stored empty strings
+    for material and quantity regardless of what SAP returned. DB column
+    names (material, po_qty) are unchanged -- only the dict keys read FROM
+    the robot's JSON are corrected here.
     """
     delete_sql = "DELETE FROM po_line_items WHERE history_id = %s"
     insert_sql = """
@@ -38,9 +46,9 @@ def save_po_line_items(history_id: int, items: list) -> bool:
                     cur.execute(insert_sql, (
                         history_id,
                         item.get("item_no", ""),
-                        item.get("material", ""),
+                        item.get("material_code", "") or item.get("material", ""),
                         item.get("short_text", ""),
-                        item.get("po_qty", ""),
+                        item.get("qty", "") or item.get("po_qty", ""),
                         item.get("rate", ""),
                         item.get("amount", ""),
                         item.get("hsn_sac", ""),
@@ -76,8 +84,13 @@ def get_po_line_items(history_id: int) -> list:
                     r = dict(row)
                     if r.get("fetched_at") and hasattr(r["fetched_at"], "isoformat"):
                         r["fetched_at"] = r["fetched_at"].isoformat()
-                        r['material_code'] = r.get('material', '')
-                        r['qty'] = r.get('po_qty', '') 
+                    # FIX: material_code/qty re-keying used to only happen
+                    # inside the fetched_at branch above -- moved out here
+                    # so migo_103.html (which reads item.material_code /
+                    # item.qty) always gets populated fields regardless of
+                    # whether fetched_at happens to be a datetime object.
+                    r['material_code'] = r.get('material', '')
+                    r['qty'] = r.get('po_qty', '')
                     result.append(r)
                 return result
     except Exception as e:

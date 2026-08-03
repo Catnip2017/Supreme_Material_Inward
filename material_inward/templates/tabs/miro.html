@@ -157,6 +157,8 @@
 <script>
 
 const POST_LOCKED_MIRO = {{ 'true' if post_locked else 'false' }};
+// FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
+const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 (function() {
   const el = document.getElementById('miroPostingDate');

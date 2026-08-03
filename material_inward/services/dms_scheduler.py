@@ -191,7 +191,34 @@ def write_metadata_sidecar(record: dict, consolidated_path: str) -> str:
 
 
 def run_dms_staging() -> None:
-    """Main entry point called by Windows Task Scheduler."""
+    """
+    Main entry point called by Windows Task Scheduler.
+
+    v14/v16: SUPERSEDED for the normal flow. DMS staging (consolidate +
+    sidecar + dms_status='staged') happens immediately after Gate In posts
+    successfully, in services/rf_queue_worker.py._process_gate_in() (moved
+    there in v16 from services/folder_watcher.py._process_batch(), where
+    v14 originally put it right after OCR -- see that function's comment
+    for why it moved again: the consolidated filename now needs the
+    vendor code, only known once Gate In resolves it). Under normal
+    operation this query should always find zero records (nothing sets
+    dms_status='pending' anymore, regardless of which of those two is the
+    current trigger). Left in place, harmless, as a defensive fallback
+    ONLY: if a record's immediate staging attempt fails for some reason,
+    it'll have no dms_status set at all, so it wouldn't be caught here
+    either without separately marking it 'pending' -- flagging this as a
+    known gap rather than silently implying this job covers it. Kept
+    runnable (not deleted) in case a Task Scheduler entry still points at
+    it and to avoid an unexplained failure if it's ever re-enabled for a
+    future retry design.
+
+    The cover page (GIN + Material Doc Number) that used to be prepended
+    here has been removed per client decision -- it no longer makes sense
+    now that DMS staging doesn't wait for those numbers to exist. If this
+    ever does find a record (e.g. a legacy 'pending' row from before this
+    change), it now just writes the sidecar and marks it staged, no cover
+    page.
+    """
     logger.info("DMS staging job started")
     try:
         records = get_pending_dms_records()
@@ -200,7 +227,7 @@ def run_dms_staging() -> None:
         return
 
     if not records:
-        logger.info("No pending DMS records — nothing to do")
+        logger.info("No pending DMS records — nothing to do (expected under v14 flow)")
         return
 
     logger.info(f"Processing {len(records)} pending record(s)")
@@ -219,14 +246,11 @@ def run_dms_staging() -> None:
             continue
 
         try:
-            _prepend_cover_page(rec, consolidated_path)
+            # FIX (v14): cover page removed -- no longer wanted, and this
+            # record may well predate MIGO 103 completion now anyway.
             write_metadata_sidecar(rec, consolidated_path)
             set_dms_status(history_id, "staged")
-            logger.info(
-                f"history_id={history_id}: staged OK  "
-                f"GIN={rec.get('gate_in_number')}  "
-                f"MatDoc={rec.get('material_doc_number')}"
-            )
+            logger.info(f"history_id={history_id}: staged OK (legacy fallback path)")
             staged += 1
         except Exception as e:
             logger.error(

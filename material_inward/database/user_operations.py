@@ -14,6 +14,16 @@ v10 changes (role-based page/tab access control overhaul):
   gate_in / migo_103 / migo_105 / miro. The 'all' sentinel is retired
   for regular users now that SuperAdmin is the real "sees everything"
   tier — all/get/add/update functions below no longer default to 'all'.
+
+v15 changes (LDAP login — see schema_migration_v15.sql):
+- Added: auth_type column ('local' default, or 'ldap'). 'local' accounts
+  are unchanged (bcrypt-hashed password, kept working for testing).
+  'ldap' accounts store no local password at all (column is nullable now)
+  -- verify_user() checks the entered password against Active Directory
+  instead (services/ldap_auth.py), on every login, every time. A
+  SuperAdmin creates 'ldap' rows with just a username (see add_user()) --
+  role/step_roles/email are still set/managed here exactly as before,
+  same as any other user; only the credential check differs.
 """
 
 from typing import Optional
@@ -22,6 +32,7 @@ import psycopg2.extras
 
 from database.connection import get_connection
 from config.logger import get_logger
+from services.ldap_auth import verify_ad_user
 
 logger = get_logger(__name__)
 
@@ -40,6 +51,17 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def verify_user(username: str, password: str) -> Optional[dict]:
+    """
+    v15: branches on auth_type. 'local' (or missing/legacy NULL, treated
+    as 'local') checks the stored bcrypt hash exactly as before. 'ldap'
+    skips the stored password entirely (there isn't one) and checks the
+    entered password against Active Directory instead, every single
+    login -- nothing about the AD result is cached or stored back into
+    this table. Either way, the row must already exist here first -- this
+    function never creates or looks anything up outside this table (no
+    supreme_ai, no AD group membership check, just "does AD accept this
+    password for this username").
+    """
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -53,8 +75,15 @@ def verify_user(username: str, password: str) -> Optional[dict]:
                     return None
 
                 user = dict(user)
-                if verify_password(password, user["password"]):
-                    logger.info(f"User verified: {username}")
+                auth_type = (user.get("auth_type") or "local").lower()
+
+                if auth_type == "ldap":
+                    verified = verify_ad_user(username, password)
+                else:
+                    verified = verify_password(password, user["password"] or "")
+
+                if verified:
+                    logger.info(f"User verified: {username} (auth_type={auth_type})")
                     return {
                         "username":   user["username"],
                         "role":       user["role"],
@@ -62,9 +91,10 @@ def verify_user(username: str, password: str) -> Optional[dict]:
                         "email":      user.get("email"),
                         "step_roles": user.get("step_roles") or "",
                         "admin_edit": user.get("admin_edit", True),
+                        "auth_type":  auth_type,
                     }
 
-                logger.warning(f"Invalid password for user: {username}")
+                logger.warning(f"Invalid password for user: {username} (auth_type={auth_type})")
                 return None
     except Exception as e:
         logger.error(f"Error verifying user {username}: {e}")
@@ -77,7 +107,7 @@ def get_all_users() -> list:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT id, username, role, name,
+                    SELECT id, username, role, name, auth_type,
                            email, email_notifications_enabled, step_roles,
                            admin_edit, created_at, updated_at
                     FROM users
@@ -130,7 +160,8 @@ def add_user(
     email: str = "",
     email_notifications_enabled: bool = False,
     step_roles: str = "",
-    admin_edit: bool = True
+    admin_edit: bool = True,
+    auth_type: str = "local"
 ) -> bool:
     """
     step_roles: comma-separated subset of compliance/gate_in/migo_103/
@@ -138,6 +169,14 @@ def add_user(
     sees everything regardless). admin_edit only matters for SuperAdmin
     accounts — True = can edit/act everywhere + manage users, False =
     view-only everywhere.
+
+    auth_type='ldap' (v15): password is ignored entirely (stored as NULL)
+    -- a SuperAdmin creating an LDAP user only ever supplies username,
+    name, role, step_roles, email. The real credential is verified
+    against Active Directory at login time (verify_user() above), not
+    stored here at all. name defaults to the username itself if not
+    given for an LDAP row, since a SuperAdmin creating one up front may
+    not know the person's display name yet -- can be edited later.
     """
     try:
         with get_connection() as conn:
@@ -146,26 +185,31 @@ def add_user(
                 if cur.fetchone():
                     logger.warning(f"User already exists: {username}")
                     return False
+
+                is_ldap = (auth_type or "local").lower() == "ldap"
+                password_hash = None if is_ldap else hash_password(password)
+
                 cur.execute(
                     """
                     INSERT INTO users (
-                        username, password, role, name,
+                        username, password, role, name, auth_type,
                         email, email_notifications_enabled, step_roles, admin_edit
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         username,
-                        hash_password(password),
+                        password_hash,
                         role,
-                        name,
+                        name or username,
+                        "ldap" if is_ldap else "local",
                         email or None,
                         bool(email_notifications_enabled),
                         step_roles or "",
                         bool(admin_edit),
                     )
                 )
-                logger.info(f"User created: {username}")
+                logger.info(f"User created: {username} (auth_type={'ldap' if is_ldap else 'local'})")
                 return True
     except Exception as e:
         logger.error(f"Error adding user {username}: {e}")
@@ -179,7 +223,9 @@ def update_user(
     email: Optional[str] = None,
     email_notifications_enabled: Optional[bool] = None,
     step_roles: Optional[str] = None,
-    admin_edit: Optional[bool] = None
+    admin_edit: Optional[bool] = None,
+    auth_type: Optional[str] = None,
+    name: Optional[str] = None
 ) -> bool:
     """
     Update a user. Only fields passed (not None) will be updated.
@@ -190,6 +236,12 @@ def update_user(
     the user's current roles already checked (see templates/
     user_management.html), so an admin adding a new role naturally keeps
     the existing ones checked too rather than having to know/re-type them.
+
+    auth_type (v15): switching a row to 'ldap' clears any stored password
+    hash (set NULL) regardless of whether `password` was also passed --
+    an LDAP account has no local password to keep. Switching to 'local'
+    does NOT set a password automatically; pass one explicitly too if
+    converting an LDAP row back to local.
     """
     try:
         with get_connection() as conn:
@@ -202,9 +254,20 @@ def update_user(
                 set_parts = []
                 values = []
 
-                if password is not None:
+                switching_to_ldap = auth_type is not None and auth_type.lower() == "ldap"
+
+                if switching_to_ldap:
+                    set_parts.append("password = %s")
+                    values.append(None)
+                elif password is not None:
                     set_parts.append("password = %s")
                     values.append(hash_password(password))
+                if auth_type is not None:
+                    set_parts.append("auth_type = %s")
+                    values.append(auth_type.lower())
+                if name is not None and name.strip():
+                    set_parts.append("name = %s")
+                    values.append(name.strip())
                 if role is not None:
                     set_parts.append("role = %s")
                     values.append(role)

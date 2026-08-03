@@ -538,18 +538,32 @@
                 <i class="fas fa-users-cog"></i>
                 User Management
             </h1>
- 
+
             <button class="new-user-btn" onclick="openCreateModal()">
                 <i class="fas fa-user-plus"></i> New User
             </button>
         </div>
- 
+
+        <!-- v17: search box -- the LDAP bulk import put ~350 usernames into
+             this table, making it impractical to find one person by
+             scrolling. Filters client-side by username or name, live as
+             you type; also totals visible rows so it's clear when a
+             search has narrowed the list. -->
+        <div style="background:white;border-radius:15px;box-shadow:0 5px 20px rgba(0,0,0,0.1);padding:18px 25px;margin-bottom:20px;display:flex;align-items:center;gap:14px;">
+            <i class="fas fa-search" style="color:#95a5a6;"></i>
+            <input type="text" id="userSearchBox" placeholder="Search by username or name…"
+                oninput="filterUserTable()"
+                style="flex:1;border:2px solid #ecf0f1;border-radius:8px;padding:11px 15px;font-size:14px;transition:border-color .2s;">
+            <span id="userSearchCount" style="font-size:13px;color:#888;white-space:nowrap;"></span>
+        </div>
+
         <div class="user-table">
             <table>
                 <thead>
                     <tr>
                         <th>Username</th>
                         <th>Name</th>
+                        <th>Auth</th>
                         <th>Role</th>
                         <th>Access</th>
                         <th>Created At</th>
@@ -557,12 +571,17 @@
                     </tr>
                 </thead>
 
-                <tbody>
+                <tbody id="userTableBody">
                     {% if users and users|length > 0 %}
                         {% for user in users %}
-                            <tr>
+                            <tr class="user-row" data-search="{{ (user['username'] ~ ' ' ~ (user['name'] or '')) | lower }}">
                                 <td>{{ user['username'] }}</td>
                                 <td>{{ user['name'] or '-' }}</td>
+                                <td>
+                                    <span class="access-badge {{ '' if user.get('auth_type', 'local') == 'ldap' else 'view-only' }}">
+                                        {{ 'LDAP (AD)' if user.get('auth_type', 'local') == 'ldap' else 'Local' }}
+                                    </span>
+                                </td>
                                 <td>
                                     <span class="role-badge {{ 'role-admin' if user['role'] == 'SuperAdmin' else 'role-user' }}">
                                         {{ user['role'] }}
@@ -595,6 +614,8 @@
                                         data-email="{{ user['email'] or '' }}"
                                         data-email-notif="{{ 'true' if user['email_notifications_enabled'] else 'false' }}"
                                         data-admin-edit="{{ 'true' if user['admin_edit'] else 'false' }}"
+                                        data-auth-type="{{ user.get('auth_type', 'local') }}"
+                                        data-name="{{ user['name'] or '' }}"
                                         onclick="openEditModal(this.dataset)">
                                         <i class="fas fa-edit"></i> Edit
                                     </button>
@@ -610,11 +631,14 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="6" style="text-align:center;padding:40px;">No users found</td>
+                            <td colspan="7" style="text-align:center;padding:40px;">No users found</td>
                         </tr>
                     {% endif %}
                 </tbody>
             </table>
+            <div id="userSearchNoMatch" style="display:none;text-align:center;padding:40px;color:#888;">
+                No users match "<span id="userSearchNoMatchTerm"></span>"
+            </div>
         </div>
     </div>
     
@@ -626,12 +650,24 @@
             </div>
             <form id="createForm" onsubmit="handleCreateUser(event)">
             <div class="form-group">
-                <label>Username <span style="color:red;">*</span></label>
-                <input type="text" id="create_username" required placeholder="Enter username">
+                <label>Login Type <span style="color:red;">*</span></label>
+                <select id="create_auth_type" required onchange="onAuthTypeChange('create')">
+                    <option value="ldap">Active Directory (LDAP)</option>
+                    <option value="local">Local account (testing only)</option>
+                </select>
+                <div style="font-size:12px;color:#666;margin-top:4px;">
+                    LDAP: this person's Windows/AD password is checked at login, every time — nothing is
+                    stored here. Just add their username; name/email can be filled in later. Local: a
+                    password you set here, for testing accounts only.
+                </div>
             </div>
             <div class="form-group">
-                <label>Name <span style="color:red;">*</span></label>
-                <input type="text" id="create_name" required placeholder="Enter full name">
+                <label>Username <span style="color:red;">*</span></label>
+                <input type="text" id="create_username" required placeholder="Enter username (matches their AD login for LDAP)">
+            </div>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="create_name" placeholder="Enter full name (optional for LDAP — defaults to username)">
             </div>
             <div class="form-group">
                 <label>Email</label>
@@ -666,13 +702,13 @@
                     <input type="checkbox" id="create_email_notif"> Enable email notifications for this user
                 </label>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="create_password_group">
                 <label>Password <span style="color:red;">*</span></label>
-                <input type="password" id="create_password" required placeholder="Enter password">
+                <input type="password" id="create_password" placeholder="Enter password">
             </div>
-            <div class="form-group">
+            <div class="form-group" id="create_confirm_password_group">
                 <label>Confirm Password <span style="color:red;">*</span></label>
-                <input type="password" id="create_confirm_password" required placeholder="Confirm password">
+                <input type="password" id="create_confirm_password" placeholder="Confirm password">
                 <div class="error-message" id="create_password_error">Passwords do not match!</div>
             </div>
            <div class="modal-actions">
@@ -682,7 +718,7 @@
             </form>
         </div>
     </div>
- 
+
     <div id="editModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -692,12 +728,23 @@
  
             <form id="editForm" onsubmit="handleEditUser(event)">
                 <div class="form-group">
+                    <label>Login Type <span style="color:red;">*</span></label>
+                    <select id="edit_auth_type" required onchange="onAuthTypeChange('edit')">
+                        <option value="ldap">Active Directory (LDAP)</option>
+                        <option value="local">Local account (testing only)</option>
+                    </select>
+                    <div style="font-size:12px;color:#666;margin-top:4px;">
+                        Switching Local → LDAP clears the stored password (AD is checked from then on).
+                        Switching LDAP → Local requires setting a new password below.
+                    </div>
+                </div>
+                <div class="form-group">
                     <label>Username <span style="color:red;">*</span></label>
                     <input type="text" id="edit_username" required placeholder="Enter username">
                 </div>
                 <div class="form-group">
-                    <label>Name <span style="color:red;">*</span></label>
-                    <input type="text" id="edit_name" required placeholder="Enter full name">
+                    <label>Name</label>
+                    <input type="text" id="edit_name" placeholder="Enter full name">
                 </div>
                 <div class="form-group">
                     <label>Email</label>
@@ -711,6 +758,7 @@
                         <option value="SuperAdmin">SuperAdmin (IT)</option>
                     </select>
                     <input type="hidden" id="edit_original_role">
+                    <input type="hidden" id="edit_auth_type_original">
                 </div>
                 <div class="form-group" id="edit_roles_group">
                     <label>Roles (a user can hold more than one)</label>
@@ -733,13 +781,13 @@
                         <input type="checkbox" id="edit_email_notif"> Edit email notifications for this user
                     </label>
                 </div>
-                <div class="form-group">
-                    <label>Password <span style="color:red;">*</span></label>
-                    <input type="password" id="edit_password" required placeholder="Enter password">
+                <div class="form-group" id="edit_password_group">
+                    <label>Password</label>
+                    <input type="password" id="edit_password" placeholder="Leave blank to keep current password">
                 </div>
-                <div class="form-group">
-                    <label>Confirm Password <span style="color:red;">*</span></label>
-                    <input type="password" id="edit_confirm_password" required placeholder="Confirm password">
+                <div class="form-group" id="edit_confirm_password_group">
+                    <label>Confirm Password</label>
+                    <input type="password" id="edit_confirm_password" placeholder="Confirm new password">
                     <div class="error-message" id="edit_password_error">Passwords do not match!</div>
                 </div>
                 <div class="modal-actions">
@@ -773,6 +821,29 @@
     <script>
         const currentUsername = "{{ current_username }}";
  
+        // v17: client-side search filter over the user table. Fine
+        // performance-wise even at ~350+ rows (post LDAP bulk import) --
+        // no server round-trip needed for a plain substring match.
+        function filterUserTable() {
+            const term = document.getElementById('userSearchBox').value.trim().toLowerCase();
+            const rows = document.querySelectorAll('#userTableBody tr.user-row');
+            let visibleCount = 0;
+            rows.forEach(row => {
+                const match = !term || row.dataset.search.includes(term);
+                row.style.display = match ? '' : 'none';
+                if (match) visibleCount++;
+            });
+            const noMatchEl = document.getElementById('userSearchNoMatch');
+            const countEl = document.getElementById('userSearchCount');
+            if (noMatchEl) {
+                noMatchEl.style.display = (rows.length > 0 && visibleCount === 0) ? 'block' : 'none';
+                document.getElementById('userSearchNoMatchTerm').textContent = term;
+            }
+            if (countEl) {
+                countEl.textContent = term ? `${visibleCount} of ${rows.length} shown` : '';
+            }
+        }
+
         function toggleDropdown(event) {
             event.stopPropagation();
             document.getElementById("userDropdown").classList.toggle("show");
@@ -791,7 +862,9 @@
             document.getElementById('createForm').reset();
             document.getElementById('create_password_error').style.display = 'none';
             document.getElementById('create_admin_edit').checked = true;
+            document.getElementById('create_auth_type').value = 'ldap';
             onRoleChange('create');
+            onAuthTypeChange('create');
             document.getElementById('createModal').classList.add('show');
         }
 
@@ -800,6 +873,23 @@
             const isSuperAdmin = role === 'SuperAdmin';
             document.getElementById(prefix + '_roles_group').style.display = isSuperAdmin ? 'none' : 'block';
             document.getElementById(prefix + '_superadmin_toggle').classList.toggle('show', isSuperAdmin);
+        }
+
+        // v15: LDAP users have no local password at all -- hide the
+        // password fields entirely and don't require them client-side.
+        // Server-side, add_user()/update_user() ignore/null the password
+        // for auth_type='ldap' regardless of what the form sends.
+        function onAuthTypeChange(prefix) {
+            const authType = document.getElementById(prefix + '_auth_type').value;
+            const isLdap = authType === 'ldap';
+            const pwGroup = document.getElementById(prefix + '_password_group');
+            const confirmGroup = document.getElementById(prefix + '_confirm_password_group');
+            if (pwGroup) pwGroup.style.display = isLdap ? 'none' : 'block';
+            if (confirmGroup) confirmGroup.style.display = isLdap ? 'none' : 'block';
+            if (isLdap) {
+                document.getElementById(prefix + '_password').value = '';
+                document.getElementById(prefix + '_confirm_password').value = '';
+            }
         }
 
         function openEditModal(data) {
@@ -813,13 +903,18 @@
             const email      = data.email || '';
             const emailNotif = data.emailNotif === 'true';
             const adminEdit  = data.adminEdit === 'true';
+            const authType   = data.authType || 'local';
+            const name       = data.name || '';
 
             document.getElementById('edit_username').value = username;
+            document.getElementById('edit_name').value = name;
             document.getElementById('edit_original_role').value = role;
             document.getElementById('edit_role').value = role;
             document.getElementById('edit_email').value = email;
             document.getElementById('edit_email_notif').checked = emailNotif;
             document.getElementById('edit_admin_edit').checked = adminEdit;
+            document.getElementById('edit_auth_type').value = authType;
+            document.getElementById('edit_auth_type_original').value = authType;
             document.getElementById('edit_password').value = '';
             document.getElementById('edit_confirm_password').value = '';
             document.getElementById('edit_password_error').style.display = 'none';
@@ -829,6 +924,7 @@
             });
 
             onRoleChange('edit');
+            onAuthTypeChange('edit');
 
             // Editing your own account: role select stays enabled here
             // deliberately (a SuperAdmin might need to flip their own
@@ -859,25 +955,34 @@
  
         async function handleCreateUser(event) {
             event.preventDefault();
+            const authType = document.getElementById('create_auth_type').value;
             const password = document.getElementById('create_password').value;
             const confirmPassword = document.getElementById('create_confirm_password').value;
-            if (password !== confirmPassword) {
-                document.getElementById('create_password_error').style.display = 'block';
-                return;
+
+            if (authType === 'local') {
+                if (!password || !confirmPassword) {
+                    showToast('Password required for a Local account', 'warning');
+                    return;
+                }
+                if (password !== confirmPassword) {
+                    document.getElementById('create_password_error').style.display = 'block';
+                    return;
+                }
             }
             document.getElementById('create_password_error').style.display = 'none';
 
             const role = document.getElementById('create_role').value;
             const userData = {
                 username: document.getElementById('create_username').value,
+                auth_type: authType,
                 name: document.getElementById('create_name').value,
                 email: document.getElementById('create_email').value,
                 role: role,
                 step_roles: _collectStepRoles('create'),
                 admin_edit: role === 'SuperAdmin' ? document.getElementById('create_admin_edit').checked : true,
                 email_notifications_enabled: document.getElementById('create_email_notif').checked,
-                password: password,
-                confirm_password: confirmPassword
+                password: authType === 'ldap' ? '' : password,
+                confirm_password: authType === 'ldap' ? '' : confirmPassword
             };
 
             try {
@@ -900,35 +1005,45 @@
  
         async function handleEditUser(event) {
             event.preventDefault();
- 
+
+            const authType = document.getElementById('edit_auth_type').value;
             const newPassword = document.getElementById('edit_password').value.trim();
             const confirmPassword = document.getElementById('edit_confirm_password').value.trim();
- 
-            if (newPassword !== confirmPassword) {
-                document.getElementById('edit_password_error').style.display = 'block';
-                return;
+
+            // v15: password is now optional on edit for BOTH auth types --
+            // blank means "leave as-is" for Local, and is simply not
+            // applicable at all for LDAP (no local password exists to
+            // set). Only exception: switching LDAP -> Local requires
+            // setting one right now, since there'd otherwise be no
+            // password at all for that account to use going forward.
+            const switchingToLocal = authType === 'local' && document.getElementById('edit_auth_type_original').value === 'ldap';
+            if (authType === 'local' && (newPassword || confirmPassword || switchingToLocal)) {
+                if (switchingToLocal && !newPassword) {
+                    showToast('Set a password — this account is switching from LDAP to Local', 'warning');
+                    return;
+                }
+                if (newPassword !== confirmPassword) {
+                    document.getElementById('edit_password_error').style.display = 'block';
+                    return;
+                }
             }
- 
-            if (!newPassword) {
-                showToast('Please enter a new password', 'warning');
-                return;
-            }
- 
             document.getElementById('edit_password_error').style.display = 'none';
- 
+
             const username = document.getElementById('edit_username').value;
             const role = document.getElementById('edit_role').value;
             const originalRole = document.getElementById('edit_original_role').value;
 
             const userData = {
                 username: username,
+                auth_type: authType,
+                name: document.getElementById('edit_name').value,
                 role: role,
                 step_roles: _collectStepRoles('edit'),
                 admin_edit: role === 'SuperAdmin' ? document.getElementById('edit_admin_edit').checked : true,
                 email: document.getElementById('edit_email').value,
                 email_notifications_enabled: document.getElementById('edit_email_notif').checked,
-                password: newPassword,
-                confirm_password: confirmPassword
+                password: authType === 'ldap' ? '' : newPassword,
+                confirm_password: authType === 'ldap' ? '' : confirmPassword
             };
 
             async function _submitEdit() {

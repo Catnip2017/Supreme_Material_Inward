@@ -1,13 +1,27 @@
 """
-services/dms_upload_runner.py — Nightly trigger for dms_upload.robot.
+services/dms_upload_runner.py — Scheduled trigger for dms_upload.robot.
 
-Run by Windows Task Scheduler (same pattern as services/dms_scheduler.py),
-scheduled to run AFTER dms_scheduler.py has staged the night's consolidated
-PDFs (cover page + metadata sidecar written, dms_status='staged').
+Run by Windows Task Scheduler on its own interval (e.g. every 15-30 min --
+not tied to any single Gate In event). Staging (consolidate + sidecar,
+dms_status='staged') now happens immediately after each Gate In posts (see
+rf_queue_worker.py._process_gate_in(), v16) rather than in a nightly batch,
+so this script's own docstring previously describing a fixed "stage at
+9:30pm, upload at 10pm" nightly relationship is stale -- dms_scheduler.py
+is now only a defensive fallback (see its own updated docstring) that
+should normally find zero records. This script just needs to run
+frequently enough, independently, to sweep up whatever's accumulated in
+DMS_STAGING_FOLDER since its last run -- how fresh the DMS-hosted copies
+and their sharing links are is entirely a function of how often this is
+scheduled, not of any per-record trigger.
 
 This is NOT part of the RF queue — dms_upload.robot processes the whole
 DMS_STAGING_FOLDER in one batch (bulk upload), not one history record at a
 time, so it's triggered as its own scheduled step, same as dms_scheduler.py.
+
+v16: after a successful upload batch, this also runs
+services/dms_links_import.py's import in the same process -- the DB is
+never more stale than the upload cadence itself; there's no second
+schedule to keep in sync separately.
 
 Two safety measures added on top of the basic "run the robot" flow:
 
@@ -62,6 +76,7 @@ from config.config import config
 from database.db_operations import get_staged_dms_records, set_dms_status
 from database.connection import init_pool
 from services.robot_lock import acquire_robot_lock, release_robot_lock, is_robot_locked
+from services.dms_links_import import run_dms_links_import
 
 logging.basicConfig(
     level=logging.INFO,
@@ -249,6 +264,17 @@ def run_dms_upload() -> None:
         f"DMS upload trigger complete — uploaded={updated} "
         f"still_pending={skipped} total_checked={len(staged_records)}"
     )
+
+    # v16: pull whatever links dms_upload.robot just wrote into
+    # DMS_LINKS_EXCEL_PATH straight into the DB -- no separate schedule to
+    # keep in sync. Best-effort: an import failure here doesn't undo the
+    # upload itself (files are already moved/marked 'uploaded' above); it's
+    # logged for the next run (or a manual `python services/
+    # dms_links_import.py`) to pick up, since the import is idempotent.
+    try:
+        run_dms_links_import()
+    except Exception as e:
+        logger.error(f"DMS links import failed after upload: {e}", exc_info=True)
 
 
 if __name__ == "__main__":

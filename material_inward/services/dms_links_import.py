@@ -1,0 +1,110 @@
+"""
+services/dms_links_import.py — imports Contentverse document links from
+DMS_LINKS_EXCEL_PATH into the app's own database (dms_document_links table),
+so the Documents tab can show/link to the hosted copy.
+
+v16: this closes the loop dms_upload.robot's new "Generate And Save
+Document Link" step opened -- that step appends {File Name, Document Link}
+rows to an Excel file, but nothing previously read that file back into the
+app's database.
+
+Trigger: called directly at the end of services/dms_upload_runner.py's
+run_dms_upload(), immediately after a successful upload batch -- NOT on its
+own separate schedule. dms_upload_runner.py itself is scheduled (Windows
+Task Scheduler, independent of any single Gate In event -- Selenium/
+Contentverse automation is too slow/fragile to run synchronously per
+record). Chaining the import directly onto that same run means the DB is
+never more stale than the upload cadence itself; there is no second cadence
+to keep in sync.
+
+Also runnable standalone (python services/dms_links_import.py) for a
+one-off catch-up import, e.g. after manually re-running dms_upload.robot.
+
+Safe to re-run: upsert_dms_document_link() is keyed on filename (ON
+CONFLICT DO UPDATE), so importing the same Excel file twice is harmless.
+"""
+
+import os
+import sys
+import logging
+
+# Ensure project root is on path when called directly
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from openpyxl import load_workbook
+
+from config.config import config
+from database.connection import init_pool
+from database.db_operations import (
+    find_history_id_by_consolidated_filename,
+    upsert_dms_document_link,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [dms_links_import] %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+def run_dms_links_import() -> dict:
+    """
+    Read every row currently in DMS_LINKS_EXCEL_PATH and upsert it into
+    dms_document_links. Returns a small summary dict for the caller to log.
+    """
+    excel_path = config.DMS_LINKS_EXCEL_PATH
+
+    if not os.path.exists(excel_path):
+        logger.info(f"No DMS links Excel file at {excel_path} yet — nothing to import")
+        return {"imported": 0, "unmatched": 0, "errors": 0}
+
+    try:
+        wb = load_workbook(excel_path, read_only=True)
+        ws = wb.active
+    except Exception as e:
+        logger.error(f"Failed to open {excel_path}: {e}", exc_info=True)
+        return {"imported": 0, "unmatched": 0, "errors": 1}
+
+    imported = unmatched = errors = 0
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        file_name, doc_link = (row + (None, None))[:2]
+        if not file_name or not doc_link:
+            continue
+
+        # dms_upload.robot writes the report name WITHOUT the .pdf
+        # extension (os.path.splitext(...)[0]) -- history.consolidated_doc_path
+        # is a full path ending in .pdf, so re-add it before matching.
+        filename_with_ext = f"{file_name}.pdf" if not str(file_name).lower().endswith(".pdf") else file_name
+
+        try:
+            history_id = find_history_id_by_consolidated_filename(filename_with_ext)
+            if history_id is None:
+                logger.warning(
+                    f"Row {row_idx}: no history record found for filename "
+                    f"{filename_with_ext!r} — storing link with no history_id"
+                )
+                unmatched += 1
+            ok = upsert_dms_document_link(history_id, filename_with_ext, str(doc_link))
+            if ok:
+                imported += 1
+            else:
+                errors += 1
+        except Exception as e:
+            logger.error(f"Row {row_idx} ({file_name!r}) import failed: {e}", exc_info=True)
+            errors += 1
+
+    wb.close()
+    logger.info(
+        f"DMS links import complete — imported={imported} "
+        f"unmatched={unmatched} errors={errors}"
+    )
+    return {"imported": imported, "unmatched": unmatched, "errors": errors}
+
+
+if __name__ == "__main__":
+    init_pool()
+    run_dms_links_import()

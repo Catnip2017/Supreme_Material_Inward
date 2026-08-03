@@ -25,6 +25,12 @@ def upsert_gst_approval(history_id: int, data: dict) -> bool:
     Insert or update the gst_approval row for this history_id.
     Called by gst_runner after both bots complete.
     data keys match the table columns (all optional).
+
+    v16: added auto_retry_exhausted -- see mark_auto_retry_exhausted()
+    below and services/gst_runner.py for why this needs to be persisted
+    rather than tracked only in memory. Defaults to False so a normal
+    successful/retriable result clears any previous exhaustion; the
+    terminal-error path in gst_runner.py explicitly passes True.
     """
     sql = """
         INSERT INTO gst_approval (
@@ -34,7 +40,7 @@ def upsert_gst_approval(history_id: int, data: dict) -> bool:
             gstr3b_last_filed, gstr3b_tax_period,   gstr3b_status,
             gstr1_last_filed,  gstr1_tax_period,    gstr1_status,
             taxpayer_screenshot,
-            bot_error,         checked_at
+            bot_error,         checked_at,          auto_retry_exhausted
         ) VALUES (
             %s,
             %s, %s,
@@ -42,23 +48,24 @@ def upsert_gst_approval(history_id: int, data: dict) -> bool:
             %s, %s, %s,
             %s, %s, %s,
             %s,
-            %s, %s
+            %s, %s, %s
         )
         ON CONFLICT (history_id) DO UPDATE SET
-            einvoice_status     = EXCLUDED.einvoice_status,
-            einvoice_screenshot = EXCLUDED.einvoice_screenshot,
-            gstin_status        = EXCLUDED.gstin_status,
-            legal_name          = EXCLUDED.legal_name,
-            taxpayer_type       = EXCLUDED.taxpayer_type,
-            gstr3b_last_filed   = EXCLUDED.gstr3b_last_filed,
-            gstr3b_tax_period   = EXCLUDED.gstr3b_tax_period,
-            gstr3b_status       = EXCLUDED.gstr3b_status,
-            gstr1_last_filed    = EXCLUDED.gstr1_last_filed,
-            gstr1_tax_period    = EXCLUDED.gstr1_tax_period,
-            gstr1_status        = EXCLUDED.gstr1_status,
-            taxpayer_screenshot = EXCLUDED.taxpayer_screenshot,
-            bot_error           = EXCLUDED.bot_error,
-            checked_at          = EXCLUDED.checked_at
+            einvoice_status      = EXCLUDED.einvoice_status,
+            einvoice_screenshot  = EXCLUDED.einvoice_screenshot,
+            gstin_status         = EXCLUDED.gstin_status,
+            legal_name           = EXCLUDED.legal_name,
+            taxpayer_type        = EXCLUDED.taxpayer_type,
+            gstr3b_last_filed    = EXCLUDED.gstr3b_last_filed,
+            gstr3b_tax_period    = EXCLUDED.gstr3b_tax_period,
+            gstr3b_status        = EXCLUDED.gstr3b_status,
+            gstr1_last_filed     = EXCLUDED.gstr1_last_filed,
+            gstr1_tax_period     = EXCLUDED.gstr1_tax_period,
+            gstr1_status         = EXCLUDED.gstr1_status,
+            taxpayer_screenshot  = EXCLUDED.taxpayer_screenshot,
+            bot_error            = EXCLUDED.bot_error,
+            checked_at           = EXCLUDED.checked_at,
+            auto_retry_exhausted = EXCLUDED.auto_retry_exhausted
     """
     try:
         with get_connection() as conn:
@@ -71,12 +78,37 @@ def upsert_gst_approval(history_id: int, data: dict) -> bool:
                     data.get("gstr1_last_filed"),  data.get("gstr1_tax_period"),  data.get("gstr1_status"),
                     data.get("taxpayer_screenshot"),
                     data.get("bot_error"),         data.get("checked_at", datetime.now()),
+                    data.get("auto_retry_exhausted", False),
                 ))
             conn.commit()
         logger.info(f"[gst_ops] upserted gst_approval for history_id={history_id}")
         return True
     except Exception as e:
         logger.error(f"[gst_ops] upsert failed for history_id={history_id}: {e}")
+        return False
+
+
+def mark_auto_retry_exhausted(history_id: int) -> bool:
+    """
+    v16: persists "auto-retry cap reached, stop retrying automatically" so
+    it survives an app restart. gst_runner.trigger_async's in-memory
+    _attempts dict cannot survive a restart on its own -- without this,
+    a record that had already exhausted its 5 auto-retries would silently
+    start a fresh burst the moment anyone next opened its view page after
+    a restart, every 5s poll, indefinitely. Does not touch bot result
+    columns -- only the flag. Cleared back to False by
+    reset_gst_for_rerun() (a deliberate manual Re-run).
+    """
+    sql = "UPDATE gst_approval SET auto_retry_exhausted = TRUE WHERE history_id = %s"
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (history_id,))
+            conn.commit()
+        logger.info(f"[gst_ops] auto_retry_exhausted=TRUE for history_id={history_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[gst_ops] mark_auto_retry_exhausted failed for history_id={history_id}: {e}")
         return False
 
 
@@ -162,7 +194,7 @@ def reset_gst_for_rerun(history_id: int) -> bool:
         "    gstr1_last_filed = NULL, gstr1_tax_period = NULL, gstr1_status = NULL, "
         "    taxpayer_screenshot = NULL, approval_status = 'pending', "
         "    approval_by = NULL, approval_at = NULL, hold_reason = NULL, "
-        "    bot_error = NULL, checked_at = NULL "
+        "    bot_error = NULL, checked_at = NULL, auto_retry_exhausted = FALSE "
         "WHERE history_id = %s"
     )
     sql_history = (

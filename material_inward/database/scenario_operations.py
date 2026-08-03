@@ -78,15 +78,26 @@ def ewb_exemption_remark_text(reasons) -> str:
 
 # ── Reads ─────────────────────────────────────────────────────────────────
 
-def get_history_extras(history_id: int) -> list:
+def get_history_extras(history_id: int, doc_type: Optional[str] = None) -> list:
+    """
+    doc_type: filter to 'extra' (genuinely unrecognized filenames, view-only)
+    or 'others' (the deliberate 4th document type, merged into the DMS-bound
+    consolidated PDF by doc_consolidator.py). None = both, unfiltered
+    (matches pre-v14 behavior for existing callers).
+    """
     sql = (
-        "SELECT id, filename, original_filename, created_at "
-        "FROM history_extras WHERE history_id = %s ORDER BY id"
+        "SELECT id, filename, original_filename, doc_type, created_at "
+        "FROM history_extras WHERE history_id = %s"
     )
+    params = [history_id]
+    if doc_type:
+        sql += " AND doc_type = %s"
+        params.append(doc_type)
+    sql += " ORDER BY id"
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(sql, (history_id,))
+                cur.execute(sql, tuple(params))
                 return [dict(r) for r in cur.fetchall()]
     except Exception as e:
         logger.error(f"[scenario_ops] get_history_extras failed for history_id={history_id}: {e}")
@@ -143,15 +154,25 @@ def set_ewb_exemption_reasons(history_id: int, reasons: list, username: str) -> 
         return False
 
 
-def add_history_extra(history_id: int, filename: str, original_filename: Optional[str] = None) -> bool:
+def add_history_extra(
+    history_id: int,
+    filename: str,
+    original_filename: Optional[str] = None,
+    doc_type: str = "extra"
+) -> bool:
+    """
+    doc_type: 'extra' (default) = genuinely unrecognized filename, view-only,
+    never touches DMS. 'others' = the deliberate 4th document type (_OTH
+    suffix), merged into the DMS-bound consolidated PDF by doc_consolidator.py.
+    """
     sql = """
-        INSERT INTO history_extras (history_id, filename, original_filename)
-        VALUES (%s, %s, %s)
+        INSERT INTO history_extras (history_id, filename, original_filename, doc_type)
+        VALUES (%s, %s, %s, %s)
     """
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (history_id, filename, original_filename or filename))
+                cur.execute(sql, (history_id, filename, original_filename or filename, doc_type))
             conn.commit()
         return True
     except Exception as e:

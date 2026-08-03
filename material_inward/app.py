@@ -40,7 +40,8 @@ from database.db_operations import (
     get_history_search, get_today_counts,
     set_approval_status, set_hold_status,
     set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
-    set_dms_status, set_po_flow_type
+    set_dms_status, set_po_flow_type,
+    get_dms_document_link
 )
 from database.scenario_operations import (
     get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
@@ -76,6 +77,11 @@ from database.notifications_operations import (
 from services.extract import process_document
 from services.rf_queue_worker import start_worker
 from services.mail_service import send_approval_notification
+from services.credential_cache import (
+    store_session_credential, get_session_credential,
+    clear_session_credential, touch_session_credential,
+    attach_job_credential
+)
 
 logger = get_logger(__name__)
 
@@ -169,14 +175,52 @@ def _cleanup_loop():
 
 
 # ============================================================
+# HEALTH CHECK — for watchdog.py / external monitoring only.
+# Deliberately public (no @login_required) -- the watchdog isn't a logged-in
+# user and can't be, and this endpoint returns nothing sensitive. Must stay
+# fast and cheap: a real SELECT so a hung/exhausted DB pool is caught (that's
+# the actual failure mode a process-alive-but-stuck check needs to catch),
+# but nothing else -- no RF queue stats, no table scans. See watchdog.py's
+# docstring for the full monitoring design (network/DB check, then this,
+# then a restart decision).
+# ============================================================
+
+@app.route("/health")
+def health_check():
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        return jsonify({"status": "ok", "db": True}), 200
+    except Exception as e:
+        logger.error(f"/health check failed: {e}")
+        return jsonify({"status": "error", "db": False, "error": str(e)}), 503
+
+
+# ============================================================
 # DECORATORS / HELPERS
 # ============================================================
+
+def _no_roles_assigned() -> bool:
+    """
+    v15: True for a verified, logged-in user who isn't SuperAdmin and has
+    no step_roles at all -- e.g. a freshly-created LDAP row a SuperAdmin
+    hasn't assigned anything to yet. SuperAdmin always passes (sees
+    everything regardless of step_roles, same as _has_role()).
+    """
+    return session.get("role") != "SuperAdmin" and not (session.get("step_roles") or "").strip()
+
 
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if "username" not in session:
             return redirect(url_for("login"))
+        if _no_roles_assigned():
+            return redirect(url_for("no_access"))
+        # v16: refresh the SAP credential idle-timeout clock on every page
+        # load — no-op for local users / anyone with no cached entry.
+        touch_session_credential(session.get("username"))
         return f(*args, **kwargs)
     return decorated
 
@@ -190,8 +234,103 @@ def api_login_required(f):
                 "error": "Session expired. Please log in again.",
                 "session_expired": True
             }), 401
+        if _no_roles_assigned():
+            return jsonify({
+                "success": False,
+                "error": "No roles assigned to your account yet. Contact your SuperAdmin."
+            }), 403
+        # v16: see login_required() above.
+        touch_session_credential(session.get("username"))
         return f(*args, **kwargs)
     return decorated
+
+
+def login_required_view_only(f):
+    """
+    v17: Same as login_required, but deliberately skips the
+    _no_roles_assigned() block. Use ONLY on read-only routes an
+    unassigned (no step_roles, non-SuperAdmin) LDAP user should still be
+    able to reach -- today that's the history list and a record's detail
+    page. This does NOT expose anything extra once there: every
+    workflow tab on view_detail's index.html render is separately gated
+    by can_view_* / has_role() checks that already evaluate False for an
+    unassigned user, so only the Documents tab (can_view_documents=True
+    for everyone, per the v14 fix) actually renders for them. Do not
+    apply this decorator to any route that performs an action or that
+    should stay hidden from an unassigned user -- use login_required
+    for those, as before.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "username" not in session:
+            return redirect(url_for("login"))
+        touch_session_credential(session.get("username"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def api_login_required_view_only(f):
+    """API counterpart of login_required_view_only -- see that docstring.
+    Use only on read-only GET endpoints an unassigned user needs (e.g.
+    history search), never on an action/mutation route."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "username" not in session:
+            return jsonify({
+                "success": False,
+                "error": "Session expired. Please log in again.",
+                "session_expired": True
+            }), 401
+        touch_session_credential(session.get("username"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _enqueue_sap_job(history_id, step: str, payload: dict):
+    """
+    v16: wraps enqueue_rf_job() with per-user SAP credential attachment.
+
+    LDAP-authenticated users' RF jobs use their own cached SAP password
+    (captured at login — see /login below) instead of the shared spl_rpa
+    .env account. Local/test accounts are untouched: sap_username/
+    sap_password stay None for them, and rf_runner.py/the robot scripts
+    fall back to .env exactly as before this change.
+
+    If an LDAP user's cached credential has expired (60-minute idle
+    timeout) or was never captured, the submission is refused up front
+    with a "log in again" error rather than queued with no credential —
+    there is no fallback to spl_rpa for an LDAP-submitted job, ever.
+
+    Returns (job_id, error_response). error_response is None on success;
+    when set, the caller should return it directly. job_id is None if
+    enqueue_rf_job() itself declined (duplicate already queued/running).
+    """
+    username  = session.get("username")
+    auth_type = session.get("auth_type", "local")
+
+    sap_username = None
+    sap_password = None
+    if auth_type == "ldap":
+        sap_password = get_session_credential(username)
+        if not sap_password:
+            return None, (jsonify({
+                "success": False,
+                "error": "Your session has timed out. Please log in again to continue.",
+                "session_expired": True
+            }), 401)
+        sap_username = username
+        # Not sensitive — just a marker so rf_queue_worker.py can tell
+        # "local job, no credential needed" apart from "LDAP job that
+        # lost its credential to an app restart" once it's persisted in
+        # rf_queue.payload (which survives a restart; the credential
+        # itself never does).
+        payload = dict(payload or {})
+        payload["_submitted_by_auth_type"] = "ldap"
+
+    job_id = enqueue_rf_job(history_id, step, payload)
+    if job_id and sap_username and sap_password:
+        attach_job_credential(job_id, sap_username, sap_password)
+    return job_id, None
 
 
 def admin_required(f):
@@ -309,6 +448,36 @@ def _check_step_allowed(history: dict, step: str) -> tuple:
             return False, "Awaiting MIGO 105 completion."
     return True, ""
 
+
+def _validate_required_fields(data: dict, required: list) -> str | None:
+    """
+    Server-side mandatory-field check for the four SAP-posting routes
+    (save_gatein, run_migo_103, run_migo_105, run_miro).
+
+    Added 2026-07-25: an audit found every posting route enforced its
+    mandatory fields ONLY in browser JS (validateGateIn/validateMigo103/
+    validateMigo105/validateMiro in the respective templates) -- there was
+    no `required` HTML attribute anywhere (two of the four forms even set
+    `novalidate`) and no re-check in Flask. A normal user going through the
+    UI could never submit blank, but a direct POST to any of these routes
+    (curl/Postman/devtools, or a future frontend regression) could reach
+    execute_*_sap() and post to live SAP with any mandatory field empty,
+    with nothing server-side to stop it.
+
+    `required` is a list of (payload_key, human_label) tuples -- human_label
+    matches the on-screen field label so the error reads the same as the
+    client-side validation would have shown. Returns None if every field is
+    present and non-blank after stripping whitespace, else one combined
+    error string listing every missing field (not just the first one hit),
+    so a direct-API caller doesn't have to resubmit repeatedly to discover
+    each one individually.
+    """
+    missing = [label for key, label in required if not str(data.get(key) or "").strip()]
+    if not missing:
+        return None
+    return f"Missing required field(s): {', '.join(missing)}."
+
+
 def _move_file(src_path: str, dest_folder: str) -> str:
     os.makedirs(dest_folder, exist_ok=True)
     filename = os.path.basename(src_path)
@@ -423,7 +592,16 @@ def login():
             session["name"]       = user["name"]
             session["step_roles"] = user.get("step_roles", "")
             session["admin_edit"] = bool(user.get("admin_edit", True))
-            logger.info(f"Login: {username} ({user['role']})")
+            # v15: decides whether a queued RF job uses this person's own
+            # SAP login or the shared spl_rpa/.env fallback.
+            session["auth_type"]  = user.get("auth_type", "local")
+            # v16: LDAP users' own password (== their personal SAP login,
+            # confirmed by client) is cached in-memory only, never in the
+            # session cookie or any DB table — see credential_cache.py.
+            # Local/test accounts never go through this cache at all.
+            if session["auth_type"] == "ldap":
+                store_session_credential(username, password)
+            logger.info(f"Login: {username} ({user['role']}, auth_type={session['auth_type']})")
             return redirect(url_for("history_page"))
         logger.warning(f"Failed login: {username}")
         return render_template("login.html", error="Invalid username or password")
@@ -433,8 +611,23 @@ def login():
 @app.route("/logout")
 def logout():
     logger.info(f"Logout: {session.get('username')}")
+    # v16: drop this user's cached SAP session credential immediately —
+    # a already-queued job keeps its own separately-attached copy (see
+    # credential_cache.py JOB_CACHE), so logging out mid-job is safe.
+    clear_session_credential(session.get("username"))
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/no_access")
+def no_access():
+    """v15: shown instead of any real page for a verified user with no
+    step_roles and no SuperAdmin role -- see login_required()/
+    _no_roles_assigned(). Deliberately not decorated with @login_required
+    itself (that would redirect right back here)."""
+    if "username" not in session:
+        return redirect(url_for("login"))
+    return render_template("no_access.html", username=session.get("username"))
 
 
 # ============================================================
@@ -442,7 +635,7 @@ def logout():
 # ============================================================
 
 @app.route("/history")
-@login_required
+@login_required_view_only
 def history_page():
     try:
         history_data = get_all_history()
@@ -465,7 +658,7 @@ def history_page():
 
 
 @app.route("/api/history_search")
-@api_login_required
+@api_login_required_view_only
 def api_history_search():
     search   = request.args.get("search", "").strip()
     status   = request.args.get("status", "").strip()
@@ -504,7 +697,7 @@ def change_my_password():
 
 
 @app.route("/view/<int:history_id>")
-@login_required
+@login_required_view_only
 def view_detail(history_id):
     try:
         details = get_history_details_by_id(history_id)
@@ -555,7 +748,20 @@ def view_detail(history_id):
         # each gated to their own role, on top of the existing system-wide
         # is_step_enabled() toggle (unchanged).
         can_view_extracted, can_edit_extracted = _extracted_data_view_state(history)
-        can_view_documents = _has_role("compliance")
+        # FIX (v14): Documents tab is now open to any authenticated user
+        # (view/download only), regardless of role or step_roles -- it used
+        # to be compliance-only, which is what was actually causing
+        # documents to appear to "vanish" for other roles (a permanent
+        # restriction, not something that changed after approval or a
+        # rendering fix). Deleting a document is unaffected -- that's still
+        # gated separately via _require_role_edit("compliance") wherever
+        # /delete_document and /delete_all_documents check it.
+        can_view_documents = True
+        # v16: Contentverse sharing link, once dms_upload.robot has
+        # uploaded this record's consolidated PDF and services/
+        # dms_links_import.py has pulled the link back into the DB. None
+        # until then -- documents.html shows nothing extra in that case.
+        dms_document_link  = get_dms_document_link(history_id)
         can_view_gst       = _has_role("compliance")
         can_view_gate_in   = config.is_step_enabled("gate_in")   and _has_role("gate_in")
         can_view_migo_103  = config.is_step_enabled("migo_103")  and _has_role("migo_103")
@@ -611,6 +817,7 @@ def view_detail(history_id):
             role=session.get("role"),
             from_history=True,
             can_view_documents=can_view_documents,
+            dms_document_link=dms_document_link,
             can_view_extracted=can_view_extracted,
             can_edit_extracted=can_edit_extracted,
             can_view_gst=can_view_gst,
@@ -1106,10 +1313,54 @@ def save_gatein():
     if not allowed:
         return jsonify({"success": False, "error": reason}), 400
 
-    upsert_gatein_entry(history_id, data)
+    # v17.1: server-side mirror of validateGateIn() in gate_in.html --
+    # see _validate_required_fields()'s docstring for why this was added.
     po_flow_type = (data.get("po_flow_type") or "truck_with_po").strip()
+    valid_flow_types = {"truck_with_po", "truck_without_po", "hand_with_po", "hand_without_po"}
+    if po_flow_type not in valid_flow_types:
+        return jsonify({"success": False, "error": f"Invalid po_flow_type: {po_flow_type!r}"}), 400
+    is_hand       = po_flow_type.startswith("hand_")
+    is_without_po = po_flow_type.endswith("_without_po")
+
+    required = [
+        ("gateInDate", "Gate In Date"),
+        ("gateInTime", "Gate In Time"),
+        ("vendorName", "Vendor Name"),
+        ("driverName", "Person Name" if is_hand else "Driver Name"),
+        ("category",   "Category"),
+        ("material",   "Material"),
+        ("challanNo",  "Challan No"),
+        ("challanQty", "Challan Quantity"),
+    ]
+    if not is_hand:
+        required += [("truckNo", "Truck No"), ("licenseNo", "License No")]
+    if not is_without_po:
+        required.append(("purchaseOrder", "Purchase Order"))
+
+    err = _validate_required_fields(data, required)
+    if err:
+        return jsonify({"success": False, "error": err}), 400
+
+    # Same 10-char SAP vendor-code limit validateGateIn() enforces client-side
+    # (LIFNR field length) -- Vendor Name must hold the resolved code by the
+    # time it's posted, not a free-text OCR'd name.
+    if len(str(data.get("vendorName") or "").strip()) > 10:
+        return jsonify({
+            "success": False,
+            "error": "Vendor Name must be the 10-character (or fewer) SAP vendor code, not a free-text name. Use Fetch to resolve it."
+        }), 400
+
+    upsert_gatein_entry(history_id, data)
     set_po_flow_type(history_id, po_flow_type)
-    job_id = enqueue_rf_job(history_id, "gate_in", data)
+    # v16: recorded so gate_in_entries.submitted_by can be set once this
+    # job actually posts (or fails) -- see rf_queue_worker.py._process_gate_in
+    # and database/gatein_operations.py.update_gatein_rf_result(). This is
+    # schema/plumbing only for now; the zgatein_update PO-backfill flow that
+    # will actually use this value is still under design.
+    data["_submitted_by_username"] = session.get("username")
+    job_id, err = _enqueue_sap_job(history_id, "gate_in", data)
+    if err:
+        return err
     if not job_id:
         return jsonify({"success": False, "error": "Gate In already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
@@ -1134,8 +1385,33 @@ def run_migo_103():
     if not allowed:
         return jsonify({"success": False, "error": reason}), 400
 
+    # v17.1: server-side mirror of validateMigo103() in migo_103.html.
+    # PO Number is unconditionally mandatory here (unlike Gate In's, which
+    # is exempted for without_po) -- for a without_po record this is the
+    # guard's own point of entering the real PO, which _process_migo_103
+    # then reads (payload["purchaseOrder"]/["migoPoNumber"]) to log the
+    # Pending PO Update for Gate In backfill. See rf_queue_worker.py.
+    required = [
+        ("migoPoNumber",     "Purchase Order No"),
+        ("migoDocDate",      "Document Date"),
+        ("migoPostDate",     "Posting Date"),
+        ("migoDeliveryNote", "Delivery Note"),
+        ("migoHeaderText",   "Header Text"),
+    ]
+    err = _validate_required_fields(data, required)
+    if err:
+        return jsonify({"success": False, "error": err}), 400
+    items_data = data.get("items_data") or []
+    if not isinstance(items_data, list) or len(items_data) == 0:
+        return jsonify({
+            "success": False,
+            "error": "At least one matched line item is required before posting MIGO 103."
+        }), 400
+
     upsert_migo_entry(history_id, data)
-    job_id = enqueue_rf_job(history_id, "migo_103", data)
+    job_id, err = _enqueue_sap_job(history_id, "migo_103", data)
+    if err:
+        return err
     if not job_id:
         return jsonify({"success": False, "error": "MIGO 103 already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
@@ -1158,6 +1434,14 @@ def run_migo_105():
     allowed, reason = _check_step_allowed(history, "migo_105")
     if not allowed:
         return jsonify({"success": False, "error": reason}), 400
+
+    # v17.1: server-side mirror of validateMigo105() in migo_105.html --
+    # previously the ONLY field re-validated server-side on this route was
+    # material_doc_number (below); storageLocation was mandatory client-side
+    # but never checked here.
+    err = _validate_required_fields(data, [("storageLocation", "Storage Location")])
+    if err:
+        return jsonify({"success": False, "error": err}), 400
 
     migo_entry = get_migo_entry(history_id)
 
@@ -1213,7 +1497,9 @@ def run_migo_105():
         "migo_105_remarks":             data.get("remarks105"),
     }
 
-    job_id = enqueue_rf_job(history_id, "migo_105", rf_payload)
+    job_id, err = _enqueue_sap_job(history_id, "migo_105", rf_payload)
+    if err:
+        return err
     if not job_id:
         return jsonify({"success": False, "error": "MIGO 105 already processing."}), 409
     return jsonify({
@@ -1281,6 +1567,17 @@ def run_miro():
     if not allowed:
         return jsonify({"success": False, "error": reason}), 400
 
+    # v17.1: server-side mirror of validateMiro() in miro.html.
+    required = [
+        ("miroInvoiceDate",   "Invoice Date"),
+        ("miroReference",     "Reference (Bill No.)"),
+        ("miroAmount",        "Amount"),
+        ("miroPurchaseOrder", "Purchase Order"),
+    ]
+    err = _validate_required_fields(data, required)
+    if err:
+        return jsonify({"success": False, "error": err}), 400
+
     upsert_miro_entry(history_id, data)
     details = get_history_details_by_id(history_id)
     inv = details.get("invoice_data") or {}
@@ -1292,7 +1589,9 @@ def run_miro():
         "miroPurchaseOrder": data.get("miroPurchaseOrder") or inv.get("po_number") or "",
     }
 
-    job_id = enqueue_rf_job(history_id, "miro", rf_payload)
+    job_id, err = _enqueue_sap_job(history_id, "miro", rf_payload)
+    if err:
+        return err
     if not job_id:
         return jsonify({"success": False, "error": "MIRO already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
@@ -1403,6 +1702,11 @@ def run_po_fetch(history_id):
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
 
+    # v16: po_fetch (ME23N line-item read) deliberately always uses the
+    # shared spl_rpa/.env SAP login, never a per-user LDAP credential --
+    # it's a read-only PO lookup, not an attributable posting, so there's
+    # no audit-trail reason to route it through _enqueue_sap_job(). See
+    # config/.env comments next to SAP_USERNAME/SAP_PASSWORD.
     job_id = enqueue_rf_job(
         history_id, "po_fetch",
         {"po_number": po_number, "history_id": history_id}
@@ -1423,6 +1727,9 @@ def run_po_list_fetch():
     if not vendor_name:
         return jsonify({"success": False, "error": "Vendor name required"}), 400
 
+    # v16: po_list_fetch (ME2N open-PO lookup by vendor) is also always
+    # shared spl_rpa/.env, same reasoning as po_fetch above -- read-only
+    # lookup, not an attributable posting.
     job_id = enqueue_rf_job(
         history_id, "po_list_fetch",
         {"vendor_name": vendor_name, "history_id": history_id}
@@ -1503,22 +1810,33 @@ def api_update_storage_location():
 @admin_required
 def add_user_web():
     data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
-    confirm  = data.get("confirm_password", "")
-    role     = data.get("role", "User")
-    name     = data.get("name", "").strip()
-    email    = data.get("email", "").strip()
+    username  = data.get("username", "").strip()
+    auth_type = (data.get("auth_type", "local") or "local").strip().lower()
+    password  = data.get("password", "")
+    confirm   = data.get("confirm_password", "")
+    role      = data.get("role", "User")
+    name      = data.get("name", "").strip()
+    email     = data.get("email", "").strip()
     email_notif = bool(data.get("email_notifications_enabled", False))
     step_roles  = (data.get("step_roles", "") or "").strip()
     admin_edit  = bool(data.get("admin_edit", True))
 
-    if not all([username, password, confirm, role, name]):
-        return jsonify({"status": False, "message": "Username, name, role and password required"}), 400
-    if password != confirm:
-        return jsonify({"status": False, "message": "Passwords do not match"}), 400
+    if auth_type not in ("local", "ldap"):
+        return jsonify({"status": False, "message": "Invalid auth_type"}), 400
 
-    success = add_user(username, password, role, name, email, email_notif, step_roles, admin_edit)
+    # v15: LDAP users need only username + role -- name is optional
+    # (defaults to username in add_user()), no password at all, since AD
+    # is the credential check at login time, not this app.
+    if auth_type == "ldap":
+        if not username or not role:
+            return jsonify({"status": False, "message": "Username and role required"}), 400
+    else:
+        if not all([username, password, confirm, role, name]):
+            return jsonify({"status": False, "message": "Username, name, role and password required"}), 400
+        if password != confirm:
+            return jsonify({"status": False, "message": "Passwords do not match"}), 400
+
+    success = add_user(username, password, role, name, email, email_notif, step_roles, admin_edit, auth_type)
     return jsonify({"status": success, "message": "User created" if success else "Failed — username may exist"})
 
 
@@ -1531,15 +1849,20 @@ def edit_user_web():
     password = data.get("password", "").strip()
     confirm  = data.get("confirm_password", "").strip()
     role     = data.get("role", "User")
+    name     = data.get("name")
     email    = data.get("email")
     email_notif = data.get("email_notifications_enabled")
     step_roles  = data.get("step_roles")
     admin_edit  = data.get("admin_edit")
+    auth_type   = data.get("auth_type")  # None = leave unchanged
+
+    if auth_type is not None and auth_type.strip().lower() not in ("local", "ldap"):
+        return jsonify({"status": False, "message": "Invalid auth_type"}), 400
+    if password and password != confirm:
+        return jsonify({"status": False, "message": "Passwords do not match"}), 400
 
     if not username:
         return jsonify({"status": False, "message": "Username required"}), 400
-    if password and password != confirm:
-        return jsonify({"status": False, "message": "Passwords do not match"}), 400
 
     success = update_user(
         username,
@@ -1548,7 +1871,9 @@ def edit_user_web():
         email=email,
         email_notifications_enabled=email_notif,
         step_roles=step_roles,
-        admin_edit=admin_edit
+        admin_edit=admin_edit,
+        auth_type=auth_type.strip().lower() if auth_type else None,
+        name=name
     )
     return jsonify({"status": success, "message": "Updated" if success else "Not found"})
 
@@ -1748,6 +2073,77 @@ def delete_all_documents(history_id):
         return jsonify({"success": False, "error": "Files removed but DB cleanup failed"}), 500
 
     return jsonify({"success": True, "message": "All documents deleted", "deleted": deleted_any})
+
+
+# ============================================================
+# PENDING PO UPDATES (v17) — zgatein_update, decoupled from MIGO 103.
+# See database/pending_po_operations.py and rf_queue_worker.py's
+# _process_migo_103/_process_update_gatein_po for the background.
+# ============================================================
+from database.pending_po_operations import (
+    get_pending_po_updates_for_user, get_pending_po_update
+)
+
+
+@app.route("/api/pending_po_updates")
+@api_login_required_view_only
+def api_pending_po_updates():
+    """
+    List pending PO backfills the current user should see on the History
+    page's panel. Deliberately view_only (not gated behind an assigned
+    role) for the same reason /history itself is -- reading this list is
+    harmless; the actual /run route below still requires the gate_in role.
+    SuperAdmin sees every pending row regardless of target as a backstop.
+    """
+    username = session.get("username")
+    items = get_pending_po_updates_for_user(username, is_superadmin=_is_superadmin())
+    for it in items:
+        if it.get("requested_at"):
+            it["requested_at"] = it["requested_at"].strftime("%Y-%m-%d %H:%M")
+    return jsonify({"success": True, "items": items})
+
+
+@app.route("/api/pending_po_updates/<int:history_id>/run", methods=["POST"])
+@api_login_required
+def api_pending_po_updates_run(history_id):
+    """
+    Triggered by "Update PO" on the History page panel. Runs
+    zgatein_update under the CALLING user's own live session credential --
+    same _enqueue_sap_job path every other posting route uses, so there is
+    no window where anyone's credential is held past this immediate
+    submission.
+    """
+    blocked = _require_role_edit("gate_in")
+    if blocked:
+        return blocked
+
+    item = get_pending_po_update(history_id)
+    if not item:
+        return jsonify({"success": False, "error": "No pending PO update for this record."}), 404
+
+    # Visibility check mirrors api_pending_po_updates() above: the
+    # target_username owner or, for legacy records with no captured
+    # submitter, any gate_in-role user. SuperAdmin always allowed through.
+    target = item.get("target_username")
+    if target and target != session.get("username") and not _is_superadmin():
+        return jsonify({
+            "success": False,
+            "error": "This pending PO update is assigned to a different user."
+        }), 403
+
+    job_id, err = _enqueue_sap_job(history_id, "update_gatein_po", {
+        "gate_in_number": item["gate_in_number"],
+        "po_number":      item["po_number"],
+        "history_id":     history_id,
+        # v17: read back by _process_update_gatein_po to mark the
+        # pending_po_updates row resolved by whoever actually ran this.
+        "_submitted_by_username": session.get("username"),
+    })
+    if err:
+        return err
+    if not job_id:
+        return jsonify({"success": False, "error": "Already processing."}), 409
+    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
 
 # ============================================================

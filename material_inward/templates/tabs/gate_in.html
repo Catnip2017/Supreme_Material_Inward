@@ -425,6 +425,14 @@
 
 
 const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
+// FIX: was referenced below (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED) but
+// never actually declared anywhere -- an undefined bare identifier throws
+// in JS, so the submit handler aborted with a silent console error every
+// time POST_LOCKED_GATEIN was true, before the request ever reached the
+// server. That's why toggling ENABLE_STEP_LOCKS in .env appeared to do
+// nothing: the server-side bypass (app.py _check_step_allowed) was correct
+// all along, the request just never got there.
+const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 
 (function() {

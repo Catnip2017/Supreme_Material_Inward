@@ -365,3 +365,36 @@ def send_ocr_failure_alert(
     </body></html>
     """
     return _send_email([config.ADMIN_EMAIL], subject, body)
+
+
+def send_unrecognized_file_alert(filename: str) -> bool:
+    """
+    v14: sent once per unrecognized filename by folder_watcher._sweep_loose_files()
+    when a file's suffix doesn't match INV/EWB/LR/OTH. The file is left in place
+    (not moved to failed/) -- if it's renamed to match the naming convention, the
+    next sweep picks it up normally like any other incoming file. This alert is a
+    one-time heads-up, not a recurring nag on every poll cycle.
+    """
+    if not config.ADMIN_EMAIL:
+        logger.info("ADMIN_EMAIL not configured — unrecognized file alert skipped.")
+        return False
+
+    subject = f"[ACTION NEEDED] Unrecognized filename in incoming folder — {filename}"
+    body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;">
+    <p style="color:#c0392b;font-weight:bold;">&#9888; Unrecognized Filename in Incoming Folder</p>
+    <p>A file arrived in the incoming folder whose name doesn't match the expected
+    <code>INVOICENO_INV / _EWB / _LR / _OTH.pdf</code> convention, so it was not
+    picked up for processing.</p>
+    <table style="border-collapse:collapse;margin:16px 0;">
+        <tr style="background:#f5f5f5;">
+            <td style="padding:8px 16px;font-weight:bold;">Filename:</td>
+            <td style="padding:8px 16px;font-family:monospace;">{filename}</td></tr>
+    </table>
+    <p><strong>Action:</strong> The file has been left exactly where it is -- nothing
+    was moved or deleted. Rename it to match the convention and it will be picked up
+    automatically on the next check. You will not be re-notified about this same file
+    again unless it disappears and a new file with this name shows up later.</p>
+    </body></html>
+    """
+    return _send_email([config.ADMIN_EMAIL], subject, body)

@@ -64,6 +64,17 @@ def upsert_gatein_entry(history_id: int, data: dict) -> bool:
             weight_option   = EXCLUDED.weight_option,
             updated_at      = CURRENT_TIMESTAMP
     """
+    # FIX: SAP's material field (txtP_MATNR) has a hard 40-char DDIC limit.
+    # This used to be enforced only by a cosmetic Jinja |truncate(40,...) at
+    # initial page render in gate_in.html -- nothing re-enforced it after
+    # that, so OCR auto-fill (map_ocr_to_gatein, called before this function
+    # ever runs) and manual /save_gatein submissions could both persist a
+    # longer raw value, which then flowed untouched through rf_runner.py
+    # into gate_in.robot's Input Text call. Capping here catches both paths
+    # at the one place they both funnel through before hitting the DB.
+    _material_raw = data.get("material") or ""
+    _material = _material_raw[:40] if len(_material_raw) > 40 else _material_raw
+
     values = (
         history_id,
         data.get("gateInDate") or data.get("gate_in_date"),
@@ -76,7 +87,7 @@ def upsert_gatein_entry(history_id: int, data: dict) -> bool:
         data.get("numPersons") or data.get("num_persons"),
         data.get("containerNo") or data.get("container_no"),
         data.get("category"),
-        data.get("material"),
+        _material,
         data.get("challanNo") or data.get("challan_no"),
         data.get("challanQty") or data.get("challan_qty"),
         data.get("boeNo") or data.get("boe_no"),
@@ -100,11 +111,19 @@ def update_gatein_rf_result(
     history_id: int,
     gate_in_number: str,
     status: str = "success",
-    error_message: Optional[str] = None
+    error_message: Optional[str] = None,
+    submitted_by: Optional[str] = None
 ) -> bool:
     """
     Store the SAP-generated Gate In number after RF execution.
     Also updates the history table's gate_in_number column.
+
+    v16: submitted_by records which logged-in user's submission produced
+    this result (passed through from rf_queue.payload's
+    "_submitted_by_username" -- see app.py's save_gatein() and
+    rf_queue_worker.py's _process_gate_in()). Only overwritten when a
+    value is actually supplied, via COALESCE, so callers that don't pass
+    it (none currently) don't blank out an existing value.
     """
     sql = """
         UPDATE gate_in_entries
@@ -112,6 +131,7 @@ def update_gatein_rf_result(
             rf_status         = %s,
             rf_error_message  = %s,
             rf_executed_at    = %s,
+            submitted_by      = COALESCE(%s, submitted_by),
             updated_at        = CURRENT_TIMESTAMP
         WHERE history_id = %s
     """
@@ -120,9 +140,12 @@ def update_gatein_rf_result(
             with conn.cursor() as cur:
                 cur.execute(sql, (
                     gate_in_number, status, error_message,
-                    datetime.now(), history_id
+                    datetime.now(), submitted_by, history_id
                 ))
-                logger.info(f"Gate In RF result stored for history_id {history_id}: GIN={gate_in_number}")
+                logger.info(
+                    f"Gate In RF result stored for history_id {history_id}: "
+                    f"GIN={gate_in_number} submitted_by={submitted_by}"
+                )
                 return True
     except Exception as e:
         logger.error(f"Failed to update Gate In RF result for history_id {history_id}: {e}")

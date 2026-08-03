@@ -11,10 +11,10 @@ Library           Process
 Library           OperatingSystem
 Library           String
 Library           Collections
-Library    sap_helpers.py
+
 *** Variables ***
 ${PO_NUMBER}    ${EMPTY}
-${ITEM_COMBO}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB1:SAPLMEGUI:6000/cmbDYN_6000-LIST
+
 # ============================================================
 # CONFIRMED PATHS FROM GUI RECORDING
 # ============================================================
@@ -34,7 +34,7 @@ ${COL_NETPRICE}    10
 
 # India tab and HSN/SAC (confirmed from recording)
 ${INDIA_TAB}      wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB2:SAPLMEGUI:1303/tabsITEM_DETAIL/tabpTABIDT13
-${HSN_FIELD}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB2:SAPLMEGUI:1303/tabsITEM_DETAIL/tabpTABIDT13/ssubTABSTRIPCONTROL1SUB:SAPLMEGUI:1344/ctxtMEPO1344-STEUC
+${HSN_FIELD}      wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB2:SAPLMEGUI:1303/tabsITEM_DETAIL/tabpTABIDT13/ssubTABSTRIPCONTROL1SUB:SAPLMEGUI:1344/ctxtMEPO1344-STEUC
 ${BTN_NEXT_ITEM}  wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB1:SAPLMEGUI:6000/btn%#AUTOTEXT001
 
 # PO number entry via Other Purchase Order button
@@ -56,18 +56,10 @@ Execute PO Fetch
 Initialize SAP And Login
     Evaluate    __import__('dotenv').load_dotenv()
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
-    ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
-    ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
-
-    # v16: PO Fetch (ME23N line-item read) ALWAYS uses the shared spl_rpa
-    # .env account below -- unlike gate_in/migo_103/migo_105/miro/
-    # zgatein_update, this bot never checks for a per-user SAP_USER_OVERRIDE/
-    # SAP_PASS_OVERRIDE credential. It's a read-only PO lookup feeding
-    # MIGO's line items, not an attributable posting, so rf_runner.py
-    # deliberately never passes an override into this bot's environment --
-    # by client decision, not an oversight. See .env for the full comment.
     ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
     ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
+    ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
+    ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
 
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Sleep    2s
@@ -115,10 +107,10 @@ Fetch PO Line Items
 
     WHILE    True
         # Build full element paths as strings first — avoids RF interpreting [col,row] as list index
-        ${mat_path}=    Set Variable    ${TABLE}/${F_MATERIAL}\[${COL_MATERIAL},${row_idx}\]
-        ${txt_path}=    Set Variable    ${TABLE}/${F_SHORTTEXT}\[${COL_SHORTTEXT},${row_idx}\]
-        ${qty_path}=    Set Variable    ${TABLE}/${F_QUANTITY}\[${COL_QUANTITY},${row_idx}\]
-        ${price_path}=  Set Variable    ${TABLE}/${F_NETPRICE}\[${COL_NETPRICE},${row_idx}\]
+        ${mat_path}=     Set Variable    ${TABLE}/${F_MATERIAL}[${COL_MATERIAL},${row_idx}]
+        ${txt_path}=     Set Variable    ${TABLE}/${F_SHORTTEXT}[${COL_SHORTTEXT},${row_idx}]
+        ${qty_path}=     Set Variable    ${TABLE}/${F_QUANTITY}[${COL_QUANTITY},${row_idx}]
+        ${price_path}=   Set Variable    ${TABLE}/${F_NETPRICE}[${COL_NETPRICE},${row_idx}]
 
         # Try to read material — FAIL means no more rows
         ${mat_res}=    Run Keyword And Ignore Error    Get Value    ${mat_path}
@@ -142,13 +134,6 @@ Fetch PO Line Items
 
         ${price_res}=    Run Keyword And Ignore Error    Get Value    ${price_path}
         ${price_raw}=    Clean SAP Value    ${price_res}[1]
-
-        # Diagnostic: log every value read for this row, per field, before
-        # it goes anywhere else -- makes it obvious in the console/log
-        # whether SAP actually returned something for material/qty (vs.
-        # them arriving blank at the SAP-read step itself) versus getting
-        # lost further down the pipeline (rf_runner parsing, DB save, etc).
-        Log To Console    Row ${row_idx} READ: material="${material}" short_text="${short_text}" qty="${qty_raw}" net_price="${price_raw}"
 
         &{row_data}=    Create Dictionary
         ...    material=${material}
@@ -175,59 +160,21 @@ Fetch PO Line Items
     Run Keyword And Ignore Error    Click Element    ${INDIA_TAB}
     Sleep    2s
 
-    # @{hsn_list}=    Create List
-
-    #     FOR    ${i}    IN RANGE    ${total_rows}
-
-    #         # Always ensure India tab is active before reading
-    #         Run Keyword And Ignore Error    Click Element    ${INDIA_TAB}
-    #         Sleep    0.5s
-
-    #         ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
-    #         ${hsn}=        Clean SAP Value    ${hsn_res}[1]
-
-    #         Append To List    ${hsn_list}    ${hsn}
-    #         Log To Console    Item ${i} HSN/SAC: ${hsn}
-
-    #        IF    ${i} < ${total_rows} - 1
-    #         ${next_row}=    Evaluate    ${i} + 1
-    #         ${row_path}=    Set Variable    ${TABLE}/rows[${next_row}]
-    #         Run Keyword And Ignore Error    Click Element    ${row_path}
-    #         Sleep    1s
-    #     END
-
-    #     END
-
-# --------------------------------------------------------
-# --------------------------------------------------------
-# --------------------------------------------------------
- # --------------------------------------------------------
-   # --------------------------------------------------------
-    # STEP 2: Read HSN/SAC — set focus on each row's short text
-    # field to activate that item in the detail pane
-    # --------------------------------------------------------
     @{hsn_list}=    Create List
 
     FOR    ${i}    IN RANGE    ${total_rows}
-        ${item_index}=    Evaluate    ${i} + 1
-
-        ${combo_res}=    Run Keyword And Ignore Error    Set Combo Via Vbs    ${ITEM_COMBO}    ${item_index}
-        Log To Console    Item ${i} combo: ${combo_res}[0]
-        Sleep    1.5s
-
         ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
-        Log To Console    Item ${i} HSN read: ${hsn_res}[0] = ${hsn_res}[1]
-
         ${hsn}=    Clean SAP Value    ${hsn_res}[1]
         Append To List    ${hsn_list}    ${hsn}
         Log To Console    Item ${i} HSN/SAC: ${hsn}
+
+        # Press down arrow to go to next item (skip on last)
+        IF    ${i} < ${total_rows} - 1
+            Run Keyword And Ignore Error    Click Element    ${BTN_NEXT_ITEM}
+            Sleep    1s
+        END
     END
 
-    ${hsn_count}=    Get Length    ${hsn_list}
-    WHILE    ${hsn_count} < ${total_rows}
-        Append To List    ${hsn_list}    ${EMPTY}
-        ${hsn_count}=    Evaluate    ${hsn_count} + 1
-    END
     # --------------------------------------------------------
     # STEP 3: Calculate amounts and build JSON output
     # Single row  → amount = net_price as-is
@@ -261,12 +208,6 @@ Fetch PO Line Items
         END
 
         ${item_no}=    Evaluate    str(($i + 1) * 10)
-
-        # Diagnostic: log the final per-item values right before they're
-        # written into the JSON that RESULT:PO_DATA: carries out of this
-        # script -- this is the last point inside the robot where these
-        # values are still individual variables, not yet a JSON blob.
-        Log To Console    Item ${item_no} FINAL: material_code="${material}" short_text="${short_text}" qty="${qty_str}" rate="${price_str}" amount="${line_amount}" hsn_sac="${hsn}"
 
         ${json}=    Set Variable
         ...    {"item_no":"${item_no}","material_code":"${material}","short_text":"${short_text}","qty":"${qty_str}","rate":"${price_str}","amount":"${line_amount}","hsn_sac":"${hsn}"}
@@ -310,13 +251,4 @@ Dismiss Any Popup
 
 
 Close SAP Session
-    # Log    PO fetch finished. Session kept open.
-    # RETURN
-
-    Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
-    Run Keyword And Ignore Error    Send VKey     wnd[0]    0
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Log    SAP session closed and process terminated.    level=INFO
+    Log    PO Fetch finished.    level=INFO

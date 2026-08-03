@@ -535,7 +535,11 @@ def get_history_search(
             COALESCE(lr.lr_number, h.lr_number, '') ILIKE %s OR
             COALESCE(inv.po_number, h.po_number, '') ILIKE %s OR
             COALESCE(h.gate_in_number, '') ILIKE %s OR
-            COALESCE(gatein.vendor_name, inv.seller_name, '') ILIKE %s OR
+            -- FIX: search by resolved vendor NAME too (not just the raw
+            -- code stored in gatein.vendor_name once Gate In is done, or
+            -- the pre-Gate-In OCR seller_name) -- see the join/select
+            -- fix below for why sm.name_1/sm.name are here.
+            COALESCE(sm.name_1, sm.name, gatein.vendor_name, inv.seller_name, '') ILIKE %s OR
             COALESCE(gatein.truck_no, eway.vehicle_number, '') ILIKE %s
         )""")
         like = f"%{search}%"
@@ -567,6 +571,14 @@ def get_history_search(
         LEFT JOIN ewaybill_data    eway   ON eway.id = h.id
         LEFT JOIN lr_data         lr     ON lr.id   = h.id
         LEFT JOIN gate_in_entries gatein ON gatein.history_id = h.id
+        -- FIX: gatein.vendor_name holds the resolved SAP vendor CODE, not
+        -- a name, once Gate In is done -- join back to supplier_master to
+        -- show the actual vendor name for that code instead of a bare
+        -- number. Falls back to gatein.vendor_name itself if the code
+        -- doesn't resolve (e.g. free text typed without using the
+        -- type-ahead), then to the raw OCR seller_name if Gate In hasn't
+        -- run yet at all -- see the vendor_name COALESCE below.
+        LEFT JOIN supplier_master sm ON sm.supplier = gatein.vendor_name
         {where_clause}
     """
 
@@ -579,7 +591,7 @@ def get_history_search(
             -- Data tab, whereas h.* is a one-time snapshot from mail
             -- ingestion that's never updated again.
             COALESCE(inv.invoice_number, h.invoice_number)    AS invoice_number,
-            COALESCE(gatein.vendor_name, inv.seller_name)     AS vendor_name,
+            COALESCE(sm.name_1, sm.name, gatein.vendor_name, inv.seller_name) AS vendor_name,
             COALESCE(eway.ewaybill_number, h.ewaybill_number) AS ewaybill_number,
             COALESCE(lr.lr_number, h.lr_number)               AS lr_number,
             COALESCE(inv.po_number, h.po_number)              AS po_number,
@@ -786,3 +798,77 @@ def get_staged_dms_records() -> list:
     except Exception as e:
         logger.error(f"get_staged_dms_records failed: {e}")
         return []
+
+
+# ============================================================
+# DMS DOCUMENT LINKS (v16)
+# One row per consolidated PDF successfully uploaded to Contentverse.
+# Populated by services/dms_links_import.py from DMS_LINKS_EXCEL_PATH
+# (written by robot_scripts/dms_upload.robot's document-link step).
+# ============================================================
+
+def find_history_id_by_consolidated_filename(filename: str) -> Optional[int]:
+    """
+    Match a DMS_LINKS_EXCEL_PATH row's "File Name" back to the history
+    record whose consolidated_doc_path produced that exact file --
+    matched on basename since consolidated_doc_path is a full path but
+    dms_upload.robot only ever sees/records the bare filename.
+    """
+    sql = """
+        SELECT id FROM history
+        WHERE consolidated_doc_path IS NOT NULL
+          AND consolidated_doc_path LIKE %s
+        ORDER BY id DESC
+        LIMIT 1
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (f"%{filename}",))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception as e:
+        logger.error(f"find_history_id_by_consolidated_filename failed for {filename!r}: {e}")
+        return None
+
+
+def upsert_dms_document_link(history_id: Optional[int], filename: str, document_link: str) -> bool:
+    """
+    Insert or refresh a dms_document_links row. Safe to call repeatedly
+    with the same filename (e.g. re-running the import script against an
+    Excel file that already contains previously-imported rows) --
+    ON CONFLICT (filename) just refreshes the link/history_id/timestamp.
+    """
+    sql = """
+        INSERT INTO dms_document_links (history_id, filename, document_link)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (filename) DO UPDATE SET
+            history_id    = EXCLUDED.history_id,
+            document_link = EXCLUDED.document_link,
+            imported_at   = CURRENT_TIMESTAMP
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (history_id, filename, document_link))
+            conn.commit()
+        logger.info(f"dms_document_links upserted: {filename} (history_id={history_id})")
+        return True
+    except Exception as e:
+        logger.error(f"upsert_dms_document_link failed for {filename!r}: {e}")
+        return False
+
+
+def get_dms_document_link(history_id: int) -> Optional[str]:
+    """Return the Contentverse sharing link for a history record's
+    consolidated document, or None if it hasn't been uploaded/imported yet."""
+    sql = "SELECT document_link FROM dms_document_links WHERE history_id = %s ORDER BY imported_at DESC LIMIT 1"
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (history_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception as e:
+        logger.error(f"get_dms_document_link failed for history_id={history_id}: {e}")
+        return None
