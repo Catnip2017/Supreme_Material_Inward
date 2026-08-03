@@ -18,6 +18,7 @@ Fixes applied:
 import json
 import base64
 import os
+import re
 from typing import Optional
 
 from config.config import config
@@ -203,6 +204,101 @@ def _normalize_dates_in_dict(data: dict, date_fields: list) -> dict:
     return data
 
 
+# ============================================================
+# GSTIN OCR-error correction and IRN cleanup (client-requested accuracy
+# improvement for photographed/landscape invoices).
+#
+# Ground rule (explicit client instruction): NEVER blank a value just
+# because it fails a validation check. The Extracted Data tab already has
+# a client-side red-highlight for exactly this case
+# (_validateGstinField()/_checkIrnLength() in extracted_data.html) --
+# their whole job is to tell the reviewer "this needs a second look
+# against the paper document." If this module blanked the value instead,
+# the reviewer would see nothing at all and lose the one clue (whatever
+# OCR did manage to read) that helps them fix it by hand.
+#
+# So these functions only ever REPAIR a value when the fix is
+# deterministic, or strip a redundant label the model echoed back --
+# they never discard a value outright. GSTIN's 15 character positions are
+# fixed by statute (always digit/digit/letter*5/digit*4/letter/alnum/
+# literal-Z/alnum), so a letter sitting where only a digit is possible
+# (or vice versa) is an unambiguous OCR misread, not a guess. If a value
+# still doesn't validate after correction, it's returned unchanged --
+# the client-side check will flag it exactly as before.
+# ============================================================
+
+# All current Indian state/UT GST codes (01-38) plus the two special
+# codes (97 = Other Territory, 99 = Centre/foreign).
+_VALID_GSTIN_STATE_CODES = {f"{i:02d}" for i in range(1, 39)} | {"97", "99"}
+
+
+def _correct_gstin_ocr_errors(gstin: str) -> str:
+    """
+    Fix single-character OCR confusions in a 15-character GSTIN candidate,
+    based on what each fixed position is allowed to contain. Assumes
+    `gstin` is already exactly 15 characters -- callers check length first.
+    """
+    chars = list(gstin)
+    digit_confusions = {'O': '0', 'I': '1', 'L': '1', 'S': '5', 'B': '8', 'G': '6'}
+    alpha_confusions = {'0': 'O', '1': 'I', '8': 'B', '5': 'S', '6': 'G'}
+
+    for i in (0, 1):                      # state code -- must be digits
+        if chars[i] in digit_confusions:
+            chars[i] = digit_confusions[chars[i]]
+    for i in range(2, 7):                 # PAN letters -- must be alpha
+        if chars[i] in alpha_confusions:
+            chars[i] = alpha_confusions[chars[i]]
+    for i in range(7, 11):                # PAN digits -- must be digits
+        if chars[i] in digit_confusions:
+            chars[i] = digit_confusions[chars[i]]
+    if chars[11] in alpha_confusions:      # PAN's last char -- must be alpha
+        chars[11] = alpha_confusions[chars[11]]
+    if chars[13] != 'Z' and chars[13] in {'2', '5', '7', 'S', 'z'}:
+        chars[13] = 'Z'                   # 14th char is always literal "Z"
+
+    return ''.join(chars)
+
+
+def _attempt_gstin_correction(raw: str) -> str:
+    """
+    Try to repair common OCR character confusions in a GSTIN. Returns the
+    corrected value if it becomes structurally valid; otherwise returns
+    the original (only whitespace/hyphen-cleaned) value UNCHANGED -- never
+    blanks it. The existing client-side format+checksum check picks up
+    whatever this function couldn't fix.
+    """
+    if not raw:
+        return raw
+
+    cleaned = re.sub(r'[\s\-]', '', raw.strip().upper())
+    if len(cleaned) != 15:
+        return raw  # wrong length isn't something character-swapping can fix
+
+    corrected = _correct_gstin_ocr_errors(cleaned)
+
+    looks_valid = (
+        corrected[0:2].isdigit() and corrected[0:2] in _VALID_GSTIN_STATE_CODES
+        and corrected[2:7].isalpha()
+        and corrected[7:11].isdigit()
+        and corrected[11].isalpha()
+    )
+    return corrected if looks_valid else raw
+
+
+def _clean_irn(raw: str) -> str:
+    """
+    Strip a redundant "IRN:"/"IRN No:" label or stray whitespace the model
+    sometimes echoes back into the value itself. Never blanks based on
+    length -- the client-side _checkIrnLength() already flags a
+    non-64-character IRN for review, so this only ever tidies the string,
+    it doesn't judge it.
+    """
+    if not raw:
+        return raw
+    cleaned = re.sub(r'(?i)^\s*irn\s*(no\.?)?\s*[:\-]?\s*', '', raw.strip())
+    return re.sub(r'\s+', '', cleaned)
+
+
 def _build_prompt(doc_type: str) -> str:
     """
     Build extraction prompt. Keys use lowercase_underscore to match DB columns.
@@ -222,10 +318,38 @@ Rules:
         "invoice": base_instructions + """
 Extract these fields from the invoice:
 
+This document may be a photograph of a physical paper invoice rather than a
+clean digital scan -- expect possible perspective skew, shadows, glare,
+folds, and lower legibility toward the edges. If a specific character or
+value cannot be read with reasonable confidence because of image quality,
+return empty string "" for that field rather than guessing a
+plausible-looking value.
+
+The invoice may also carry handwriting, rubber stamps, signatures, or
+"received/verified" notes physically overlapping the printed text (for
+example a stamp crossing through the IRN line, or a handwritten reference
+number near the header). Only extract values that are part of the
+ORIGINALLY PRINTED invoice content. Ignore any handwritten numbers, dates,
+initials, stamps, or notes layered on top of or near a printed field --
+they are not invoice data, even when they sit directly over a field you
+are asked to extract.
+
+Header block mapping -- invoices label the three parties differently
+depending on template. Map whichever labels appear to these fields:
+- "seller_name"/"seller_address"/"seller_gstin": the party issuing the
+  invoice -- labeled "Supplier", "Seller", or "From".
+- "buyer_name"/"buyer_address"/"buyer_gstin": the party being billed --
+  labeled "Recipient", "Billed to", "Buyer", or "Bill To".
+- "ship_to_name"/"ship_to_address": the delivery party -- labeled
+  "Consignee", "Shipped to", "Ship To", or "Delivery Address". This is
+  often the same company as the Recipient/Buyer, but extract it from
+  whichever block is actually labeled as the shipping/consignee party,
+  not the billing party, even when the two blocks show identical details.
+
 Important field notes:
 - "invoice_date": Use the FIRST date that appears at the top of the invoice — typically labeled "Date", "Invoice Date", or "Dated". Do not use delivery date, dispatch date, or due date.
 - "po_number": A numeric purchase order number typically starting with 4 or 6 followed by 9 digits (e.g. 4500012345 or 6300001343). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No". If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
-- "grand_total": The final payable amount including all taxes — the largest total amount on the invoice.
+- "grand_total": Some invoices show two separate total blocks -- an initial total (e.g. "Total Invoice Value") and a final total after deductions (e.g. "Total Net Invoice Value", "Net Payable", after a "Less: Advance Received" or similar line). When both appear, "grand_total" is always the FINAL net payable figure -- the one after any deduction line, not the subtotal above it. If there is only one total block, use that.
 -"material_code": The vendor or buyer internal item identifier — look for labels
   like "Item Code", "Product Code", "Part No", "SAP Code", "Material Code",
   "Art. No", "Cat. No", or any alphanumeric code column separate from HSN/SAC.
@@ -241,7 +365,33 @@ Important field notes:
   separate acknowledgement number, not the IRN. Return empty string if no line
   labeled IRN is found.
 
+Line-item table columns can appear in varying order and density. Read each
+row left to right and match each value to its column header exactly as
+printed on this document, rather than assuming a fixed position -- do not
+let a value in one column bleed into a neighboring one just because they
+sit close together (this is especially easy to get wrong on tightly-packed
+tables with Freight/Insurance/Others/Discount columns sitting between Rate
+and Taxable Value). Where possible, sanity-check that Taxable Value plus
+the tax amounts roughly equals the row's Total -- if a read produces a
+number that clearly fails this check, re-examine that cell rather than
+returning the first guess.
 
+═══════════════════════════════════════════
+SELF-VERIFICATION (run before returning JSON)
+═══════════════════════════════════════════
+Before returning your answer, check:
+1. buyer_gstin and seller_gstin, if not empty, are exactly 15 characters.
+2. irn, if not empty, is exactly 64 characters -- if what you read is
+   shorter, re-scan the page for the rest of the value before giving up;
+   only return a value under 64 characters if you are confident that is
+   genuinely the entire printed IRN.
+3. invoice_date and po_number contain digits, not placeholder text.
+4. grand_total is the FINAL net payable figure if two total blocks exist,
+   not the pre-deduction subtotal.
+5. Every hsn_details row's taxable_value plus its tax amounts roughly
+   equals its total -- if not, re-check that row's columns for bleed
+   before finalizing.
+Correct any field that fails these checks before returning the JSON.
 
 {
   "invoice_number": "",
@@ -381,7 +531,6 @@ def _parse_response(raw_text: str, doc_type: str) -> Optional[dict]:
         parsed = json.loads(text)
     except json.JSONDecodeError as e:
         # Try to extract JSON object from text if surrounded by other content
-        import re
         match = re.search(r'\{[\s\S]*\}', text)
         if match:
             try:
@@ -455,6 +604,23 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
         date_fields = date_fields_map.get(doc_type, [])
         if date_fields:
             extracted = _normalize_dates_in_dict(extracted, date_fields)
+
+        # Server-side GSTIN OCR-error correction and IRN cleanup (client
+        # requested: never blank a value that fails validation -- only ever
+        # repair it deterministically, or tidy it up, and otherwise leave it
+        # exactly as extracted so the existing client-side red-highlight
+        # checks (_validateGstinField()/_checkIrnLength() in
+        # extracted_data.html) can flag it for the reviewer as before).
+        if doc_type == "invoice":
+            if extracted.get("buyer_gstin"):
+                extracted["buyer_gstin"] = _attempt_gstin_correction(extracted["buyer_gstin"])
+            if extracted.get("seller_gstin"):
+                extracted["seller_gstin"] = _attempt_gstin_correction(extracted["seller_gstin"])
+            if extracted.get("irn"):
+                extracted["irn"] = _clean_irn(extracted["irn"])
+        elif doc_type == "ewaybill":
+            if extracted.get("transporter_gstin"):
+                extracted["transporter_gstin"] = _attempt_gstin_correction(extracted["transporter_gstin"])
 
         # Always set filename
         extracted["filename"] = filename

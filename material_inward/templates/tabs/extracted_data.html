@@ -45,6 +45,16 @@
 .field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
 .field-error-msg-inline.show { display:block; }
 
+/* v13-follow-up: cross-tab mismatch highlight (Invoice Number / Invoice
+   Date / PO Number / Vehicle Number, compared between the tabs that share
+   them). Deliberately a different colour from .field-expired -- amber
+   "please verify" rather than red "this is malformed" -- since a mismatch
+   here isn't necessarily an error, just something worth a second look.
+   Visual only: never disables the field, never blocks Save/Approve. */
+.editable-input.field-mismatch { border-color:#e08e0b; background:#fff8e6; }
+.editable-input.field-mismatch:focus { border-color:#e08e0b; }
+.field-error-msg-inline.mismatch { color:#b8720a; }
+
 .field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:14px; }
 .field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px; border-left:3px solid #1e5ca8; }
 .field-label { font-size:11px; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:5px; }
@@ -411,14 +421,17 @@
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
               <input class="editable-input" id="inv_invoice_number" value="{{ invoice_data.get('invoice_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_invoice_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
               <input class="editable-input" id="inv_invoice_date" type="date" value="{{ invoice_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_invoice_date"></div>
             </div>
             <div class="field-block">
               <div class="field-label">PO Number</div>
               <input class="editable-input" id="inv_po_number" value="{{ invoice_data.get('po_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_po_number"></div>
             </div>
           </div>
           <div class="field-row">
@@ -688,14 +701,17 @@
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
               <input class="editable-input" id="eway_invoice_number" value="{{ ewaybill_data.get('invoice_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_invoice_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
               <input class="editable-input" id="eway_invoice_date" type="date" value="{{ ewaybill_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_invoice_date"></div>
             </div>
             <div class="field-block">
               <div class="field-label">PO Number</div>
               <input class="editable-input" id="eway_po_number" value="{{ ewaybill_data.get('po_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_po_number"></div>
             </div>
           </div>
         </div>
@@ -728,6 +744,7 @@
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
               <input class="editable-input" id="eway_vehicle_number" maxlength="10" value="{{ ewaybill_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_vehicle_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
@@ -801,6 +818,7 @@
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
               <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ lr.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div>
             </div>
           </div>
         </div>
@@ -1491,4 +1509,68 @@ function _validateGstinField(fieldId, errId) {
     _validateGstinField(fieldId, errId);
   }
 });
+
+// ============================================================
+// Cross-tab mismatch highlighting (client requested, visual only --
+// never disables the field, never blocks Save/Approve, both sides stay
+// fully editable). Compares fields that are duplicated across two tabs:
+//   - Invoice Number / Invoice Date / PO Number: Invoice tab <-> E-Way Bill tab
+//   - Vehicle Number: E-Way Bill tab <-> LR tab
+// Transporter Name deliberately excluded (client decision) -- it's
+// legitimately abbreviated differently doc to doc (e.g. "ABC Logistics"
+// vs "ABC Logistics Pvt Ltd") and would just generate noise.
+//
+// Both fields of a pair already live in the same page (tabs are
+// show/hide, not separate loads -- see switchDataTab), so this reads the
+// sibling input directly, no extra fetch needed. A pair is only ever
+// compared when BOTH inputs exist in the DOM (a tab can be entirely
+// absent for partial-document v13 records) and BOTH already have a
+// non-empty value (an unfilled field is missing data, not a mismatch).
+// ============================================================
+function _normMismatchText(v) {
+  return (v || '').trim().toUpperCase();
+}
+function _normMismatchVehicle(v) {
+  return (v || '').trim().toUpperCase().replace(/[\s-]/g, '');
+}
+
+const MISMATCH_PAIRS = [
+  { a: 'inv_invoice_number',  b: 'eway_invoice_number', label: 'Invoice Number', norm: _normMismatchText },
+  { a: 'inv_invoice_date',    b: 'eway_invoice_date',   label: 'Invoice Date',   norm: _normMismatchText },
+  { a: 'inv_po_number',       b: 'eway_po_number',      label: 'PO Number',      norm: _normMismatchText },
+  { a: 'eway_vehicle_number', b: 'lr_vehicle_number',   label: 'Vehicle Number', norm: _normMismatchVehicle },
+];
+
+function _checkMismatchPair(pair) {
+  const elA = document.getElementById(pair.a);
+  const elB = document.getElementById(pair.b);
+  if (!elA || !elB) return;  // other tab not present for this record
+  const errA = document.getElementById('err_' + pair.a);
+  const errB = document.getElementById('err_' + pair.b);
+  const rawA = elA.value, rawB = elB.value;
+  const mismatch = !!rawA.trim() && !!rawB.trim() && pair.norm(rawA) !== pair.norm(rawB);
+  const msg = mismatch ? `${pair.label} differs from the value on the other tab -- please verify.` : '';
+  [[elA, errA], [elB, errB]].forEach(function ([el, err]) {
+    el.classList.toggle('field-mismatch', mismatch);
+    if (err) {
+      err.textContent = msg;
+      err.classList.toggle('show', mismatch);
+      err.classList.toggle('mismatch', mismatch);
+    }
+  });
+}
+
+function _checkAllMismatches() {
+  MISMATCH_PAIRS.forEach(_checkMismatchPair);
+}
+
+(function () {
+  MISMATCH_PAIRS.forEach(function (pair) {
+    [pair.a, pair.b].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', _checkAllMismatches);
+    });
+  });
+  _checkAllMismatches();
+})();
 </script>
