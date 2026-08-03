@@ -229,7 +229,7 @@
 
     <!-- ── Hand Delivery Fields Section ─────────────────────────────────── -->
     <div id="handFieldsSection" style="display:none;">
-      <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🤝 Hand Delivery Details</h4>
+      <h4 id="handSectionTitle" style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🤝 Hand Delivery Details</h4>
       <div class="form-row">
         <div class="form-group driver-dropdown-wrap">
           <label>Vendor Name <span class="req">*</span>
@@ -284,6 +284,9 @@
         </label>
         <label class="delivery-radio-option">
           <input type="radio" name="deliveryType" value="hand" onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
+        </label>
+        <label class="delivery-radio-option">
+          <input type="radio" name="deliveryType" value="courier" onchange="onDeliveryTypeChange()"> 📦 Courier
         </label>
       </div>
     </div>
@@ -486,8 +489,17 @@ function _getPoFlowType() {
 
 function onDeliveryTypeChange() {
   const dType = document.querySelector('input[name="deliveryType"]:checked').value;
+  // Courier reuses the exact same "no truck" fields section as Hand Delivery
+  // (Vendor Name + Transporter, no Truck No/License No/Container No) --
+  // the only real difference between hand and courier is the placeholder
+  // rf_runner.py sends SAP for the (blank) truck number field. See
+  // execute_gate_in_sap() in services/rf_runner.py.
   document.getElementById('truckFieldsSection').style.display = (dType === 'truck') ? '' : 'none';
-  document.getElementById('handFieldsSection').style.display  = (dType === 'hand')  ? '' : 'none';
+  document.getElementById('handFieldsSection').style.display  = (dType !== 'truck') ? '' : 'none';
+  const sectionTitle = document.getElementById('handSectionTitle');
+  if (sectionTitle) {
+    sectionTitle.textContent = (dType === 'courier') ? '📦 Courier Delivery Details' : '🤝 Hand Delivery Details';
+  }
   const labelText = document.getElementById('driverNameLabelText');
   const reqStar   = document.getElementById('driverNameReq');
   if (labelText) labelText.textContent = (dType === 'truck') ? 'Driver Name' : 'Person Name';

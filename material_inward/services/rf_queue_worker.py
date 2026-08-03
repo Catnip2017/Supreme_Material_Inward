@@ -21,8 +21,12 @@ from database.rf_queue_operations import (
 from services.credential_cache import (
     get_job_credential, clear_job_credential
 )
-from database.db_operations import update_history_step, get_history_details_by_id, set_dms_status
+from database.db_operations import (
+    update_history_step, get_history_details_by_id, set_dms_status,
+    get_dms_document_link,
+)
 from services.doc_consolidator import consolidate_documents, write_staging_sidecar
+from services.dms_upload_runner import run_dms_upload
 from database.gatein_operations import update_gatein_rf_result, get_gatein_entry
 from database.pending_po_operations import upsert_pending_po_update, mark_pending_po_resolved
 from database.notifications_operations import create_notification
@@ -31,10 +35,10 @@ from database.migo_operations import (
     update_migo_105_rf_result,
     upsert_migo_entry,
     get_migo_entry,
-   
-    
+    update_migo103_link_result,
+    update_migo105_link_result,
 )
-from database.miro_operations import update_miro_rf_result
+from database.miro_operations import update_miro_rf_result, update_miro_link_result
 from services.rf_runner import (
     execute_gate_in_sap,
     execute_migo_103_sap,
@@ -43,6 +47,9 @@ from services.rf_runner import (
     execute_po_fetch_sap,
     execute_po_list_fetch_sap,
     execute_update_gatein_po_sap,
+    execute_migo103_link_sap,
+    execute_migo105_link_sap,
+    execute_miro_link_sap,
 )
 from services.mail_service import (
     send_gate_in_notification,
@@ -161,7 +168,7 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
         po_flow_type = (history_rec.get("po_flow_type") or "truck_with_po").strip()
 
         # Only enqueue po_fetch for flows that already have a PO number
-        if po_flow_type in ("truck_with_po", "hand_with_po"):
+        if po_flow_type in ("truck_with_po", "hand_with_po", "courier_with_po"):
             gatein_entry = get_gatein_entry(history_id) or {}
             po_number = (
                 gatein_entry.get("purchase_order") or
@@ -200,6 +207,11 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
                 f"Gate In done — po_flow_type={po_flow_type}, "
                 f"skipping auto po_fetch for history_id={history_id}"
             )
+            # v18: without_po flows never get a po_fetch job, which is the
+            # normal trigger point for dms_upload below -- so it has to be
+            # enqueued directly from here instead, or Contentverse upload
+            # would never fire for these records at all.
+            _enqueue_dms_upload(history_id)
     else:
         update_gatein_rf_result(
             history_id, "", status="failed",
@@ -238,8 +250,32 @@ def _process_po_fetch(history_id: int, payload: dict) -> dict:
             f"PO fetch failed for history_id={history_id}: "
             f"{result.get('error')}"
         )
+    # v18: enqueue dms_upload regardless of whether PO fetch itself
+    # succeeded — Contentverse upload only depends on the PDF already
+    # staged at Gate In (see _process_gate_in), not on PO Fetch's own
+    # result, so a PO Fetch failure must not also block the DMS link.
+    _enqueue_dms_upload(history_id)
     # Return actual success/failure so complete_rf_job records it correctly
     return result
+
+
+def _enqueue_dms_upload(history_id: int) -> None:
+    """
+    v18: chains Contentverse upload directly onto the same rf_queue right
+    after po_fetch (or after gate_in for without_po flows), instead of
+    waiting for dms_upload_runner.py's own independent Windows Task
+    Scheduler timer. Best-effort — enqueue_rf_job already de-dupes
+    (pending/running for this history_id+step is blocked), and a failure
+    here must never affect the step that just genuinely succeeded.
+    """
+    try:
+        job_id = enqueue_rf_job(history_id, "dms_upload", {"history_id": history_id})
+        if job_id:
+            logger.info(f"DMS upload enqueued — history_id={history_id} job_id={job_id}")
+        else:
+            logger.info(f"DMS upload already queued for history_id={history_id}")
+    except Exception as e:
+        logger.error(f"Failed to enqueue dms_upload for history_id={history_id}: {e}", exc_info=True)
 
 def _process_po_list_fetch(history_id: int, payload: dict) -> dict:
     result = execute_po_list_fetch_sap(payload)
@@ -342,6 +378,13 @@ def _process_migo_103(history_id: int, payload: dict) -> dict:
         # deliberately NOT re-run here even as a backstop, to avoid
         # double-consolidating (and overwriting) a file dms_upload.robot
         # may have already picked up by the time MIGO 103 completes.
+
+        # v18: separate follow-up job, not embedded in this posting --
+        # a DMS-link failure must never be able to make MIGO 103's own
+        # result (already recorded above) look failed.
+        _enqueue_link_attach(
+            history_id, "migo103_link", mat_doc, update_migo103_link_result
+        )
     else:
         update_migo_103_rf_result(history_id, "", status="failed", error_message=result.get("error"))
     return result
@@ -387,6 +430,14 @@ def _process_migo_105(history_id: int, payload: dict) -> dict:
             migo_105_doc=migo_105_doc
         )
         logger.info(f"MIGO 105 complete — history_id={history_id} doc={migo_105_doc}")
+
+        # v18: same pattern as MIGO 103 above -- separate follow-up job,
+        # using the same material_doc_number MIGO 105 itself just posted
+        # against (mat_doc, resolved earlier in this function from either
+        # the user override or the MIGO 103 result already in migo_entries).
+        _enqueue_link_attach(
+            history_id, "migo105_link", mat_doc, update_migo105_link_result
+        )
     else:
         update_migo_105_rf_result(history_id, status="failed", error_message=result.get("error"))
     return result
@@ -407,9 +458,78 @@ def _process_miro(history_id: int, payload: dict) -> dict:
             fi_doc_number=fi_doc
         )
         logger.info(f"MIRO complete — history_id={history_id} FI_DOC={fi_doc}")
+
+        # v18: miro_link needs MATERIAL_DOC_NUMBER too (SAP has no concept
+        # of history_id) -- read it back from migo_entries, same place
+        # MIGO 105 reads it from. MIRO's own payload/result don't carry it
+        # (execute_miro_sap doesn't take or return one today), so this is
+        # a fresh lookup, not reused from elsewhere in this function.
+        migo_entry = get_migo_entry(history_id) or {}
+        mat_doc = migo_entry.get("material_doc_number", "")
+        if mat_doc:
+            _enqueue_link_attach(
+                history_id, "miro_link", mat_doc, update_miro_link_result
+            )
+        else:
+            logger.warning(
+                f"miro_link NOT enqueued for history_id={history_id} — "
+                "no material_doc_number found in migo_entries."
+            )
+            update_miro_link_result(
+                history_id, "failed",
+                error_message="No material_doc_number available (MIGO 103 result missing)."
+            )
     else:
         update_miro_rf_result(history_id, status="failed", error_message=result.get("error"))
     return result
+
+
+def _enqueue_link_attach(history_id: int, step: str, material_doc_number: str, update_result_fn) -> None:
+    """
+    v18: shared enqueue logic for migo103_link / migo105_link / miro_link.
+
+    Looks up the Contentverse link for this history_id right now. If it's
+    already there (the common case, now that dms_upload is chained
+    immediately after gate_in/po_fetch instead of waiting on a timer --
+    see _enqueue_dms_upload), enqueue the attach job immediately. If it
+    isn't there yet (Contentverse upload failed or hasn't run for this
+    record for some other reason -- NOT a normal race under the current
+    design, see _enqueue_dms_upload's docstring), mark this step
+    'skipped_no_link' rather than failing or blocking anything -- the
+    posting step that called this has already recorded its own success
+    and must not be affected either way.
+
+    services/dms_links_import.py's run_dms_links_import() is the other
+    half of this: when a link lands late, it checks for any of these three
+    steps sitting in 'skipped_no_link' for that history_id and enqueues
+    them then -- same "whichever event happens second" resolution already
+    used for pending_po_updates (see database/pending_po_operations.py).
+    """
+    try:
+        link = get_dms_document_link(history_id)
+        if not link:
+            logger.info(
+                f"{step} skipped for history_id={history_id} — no DMS link yet "
+                "(will be caught up by dms_links_import.py once it lands)."
+            )
+            update_result_fn(history_id, "skipped_no_link")
+            return
+
+        job_id = enqueue_rf_job(
+            history_id, step,
+            {
+                "history_id": history_id,
+                "material_doc_number": material_doc_number,
+                "document_link": link,
+            }
+        )
+        if job_id:
+            logger.info(f"{step} enqueued — history_id={history_id} job_id={job_id}")
+        else:
+            logger.info(f"{step} already queued for history_id={history_id}")
+    except Exception as e:
+        # Best-effort -- must never affect the posting step that just succeeded.
+        logger.error(f"Failed to enqueue {step} for history_id={history_id}: {e}", exc_info=True)
 
 
 
@@ -467,6 +587,89 @@ def _process_update_gatein_po(history_id: int, payload: dict) -> dict:
     return result
 
 
+def _process_migo103_link(history_id: int, payload: dict) -> dict:
+    """
+    v18: attaches the DMS Contentverse link inside SAP against the MIGO
+    103 material document. Always runs as its own job, always after
+    MIGO 103's own posting has already succeeded and been recorded (see
+    _enqueue_link_attach, called from _process_migo_103) -- this handler
+    can fail freely without touching MIGO 103's own already-recorded result.
+    """
+    result = execute_migo103_link_sap(payload)
+    if result.get("success"):
+        update_migo103_link_result(history_id, "success")
+        logger.info(f"migo103_link complete — history_id={history_id}")
+    else:
+        update_migo103_link_result(history_id, "failed", error_message=result.get("error"))
+        logger.warning(f"migo103_link failed for history_id={history_id}: {result.get('error')}")
+    return result
+
+
+def _process_migo105_link(history_id: int, payload: dict) -> dict:
+    """Same shape as _process_migo103_link, for the MIGO 105 follow-up job."""
+    result = execute_migo105_link_sap(payload)
+    if result.get("success"):
+        update_migo105_link_result(history_id, "success")
+        logger.info(f"migo105_link complete — history_id={history_id}")
+    else:
+        update_migo105_link_result(history_id, "failed", error_message=result.get("error"))
+        logger.warning(f"migo105_link failed for history_id={history_id}: {result.get('error')}")
+    return result
+
+
+def _process_miro_link(history_id: int, payload: dict) -> dict:
+    """Same shape as _process_migo103_link, for the MIRO follow-up job."""
+    result = execute_miro_link_sap(payload)
+    if result.get("success"):
+        update_miro_link_result(history_id, "success")
+        logger.info(f"miro_link complete — history_id={history_id}")
+    else:
+        update_miro_link_result(history_id, "failed", error_message=result.get("error"))
+        logger.warning(f"miro_link failed for history_id={history_id}: {result.get('error')}")
+    return result
+
+
+def _process_dms_upload(history_id: int, payload: dict) -> dict:
+    """
+    v18: Contentverse upload, chained into the same rf_queue right after
+    po_fetch/gate_in instead of a standalone Task Scheduler timer -- see
+    _enqueue_dms_upload. Reuses run_dms_upload() as-is (staged-only
+    quarantine, robot_lock, chained dms_links_import) rather than
+    duplicating that logic here.
+
+    run_dms_upload() processes the WHOLE staging folder in one batch, not
+    just this one history_id -- normally that's just this record (nothing
+    else should be sitting in 'staged' at this point since the previous
+    record's own dms_upload job already cleared it), but it may also catch
+    up any stragglers left over from a prior failed run. This job's own
+    success/failure is still reported against the ONE history_id it was
+    queued for, by checking that record's dms_status specifically after
+    the batch completes -- a batch that uploads everyone else fine but
+    somehow leaves this one record's PDF behind must not be reported as
+    this job succeeding.
+    """
+    try:
+        run_dms_upload()
+    except Exception as e:
+        logger.error(f"dms_upload batch run crashed for history_id={history_id}: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+    details = get_history_details_by_id(history_id) or {}
+    dms_status = (details.get("history") or {}).get("dms_status")
+    if dms_status == "uploaded":
+        logger.info(f"dms_upload complete — history_id={history_id}")
+        return {"success": True, "error": None}
+
+    logger.warning(
+        f"dms_upload batch ran but history_id={history_id} is still "
+        f"dms_status={dms_status!r} afterward — not marking this job successful."
+    )
+    return {
+        "success": False,
+        "error": f"DMS upload batch completed but this record's status is still {dms_status!r}."
+    }
+
+
 STEP_HANDLERS = {
     "gate_in":            _process_gate_in,
     "po_fetch":           _process_po_fetch,
@@ -475,6 +678,10 @@ STEP_HANDLERS = {
     "migo_105":           _process_migo_105,
     "miro":               _process_miro,
     "update_gatein_po":   _process_update_gatein_po,
+    "dms_upload":         _process_dms_upload,
+    "migo103_link":       _process_migo103_link,
+    "migo105_link":       _process_migo105_link,
+    "miro_link":          _process_miro_link,
 }
 
 

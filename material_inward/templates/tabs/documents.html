@@ -147,8 +147,50 @@
         </div>
       </div>
       {% endif %}
+
+      <!-- Extras / Others Document Cards -- FIX: these were extracted and
+           attached to the record (history_extras, via add_history_extra()
+           in folder_watcher.py) but this tab never rendered them at all --
+           only the small "Extras" banner on the Extracted Data tab showed
+           them. Any _OTH document or unrecognized-filename attachment was
+           therefore invisible here, which is exactly the kind of thing a
+           reviewer would describe as a document "not showing up" /
+           "disappeared" if they specifically came to this tab looking for
+           it. View/download only, matching the Extracted Data tab's
+           treatment of the same records -- no delete button, since these
+           aren't part of the Invoice/E-Way Bill/LR OCR pipeline. -->
+      {% if history_extras %}
+        {% for extra in history_extras %}
+        <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+          <div class="doc-header" style="background: linear-gradient(135deg, #6c5ce7 0%, #5641c9 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+            <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📎</span>
+            <h4 style="color: white; font-size: 18px; margin: 0;">{{ 'Other Document' if extra.doc_type == 'others' else 'Extra Document' }}</h4>
+          </div>
+          <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+            <img src="{{ url_for('get_document_thumbnail', doctype='extra', filename=extra.filename) }}"
+                 alt="Document Preview"
+                 style="max-width: 100%; max-height: 100%; object-fit: contain;"
+                 onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+          </div>
+          <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+            <strong>File:</strong> {{ extra.original_filename or extra.filename }}
+          </div>
+          <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+            <a href="{{ url_for('view_document', doctype='extra', filename=extra.filename) }}"
+               target="_blank"
+               style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #6c5ce7; color: white; cursor: pointer;">
+              👁️ View
+            </a>
+            <a href="{{ url_for('download_document', doctype='extra', filename=extra.filename) }}"
+               style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #6c5ce7; color: white; cursor: pointer;">
+              📥 Download
+            </a>
+          </div>
+        </div>
+        {% endfor %}
+      {% endif %}
     </div>
-    
+
     <!-- Bulk Actions -->
     <div class="bulk-actions" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 30px;">
       <h4 style="color: #333; font-size: 18px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #e0e0e0;">Bulk Actions</h4>

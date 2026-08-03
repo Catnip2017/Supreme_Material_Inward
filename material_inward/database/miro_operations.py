@@ -110,6 +110,37 @@ def update_miro_rf_result(
         return False
 
 
+def update_miro_link_result(
+    history_id: int,
+    status: str,
+    error_message: Optional[str] = None
+) -> bool:
+    """
+    v18 -- outcome of the separate miro_link follow-up job (attaches the
+    DMS Contentverse link inside SAP against the relevant document, run as
+    its own rf_queue step AFTER MIRO's own posting succeeds, never
+    embedded in it). status: 'skipped_no_link' | 'success' | 'failed'.
+    Same contract as migo_operations.update_migo103_link_result.
+    """
+    sql = """
+        UPDATE miro_entries
+        SET miro_link_status      = %s,
+            miro_link_error       = %s,
+            miro_link_executed_at = %s,
+            updated_at            = CURRENT_TIMESTAMP
+        WHERE history_id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (status, error_message, datetime.now(), history_id))
+                logger.info(f"MIRO link-attach result stored for history_id {history_id}: status={status}")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to update MIRO link-attach result for history_id {history_id}: {e}")
+        return False
+
+
 def get_miro_entry(history_id: int) -> Optional[dict]:
     """
     Fetch the miro_entries record for a given history_id.

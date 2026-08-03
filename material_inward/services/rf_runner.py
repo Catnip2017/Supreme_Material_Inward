@@ -275,23 +275,31 @@ def execute_gate_in_sap(data: dict) -> dict:
     challan_raw = cleaned.get("challanNo", "")
     challan_numeric = re.sub(r'[^0-9]', '', challan_raw)
 
-    # Hand delivery sends truckNo/licenseNo as '' (see gate_in.html) since those
-    # fields are hidden/inapplicable for a hand-delivered consignment (no truck
-    # involved) regardless of whether a PO exists for it.
+    # Hand delivery (and now Courier -- see gate_in.html's deliveryType radios)
+    # sends truckNo/licenseNo as '' since those fields are hidden/inapplicable
+    # when there's no truck involved, regardless of whether a PO exists.
     # - TRUCK_NO: SAP's ctxtP_TR_NO may not accept a blank value, so this one
-    #   still substitutes a fixed placeholder instead of '' -- applies in both
-    #   hand_with_po and hand_without_po, since truck_no is blanked by
-    #   delivery type (hand vs truck), not by PO availability.
+    #   still substitutes a fixed placeholder instead of '' -- applies to
+    #   both the _with_po and _without_po variant of whichever non-truck
+    #   delivery type was selected, since truck_no is blanked by delivery
+    #   type, not by PO availability. Courier gets its own placeholder
+    #   ("BY COURIER") so SAP shows which of the two non-truck deliveries
+    #   this was, instead of both looking identical as "BYHAND".
     # - LICENSE_NO: goes in blank now -- no placeholder.
-    # - PURCHASE_ORDER: this is independent of delivery type -- a hand
-    #   delivery can still have a real PO. Blank only when "Without PO" was
-    #   actually selected (truck_without_po OR hand_without_po). Both
-    #   truck_with_po and hand_with_po send the real PO number through.
+    # - PURCHASE_ORDER: this is independent of delivery type -- any delivery
+    #   type can still have a real PO. Blank only when "Without PO" was
+    #   actually selected (*_without_po). Every *_with_po flow sends the
+    #   real PO number through, regardless of delivery type.
     # containerNo and everything else is left exactly as sent -- not touched.
     po_flow_type  = (cleaned.get("po_flow_type") or "").strip().lower()
     is_without_po = po_flow_type.endswith("_without_po")
+    # delivery type is always the first underscore-segment of po_flow_type
+    # ("truck"/"hand"/"courier" -- none of which contain an underscore
+    # themselves), regardless of which _with_po/_without_po suffix follows.
+    delivery_type = po_flow_type.split("_")[0] if po_flow_type else ""
 
-    truck_no_clean      = cleaned.get("truckNo", "") or "BYHAND"
+    truck_no_placeholder = "BY COURIER" if delivery_type == "courier" else "BYHAND"
+    truck_no_clean       = cleaned.get("truckNo", "") or truck_no_placeholder
     license_no_clean    = cleaned.get("licenseNo", "")
     purchase_order_clean = "" if is_without_po else cleaned.get("purchaseOrder", "")
 
@@ -648,3 +656,119 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
             f"Check robot log: {result.get('output_dir')}"
         )
     }
+
+
+# ============================================================
+# DMS LINK ATTACH — MIGO 103 / MIGO 105 / MIRO (v18)
+#
+# Three separate, standalone robot scripts (NOT embedded in gate_in.robot /
+# migo_103.robot / migo_105.robot / miro.robot) -- client decision: a DMS
+# link failure must never be able to make the underlying SAP posting look
+# failed, so each of these runs as its own rf_queue job, always AFTER the
+# corresponding posting job has already succeeded and reported its own
+# result independently.
+#
+# Placeholder script names below (migo103_link.robot / migo105_link.robot /
+# miro_link.robot) -- not yet added to robot_scripts/, awaiting the actual
+# scripts. Whoever adds them needs to either match this contract or this
+# file needs updating to match theirs:
+#   - reads MATERIAL_DOC_NUMBER and DOCUMENT_LINK via --variable (same
+#     mechanism as every other script here, see _run_rf_script)
+#   - opens/re-opens the relevant document in SAP using MATERIAL_DOC_NUMBER
+#     the same way robot_scripts/migo_invoice_link.robot's "Enter Material
+#     Document Number" step does (a persisted, already-posted document --
+#     not the create-transaction screen)
+#   - emits its own RESULT marker distinct from the posting step's own
+#     marker, so a link-attach failure is distinguishable from a posting
+#     failure: RESULT:MIGO103_LINK_STATUS:SUCCESS/FAILED,
+#     RESULT:MIGO105_LINK_STATUS:SUCCESS/FAILED,
+#     RESULT:MIRO_LINK_STATUS:SUCCESS/FAILED
+# ============================================================
+
+def execute_migo103_link_sap(data: dict) -> dict:
+    variables = {
+        "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
+        "DOCUMENT_LINK":       data.get("document_link", ""),
+    }
+    result = _run_rf_script(
+        "migo103_link.robot", variables, timeout_seconds=180,
+        extra_env=_sap_credential_env(data)
+    )
+    if not result["success"]:
+        return {"success": False, "error": result["error"]}
+
+    status_val = _extract_marked_value(result["output"], "MIGO103_LINK_STATUS")
+    if status_val and status_val.upper() == "SUCCESS":
+        return {"success": True, "error": None}
+    return {
+        "success": False,
+        "error": (
+            "migo103_link robot ran but did not confirm the link was "
+            f"attached. Check robot log: {result.get('output_dir')}"
+        )
+    }
+
+
+def execute_migo105_link_sap(data: dict) -> dict:
+    variables = {
+        "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
+        "DOCUMENT_LINK":       data.get("document_link", ""),
+    }
+    result = _run_rf_script(
+        "migo105_link.robot", variables, timeout_seconds=180,
+        extra_env=_sap_credential_env(data)
+    )
+    if not result["success"]:
+        return {"success": False, "error": result["error"]}
+
+    status_val = _extract_marked_value(result["output"], "MIGO105_LINK_STATUS")
+    if status_val and status_val.upper() == "SUCCESS":
+        return {"success": True, "error": None}
+    return {
+        "success": False,
+        "error": (
+            "migo105_link robot ran but did not confirm the link was "
+            f"attached. Check robot log: {result.get('output_dir')}"
+        )
+    }
+
+
+def execute_miro_link_sap(data: dict) -> dict:
+    variables = {
+        "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
+        "DOCUMENT_LINK":       data.get("document_link", ""),
+    }
+    result = _run_rf_script(
+        "miro_link.robot", variables, timeout_seconds=180,
+        extra_env=_sap_credential_env(data)
+    )
+    if not result["success"]:
+        return {"success": False, "error": result["error"]}
+
+    status_val = _extract_marked_value(result["output"], "MIRO_LINK_STATUS")
+    if status_val and status_val.upper() == "SUCCESS":
+        return {"success": True, "error": None}
+    return {
+        "success": False,
+        "error": (
+            "miro_link robot ran but did not confirm the link was "
+            f"attached. Check robot log: {result.get('output_dir')}"
+        )
+    }
+
+
+# ============================================================
+# DMS UPLOAD (Contentverse) — v18
+#
+# Chained into the same rf_queue right after po_fetch (or after gate_in on
+# without-PO flows that skip po_fetch), instead of a standalone Windows
+# Task Scheduler timer -- see services/rf_queue_worker.py._process_dms_upload
+# and services/dms_upload_runner.py.run_dms_upload(), which this reuses
+# as-is rather than duplicating its quarantine/lock/links-import logic.
+#
+# No per-record --variable inputs: dms_upload robots process whatever is
+# currently sitting in DMS_STAGING_FOLDER with dms_status='staged' (which,
+# right after gate_in, is normally just this one record, but may include
+# older stragglers if a previous run failed) -- see run_dms_upload().
+# ============================================================
+

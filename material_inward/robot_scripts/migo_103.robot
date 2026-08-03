@@ -20,6 +20,13 @@ ${HEADER_TEXT}      ${EMPTY}
 ${REMARKS}          ${EMPTY}
 ${ITEMS_JSON}       []
 ${ITEMS_JSON_B64}    W10=
+# INTEGRATION (from migo103_link/migo105_link bots): a document-overview
+# tree sidebar can pop up on this same MIGO screen -- these two paths let
+# Dismiss Overview Tree Sidebar close it if present. ${session} is the raw
+# SAP GUI Scripting session object, needed because a GuiShell tree control's
+# .pressButton() method isn't exposed by SapGuiLibrary's own keywords.
+${PATH_TREE_CLOSE_BTN}    wnd[0]/shellcont/shell/shellcont[1]/shell[0]
+${session}          ${NONE}
 
 
 *** Test Cases ***
@@ -81,6 +88,38 @@ Initialize SAP And Login
     END
 
     Maximize Window    0
+    Connect To Sap Session
+
+
+Connect To Sap Session
+    # Attaches to the same live SAP GUI Scripting session SapGuiLibrary is
+    # already driving, so Evaluate can call session.findById(...).pressButton(...)
+    # -- a GuiShell tree control method SapGuiLibrary's own keywords don't
+    # expose. Same pattern as robot_scripts/migo_invoice_link.robot's own
+    # Connect To Sap Session. Requires: pip install pywin32 (already a
+    # dependency for every other bot here).
+    ${sess}=    Evaluate
+    ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
+    Set Suite Variable    ${session}    ${sess}
+
+
+Dismiss Overview Tree Sidebar
+    # INTEGRATION: found by the migo103_link/migo105_link bots -- MIGO can
+    # pop up a document-overview tree sidebar on this same screen. Defensive
+    # by construction (both checks are Element Should Be Present guards, so
+    # this is a no-op on any run where the sidebar never appears).
+    ${hide_overview_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[0]/tbar[1]/btn[21]
+    IF    ${hide_overview_status}
+        Evaluate    $session.findById('wnd[0]').maximize()
+        Evaluate    $session.findById('wnd[0]/tbar[1]/btn[21]').press()
+        Sleep    2s
+    END
+
+    ${tree_close_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    ${PATH_TREE_CLOSE_BTN}
+    IF    ${tree_close_status}
+        Evaluate    $session.findById('${PATH_TREE_CLOSE_BTN}').pressButton('OK_CLOSE')
+        Sleep    2s
+    END
 
 
 Fill MIGO 103 And Post
@@ -114,6 +153,7 @@ Fill MIGO 103 And Post
     Run Transaction    MIGO
     Sleep    3s
     Dismiss Any Popup
+    Dismiss Overview Tree Sidebar
 
     # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
     ${firstline}=    Set Variable

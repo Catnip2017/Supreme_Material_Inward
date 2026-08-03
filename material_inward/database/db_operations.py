@@ -342,7 +342,17 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             %s, %s, %s, %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
-            filename = EXCLUDED.filename,
+            -- FIX: saveExtractedInvoice()'s payload (templates/tabs/
+            -- extracted_data.html) never sends "filename" -- it's not an
+            -- editable field, so the JS payload object never included it.
+            -- A plain `= EXCLUDED.filename` therefore NULLed out the OCR-set
+            -- filename on every single manual Save from the Invoice tab,
+            -- which is exactly what made the Documents tab's Invoice card
+            -- (and the "View Original Invoice" link) silently disappear --
+            -- both are gated on `invoice_data.get('filename')` being
+            -- truthy. Same root cause, same COALESCE fix already applied to
+            -- ewaybill_data.po_number below in save_ewaybill_to_db().
+            filename = COALESCE(NULLIF(EXCLUDED.filename, ''), invoice_data.filename),
             invoice_number = EXCLUDED.invoice_number,
             invoice_date = EXCLUDED.invoice_date,
             po_number = EXCLUDED.po_number,
@@ -428,13 +438,31 @@ def save_ewaybill_to_db(history_id: int, data: dict) -> bool:
             %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
-            filename = EXCLUDED.filename,
+            -- FIX: same "filename" gap as save_invoice_to_db() above --
+            -- saveExtractedEway()'s payload never sends it either, so this
+            -- was NULLing out ewaybill_data.filename on every manual Save
+            -- from the E-Way Bill tab, silently disappearing that card from
+            -- the Documents tab.
+            filename = COALESCE(NULLIF(EXCLUDED.filename, ''), ewaybill_data.filename),
             ewaybill_number = EXCLUDED.ewaybill_number,
             generated_date = EXCLUDED.generated_date,
             validity_date = EXCLUDED.validity_date,
             invoice_number = EXCLUDED.invoice_number,
             invoice_date = EXCLUDED.invoice_date,
-            po_number = EXCLUDED.po_number,
+            -- FIX: the E-Way Bill tab's PO Number field was removed from
+            -- templates/tabs/extracted_data.html (client request), so
+            -- saveExtractedEway()'s payload no longer sends po_number at
+            -- all -- data.get("po_number") above now always resolves to
+            -- None from that route. A plain `= EXCLUDED.po_number` would
+            -- have silently NULLed out the OCR-populated value on every
+            -- single save from that tab, breaking the po_number fallback
+            -- chain database/migo_operations.py's map_ocr_to_migo() and
+            -- services/rf_queue_worker.py._process_gate_in() both read
+            -- from ewaybill_data as a fallback. COALESCE keeps whatever is
+            -- already stored whenever the incoming value is empty/None,
+            -- while still accepting a real value if some other caller
+            -- (re-OCR, etc.) ever provides one.
+            po_number = COALESCE(NULLIF(EXCLUDED.po_number, ''), ewaybill_data.po_number),
             dispatch_from = EXCLUDED.dispatch_from,
             dispatch_to = EXCLUDED.dispatch_to,
             transport_mode = EXCLUDED.transport_mode,
@@ -479,7 +507,12 @@ def save_lr_to_db(history_id: int, data: dict) -> bool:
             %s, %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
-            filename = EXCLUDED.filename,
+            -- FIX: same "filename" gap as save_invoice_to_db()/
+            -- save_ewaybill_to_db() above -- saveExtractedLr()'s payload
+            -- never sends it either, so this was NULLing out lr_data.filename
+            -- on every manual Save from the LR tab, silently disappearing
+            -- that card from the Documents tab.
+            filename = COALESCE(NULLIF(EXCLUDED.filename, ''), lr_data.filename),
             lr_number = EXCLUDED.lr_number,
             lr_date = EXCLUDED.lr_date,
             consignor_name = EXCLUDED.consignor_name,
@@ -711,11 +744,13 @@ def set_po_flow_type(history_id: int, po_flow_type: str) -> bool:
     Must be called before the gate in job is enqueued so the worker
     can read po_flow_type when the job executes.
 
-    Values: truck_with_po | truck_without_po | hand_with_po | hand_without_po
+    Values: truck_with_po | truck_without_po | hand_with_po | hand_without_po |
+            courier_with_po | courier_without_po
     """
     valid = {
-        'truck_with_po', 'truck_without_po',
-        'hand_with_po',  'hand_without_po'
+        'truck_with_po',   'truck_without_po',
+        'hand_with_po',    'hand_without_po',
+        'courier_with_po', 'courier_without_po',
     }
     if po_flow_type not in valid:
         logger.error(f"Invalid po_flow_type value: '{po_flow_type}'")

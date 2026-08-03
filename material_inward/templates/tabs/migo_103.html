@@ -174,19 +174,6 @@
 <div class="content-card">
   <h3>📦 MIGO 103 — Goods Receipt into Blocked Stock</h3>
 
-<!-- {% set post_locked = (history is none) or (not history.gate_in) %}
-{% set step_locked = false %}
-
-  {% if step_locked %}
-  <div class="gate-banner">
-    ⏸ <strong>Awaiting Gate In</strong> — MIGO 103 unlocks once Gate In is posted.
-  </div>
-  {% else %}
-  <div class="gate-banner unlocked">
-    ✓ <strong>Gate In Done</strong> — Proceed with MIGO 103 posting.
-  </div>
-  {% endif %} -->
-
 {% set post_locked = (history is none) or (not history.gate_in) %}
 {% set gate_in_done = history and history.gate_in %}
 {% set po_flow_type = (history.po_flow_type if history else 'truck_with_po') or 'truck_with_po' %}
@@ -230,14 +217,14 @@
                   the guard already caught and fixed at Gate In shows up
                   correctly here instead of the stale OCR figure. #}
                value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
-               {% if step_locked %}disabled{% endif %}>
+               >
         {% if show_manual_po_fetch %}
         <button type="button" id="fetchPoItemsBtn"
                 onclick="fetchMigo103PoItems()"
                 style="display:inline-flex;align-items:center;gap:5px;padding:0 14px;height:38px;
                        background:#e67e22;color:#fff;border:none;border-radius:6px;
                        cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;flex-shrink:0;"
-                {% if step_locked %}disabled{% endif %}>
+                >
           📋 Fetch PO Items
         </button>
         {% endif %}
@@ -248,7 +235,7 @@
       <label>Document Date <span class="req">*</span></label>
       <input type="date" id="migoDocDate" class="form-input"
              value="{{ (migo_data.get('migo_doc_date') if migo_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}"
-             {% if step_locked %}disabled{% endif %}>
+             >
       <div class="field-error-msg" id="err_migoDocDate">Required</div>
     </div>
   </div>
@@ -258,14 +245,14 @@
       <label>Posting Date <span class="req">*</span></label>
       <input type="date" id="migoPostDate" class="form-input"
              value="{{ migo_data.get('migo_post_date', '') if migo_data else '' }}"
-             {% if step_locked %}disabled{% endif %}>
+             >
       <div class="field-error-msg" id="err_migoPostDate">Required</div>
     </div>
     <div class="form-group">
       <label>Delivery Note <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Invoice No)</span></label>
       <input type="text" id="migoDeliveryNote" class="form-input"
              value="{{ (migo_data.get('migo_delivery_note') if migo_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
-             {% if step_locked %}disabled{% endif %}>
+             >
       <div class="field-error-msg" id="err_migoDeliveryNote">Required</div>
     </div>
   </div>
@@ -275,13 +262,13 @@
       <label>Bill of Lading <span style="font-size:11px;color:#888;">(LR No)</span></label>
       <input type="text" id="migoBillOfLading" class="form-input"
              value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or (lr_data.get('lr_number') if lr_data else '') or '' }}"
-             {% if step_locked %}disabled{% endif %}>
+             >
     </div>
     <div class="form-group">
       <label>GR/GI Slip No</label>
       <input type="text" id="migoGRSlipNo" class="form-input"
              value="{{ migo_data.get('migo_gr_slip_no', '') if migo_data else '' }}"
-             {% if step_locked %}disabled{% endif %}>
+             >
     </div>
   </div>
 
@@ -289,7 +276,7 @@
     <label>Header Text <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Gate In Number)</span></label>
     <input type="text" id="migoHeaderText" class="form-input"
            value="{{ (migo_data.get('migo_header_text') or (history.gate_in_number if history and history.gate_in_number else '')) or '' }}"
-           {% if step_locked %}disabled{% endif %}>
+           >
     <div class="field-error-msg" id="err_migoHeaderText">Required</div>
   </div>
 
@@ -329,6 +316,7 @@
                 <th>Mat. Code</th>
                 <th>Short Text</th>
                 <th>Qty</th>
+                <th>UOM</th>
                 <th>Rate</th>
                 <th>Amount</th>
                 <th>HSN/SAC</th>
@@ -339,18 +327,27 @@
                  in app.py), not from the migo_entries.items_data snapshot --
                  that snapshot goes stale once Gate In posts, so corrections
                  made afterward on the Extracted Data tab were previously
-                 never reflected here. #}
+                 never reflected here.
+                 UOM column: item.unit was already populated correctly by
+                 shape_invoice_items_for_migo() (database/migo_operations.py)
+                 -- it just was never rendered anywhere on this screen. Client
+                 complaint about "missing UOM" was about this tab specifically
+                 (Extracted Data's own Goods Information table already shows
+                 it) -- see all the index updates below in autoPair()/
+                 confirmMatches()/_collectMigoItems()/addInvoiceRow() that had
+                 to move in lockstep with this new column. #}
               {% set items = invoice_line_items or [] %}
               {% for item in items %}
               <tr data-idx="{{ loop.index0 }}">
-                <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)" {% if step_locked %}disabled{% endif %}></button></td>
+                <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)" ></button></td>
                 <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                <td><input type="text" class="form-input" value="{{ item.get('material_code','') }}" {% if step_locked %}disabled{% endif %}></td>
-                <td><input type="text" class="form-input" value="{{ item.get('short_text','') }}" title="{{ item.get('short_text','') }}" oninput="this.title=this.value" {% if step_locked %}disabled{% endif %}></td>
-                <td><input type="text" class="form-input" value="{{ item.get('qty_expected','') }}" {% if step_locked %}disabled{% endif %}></td>
-                <td><input type="text" class="form-input" value="{{ item.get('rate','') }}" {% if step_locked %}disabled{% endif %}></td>
-                <td><input type="text" class="form-input" value="{{ item.get('amount','') }}" {% if step_locked %}disabled{% endif %}></td>
-                <td><input type="text" class="form-input" value="{{ item.get('hsn_sac','') }}" {% if step_locked %}disabled{% endif %}></td>
+                <td><input type="text" class="form-input" value="{{ item.get('material_code','') }}" ></td>
+                <td><input type="text" class="form-input" value="{{ item.get('short_text','') }}" title="{{ item.get('short_text','') }}" oninput="this.title=this.value" ></td>
+                <td><input type="text" class="form-input" value="{{ item.get('qty_expected','') }}" ></td>
+                <td><input type="text" class="form-input" value="{{ item.get('unit','') }}" ></td>
+                <td><input type="text" class="form-input" value="{{ item.get('rate','') }}" ></td>
+                <td><input type="text" class="form-input" value="{{ item.get('amount','') }}" ></td>
+                <td><input type="text" class="form-input" value="{{ item.get('hsn_sac','') }}" ></td>
               </tr>
               {% endfor %}
             </tbody>
@@ -380,7 +377,7 @@
               {% if po_data and po_data|length > 0 %}
                 {% for item in po_data %}
                 <tr data-idx="{{ loop.index0 }}">
-                  <td><button type="button" class="pair-btn pair-btn-po" data-pair="" onclick="onPoPairClick(this)" {% if step_locked %}disabled{% endif %}></button></td>
+                  <td><button type="button" class="pair-btn pair-btn-po" data-pair="" onclick="onPoPairClick(this)" ></button></td>
                   <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
                   <td>{{ item.get('material_code','') }}</td>
                   <td class="cell-text" title="{{ item.get('short_text','') }}">{{ item.get('short_text','') }}</td>
@@ -437,6 +434,7 @@
               <th>Short Text (Inv)</th>
               <th>Short Text (PO)</th>
               <th>HSN/SAC</th>
+              <th>UOM</th>
               <th>Qty</th>
               <th>Delivery Note Qty <span class="req">*</span></th>
               <th>Rate</th>
@@ -454,7 +452,7 @@
     <label>Text <span style="font-size:11px;color:#888;">(Remarks)</span></label>
     <input type="text" id="migoRemarks" class="form-input"
            value="{{ migo_data.get('migo_remarks', '') if migo_data else '' }}"
-           {% if step_locked %}disabled{% endif %}>
+           >
   </div>
 
   <div id="migo103Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
@@ -700,15 +698,19 @@ function autoPair() {
       .toLowerCase();
   }
 
+  // Invoice row inputs, in DOM order: [0]=material_code [1]=short_text
+  // [2]=qty [3]=UOM [4]=rate [5]=amount [6]=hsn_sac -- UOM was inserted
+  // between qty and rate (see the invoiceItemsBody <thead>/<tr> above),
+  // shifting rate/amount/hsn_sac each one index to the right.
   const invData = Array.from(invRows).map(r => {
     const inputs = r.querySelectorAll('input[type="text"]');
     return {
       el:            r.querySelector('.pair-btn-inv'),
       material_code: norm(inputs[0]?.value),
-      hsn_sac:       norm(inputs[5]?.value),
+      hsn_sac:       norm(inputs[6]?.value),
       quantity:      norm(inputs[2]?.value),
-      rate:          norm(inputs[3]?.value),
-      amount:        norm(inputs[4]?.value),
+      rate:          norm(inputs[4]?.value),
+      amount:        norm(inputs[5]?.value),
     };
   });
 
@@ -973,13 +975,16 @@ function confirmMatches() {
     const invInputs = invRow ? invRow.querySelectorAll('input[type="text"]') : [];
     const poCells   = poRow  ? poRow.querySelectorAll('td') : [];
 
+    // Same [0]=material_code..[6]=hsn_sac layout as autoPair() above --
+    // UOM (invInputs[3]) sits between qty and rate.
     const inv = {
       material_code: invInputs[0]?.value || '',
       short_text:    invInputs[1]?.value || '',
       quantity:      invInputs[2]?.value || '',
-      rate:          invInputs[3]?.value || '',
-      amount:        invInputs[4]?.value || '',
-      hsn_sac:       invInputs[5]?.value || '',
+      unit:          invInputs[3]?.value || '',
+      rate:          invInputs[4]?.value || '',
+      amount:        invInputs[5]?.value || '',
+      hsn_sac:       invInputs[6]?.value || '',
     };
     const po = {
       material_code: poCells[2]?.textContent.trim() || '',
@@ -1005,6 +1010,7 @@ function confirmMatches() {
       <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
       <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
       <td>${_esc(inv.hsn_sac || po.hsn_sac)}</td>
+      <td>${_esc(inv.unit)}</td>
       <td><input type="text" class="form-input" value="${_esc(inv.quantity || po.quantity)}" style="width:70px;"></td>
       <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" style="width:70px;"></td>
       <td><input type="text" class="form-input" value="${_esc(inv.rate || po.rate)}" style="width:80px;"></td>
@@ -1055,6 +1061,7 @@ function addInvoiceRow() {
     <td><input type="text" class="form-input" placeholder="Mat. Code"></td>
     <td><input type="text" class="form-input" placeholder="Short Text"></td>
     <td><input type="text" class="form-input" placeholder="Qty"></td>
+    <td><input type="text" class="form-input" placeholder="UOM"></td>
     <td><input type="text" class="form-input" placeholder="Rate"></td>
     <td><input type="text" class="form-input" placeholder="Amount"></td>
     <td><input type="text" class="form-input" placeholder="HSN/SAC"></td>
@@ -1115,11 +1122,24 @@ function _collectMigoItems() {
     matchedRows.forEach((row, idx) => {
       const inputs = row.querySelectorAll('input[type="text"]');
       const cells  = row.querySelectorAll('td');
+      // matchedBody <tr> cell layout (see confirmMatches() above):
+      // [0]=move-buttons [1]=# [2]=material_code [3]=short_text(inv)
+      // [4]=short_text(po) [5]=hsn_sac [6]=UOM [7]=qty-input [8]=dn-qty-input
+      // [9]=rate-input [10]=amount-input [11]=undo-button.
+      // FIX: this was previously reading cells[1]/[2]/[4] (which are
+      // actually "#", material_code, and short_text(po) respectively) into
+      // material_code/short_text/hsn_sac -- a one-column-off bug that
+      // scrambled every posted line's material_code/short_text/hsn_sac in
+      // migo_entries.items_data. Doesn't affect the actual SAP posting
+      // (migo_103.robot posts by PO line number + qty only -- see its Step 4
+      // comments -- material/short_text/hsn_sac in items_data are metadata,
+      // not typed into SAP), but it did corrupt our own stored record.
       items.push({
         line:          idx + 1,
-        material_code: cells[1]?.textContent.trim() || '',
-        short_text:    cells[2]?.textContent.trim() || '',
-        hsn_sac:       cells[4]?.textContent.trim() || '',
+        material_code: cells[2]?.textContent.trim() || '',
+        short_text:    cells[3]?.textContent.trim() || '',
+        hsn_sac:       cells[5]?.textContent.trim() || '',
+        unit:          cells[6]?.textContent.trim() || '',
         qty_expected:  inputs[0]?.value || '',
         qty_actual:    inputs[1]?.value || '',  // delivery note qty
         rate:          inputs[2]?.value || '',
@@ -1130,19 +1150,21 @@ function _collectMigoItems() {
     return items;
   }
 
-  // Fallback — no matches; use raw invoice rows
+  // Fallback — no matches; use raw invoice rows. Same [0]=material_code
+  // .. [6]=hsn_sac input layout as autoPair()/confirmMatches() above.
   document.querySelectorAll('#invoiceItemsBody tr').forEach((row, idx) => {
     const inputs = row.querySelectorAll('input[type="text"]');
-    if (inputs.length >= 6) {
+    if (inputs.length >= 7) {
       items.push({
         line:          idx + 1,
         material_code: inputs[0]?.value || '',
         short_text:    inputs[1]?.value || '',
         qty_expected:  inputs[2]?.value || '',
         qty_actual:    inputs[2]?.value || '',
-        rate:          inputs[3]?.value || '',
-        amount:        inputs[4]?.value || '',
-        hsn_sac:       inputs[5]?.value || '',
+        unit:          inputs[3]?.value || '',
+        rate:          inputs[4]?.value || '',
+        amount:        inputs[5]?.value || '',
+        hsn_sac:       inputs[6]?.value || '',
         batch:         '',
       });
     }

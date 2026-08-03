@@ -1,0 +1,18 @@
+# Python bytecode cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Byte-compiled / optimized files
+*.pyo
+*.pyd
+
+# Word/Excel lock files (created while a file is open in Office)
+~$*
+
+# Word/Excel deliverables — tracked as local working documents only,
+# not pushed to git.
+*.doc
+*.docx
+*.xls
+*.xlsx

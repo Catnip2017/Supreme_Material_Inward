@@ -708,11 +708,15 @@
               <input class="editable-input" id="eway_invoice_date" type="date" value="{{ ewaybill_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_eway_invoice_date"></div>
             </div>
-            <div class="field-block">
-              <div class="field-label">PO Number</div>
-              <input class="editable-input" id="eway_po_number" value="{{ ewaybill_data.get('po_number','') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_eway_po_number"></div>
-            </div>
+            <!-- CLIENT REQUEST (still-pending items email): PO Number section
+                 removed from the E-Way Bill tab. po_number stays a real column
+                 on ewaybill_data -- OCR still populates it, and it's still read
+                 as a fallback source for PO resolution elsewhere (see
+                 database/migo_operations.py map_ocr_to_migo() and
+                 services/rf_queue_worker.py._process_gate_in()'s po_number
+                 fallback chain) -- this only removes the ability to view/edit
+                 it from this tab, per the client's request. Invoice tab's own
+                 PO Number field (inv_po_number, above) is unaffected. -->
           </div>
         </div>
 
@@ -1052,7 +1056,9 @@ async function saveExtractedEway() {
     validity_date:   document.getElementById('eway_validity_date').value,
     invoice_number:  document.getElementById('eway_invoice_number').value,
     invoice_date:    document.getElementById('eway_invoice_date').value,
-    po_number:       document.getElementById('eway_po_number').value,
+    // PO Number field removed from this tab (client request) -- po_number
+    // is intentionally left out of this save payload now, so this route
+    // never overwrites whatever OCR originally put in ewaybill_data.po_number.
     dispatch_from:   document.getElementById('eway_dispatch_from').value,
     dispatch_to:     document.getElementById('eway_dispatch_to').value,
     transport_mode:  document.getElementById('eway_transport_mode').value,

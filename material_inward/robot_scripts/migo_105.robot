@@ -14,6 +14,11 @@ ${STORAGE_LOCATION}       ${EMPTY}
 ${ITEMS_JSON_BATCH}       ${EMPTY}
 ${VENDOR_INVOICE}         ${EMPTY}
 ${REMARKS}    ${EMPTY}
+# INTEGRATION (from migo103_link/migo105_link bots): a document-overview
+# tree sidebar can pop up on this same MIGO screen -- see Dismiss Overview
+# Tree Sidebar / Connect To Sap Session below, same pattern as migo_103.robot.
+${PATH_TREE_CLOSE_BTN}    wnd[0]/shellcont/shell/shellcont[1]/shell[0]
+${session}          ${NONE}
 
 *** Test Cases ***
 Execute MIGO 105
@@ -67,6 +72,34 @@ Initialize SAP And Login
         Sleep    2s
     END
     Maximize Window    0
+    Connect To Sap Session
+
+
+Connect To Sap Session
+    # Attaches to the same live SAP GUI Scripting session SapGuiLibrary is
+    # already driving -- see migo_103.robot's identical keyword for the
+    # full explanation.
+    ${sess}=    Evaluate
+    ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
+    Set Suite Variable    ${session}    ${sess}
+
+
+Dismiss Overview Tree Sidebar
+    # INTEGRATION: same fix as migo_103.robot -- see that file's identical
+    # keyword for the full explanation. Defensive by construction (no-op if
+    # the sidebar never appears).
+    ${hide_overview_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[0]/tbar[1]/btn[21]
+    IF    ${hide_overview_status}
+        Evaluate    $session.findById('wnd[0]').maximize()
+        Evaluate    $session.findById('wnd[0]/tbar[1]/btn[21]').press()
+        Sleep    2s
+    END
+
+    ${tree_close_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    ${PATH_TREE_CLOSE_BTN}
+    IF    ${tree_close_status}
+        Evaluate    $session.findById('${PATH_TREE_CLOSE_BTN}').pressButton('OK_CLOSE')
+        Sleep    2s
+    END
 
 
 Fill MIGO 105 And Post
@@ -81,6 +114,7 @@ Fill MIGO 105 And Post
     Run Transaction    MIGO
     Sleep    3s
     Dismiss Any Popup
+    Dismiss Overview Tree Sidebar
 
     ${firstline}=    Set Variable
     ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011
