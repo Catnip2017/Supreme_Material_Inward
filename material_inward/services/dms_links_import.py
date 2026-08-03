@@ -42,6 +42,9 @@ from database.db_operations import (
     find_history_id_by_consolidated_filename,
     upsert_dms_document_link,
 )
+from database.migo_operations import get_migo_entry
+from database.miro_operations import get_miro_entry
+from database.rf_queue_operations import enqueue_rf_job
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,6 +94,8 @@ def run_dms_links_import() -> dict:
             ok = upsert_dms_document_link(history_id, filename_with_ext, str(doc_link))
             if ok:
                 imported += 1
+                if history_id is not None:
+                    _catch_up_link_attach_jobs(history_id, str(doc_link))
             else:
                 errors += 1
         except Exception as e:
@@ -103,6 +108,55 @@ def run_dms_links_import() -> dict:
         f"unmatched={unmatched} errors={errors}"
     )
     return {"imported": imported, "unmatched": unmatched, "errors": errors}
+
+
+def _catch_up_link_attach_jobs(history_id: int, document_link: str) -> None:
+    """
+    v18: the other half of services/rf_queue_worker.py._enqueue_link_attach.
+
+    That function enqueues migo103_link/migo105_link/miro_link the moment
+    MIGO 103 / MIGO 105 / MIRO posts successfully, IF the DMS link already
+    exists at that instant -- if it doesn't yet, it marks the step
+    'skipped_no_link' instead of enqueueing anything. This function is the
+    symmetric other trigger: the moment a link actually lands (here), check
+    whether any of those three postings already happened for this
+    history_id and are just sitting there waiting on a link -- if so,
+    enqueue them now. Same "whichever event happens second" resolution
+    already used for pending_po_updates (see
+    database/pending_po_operations.py) -- just implemented directly here
+    instead of importing services/rf_queue_worker.py, which would create a
+    circular import (rf_queue_worker -> dms_upload_runner -> this module).
+
+    Best-effort throughout: never let a problem here fail the link import
+    that just succeeded (see caller, wrapped in the row's own try/except).
+    """
+    migo_entry = get_migo_entry(history_id) or {}
+    mat_doc = migo_entry.get("material_doc_number", "")
+
+    if mat_doc and migo_entry.get("migo_103_rf_status") == "success" \
+            and migo_entry.get("migo103_link_status") == "skipped_no_link":
+        job_id = enqueue_rf_job(
+            history_id, "migo103_link",
+            {"history_id": history_id, "material_doc_number": mat_doc, "document_link": document_link}
+        )
+        logger.info(f"Caught up migo103_link for history_id={history_id} (job_id={job_id})")
+
+    if mat_doc and migo_entry.get("migo_105_rf_status") == "success" \
+            and migo_entry.get("migo105_link_status") == "skipped_no_link":
+        job_id = enqueue_rf_job(
+            history_id, "migo105_link",
+            {"history_id": history_id, "material_doc_number": mat_doc, "document_link": document_link}
+        )
+        logger.info(f"Caught up migo105_link for history_id={history_id} (job_id={job_id})")
+
+    miro_entry = get_miro_entry(history_id) or {}
+    if mat_doc and miro_entry.get("rf_status") == "success" \
+            and miro_entry.get("miro_link_status") == "skipped_no_link":
+        job_id = enqueue_rf_job(
+            history_id, "miro_link",
+            {"history_id": history_id, "material_doc_number": mat_doc, "document_link": document_link}
+        )
+        logger.info(f"Caught up miro_link for history_id={history_id} (job_id={job_id})")
 
 
 if __name__ == "__main__":

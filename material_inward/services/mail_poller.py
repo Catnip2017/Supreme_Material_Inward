@@ -306,6 +306,17 @@ def process_mail(mail: imaplib.IMAP4_SSL, mail_id: bytes) -> bool:
         # Save extracted data to DB
         if extracted["invoice"]:
             save_invoice_to_db(history_id, extracted["invoice"])
+            # Auto-start GST verification the moment OCR extracts a seller
+            # GSTIN -- same trigger as the other two intake paths (manual
+            # upload in app.py, network-folder watcher in folder_watcher.py).
+            # This is the email-intake pipeline; without this it had the
+            # same gap folder_watcher.py did -- GST bots never fired until a
+            # human opened the GST Approval tab. Best-effort/non-fatal.
+            try:
+                from services.gst_runner import trigger_async as _gst_trigger
+                _gst_trigger(history_id)
+            except Exception as _gst_err:
+                logger.warning(f"GST auto-trigger failed for history_id={history_id} (non-fatal): {_gst_err}")
         if extracted["ewaybill"]:
             save_ewaybill_to_db(history_id, extracted["ewaybill"])
         if extracted["lr"]:

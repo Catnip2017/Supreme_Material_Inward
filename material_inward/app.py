@@ -901,8 +901,53 @@ def save_extracted_invoice(history_id):
         return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
 
     data = request.get_json(silent=True) or {}
+
+    # Snapshot the GSTIN as it stood BEFORE this save overwrites it, so we
+    # can tell afterwards whether compliance actually corrected it.
+    old_invoice = (get_history_details_by_id(history_id) or {}).get("invoice_data") or {}
+    old_gstin = (old_invoice.get("seller_gstin") or old_invoice.get("gstin") or "").strip().upper()
+
     if save_invoice_to_db(history_id, data):
         _auto_populate_form_tables(history_id)
+
+        # GSTIN auto-recheck on edit: the GST tab's cached result (if any)
+        # was computed against whatever GSTIN was on record BEFORE this
+        # save. If compliance just corrected a wrong OCR'd GSTIN, that
+        # cached result is now checking the WRONG company and would
+        # otherwise sit there looking "done" forever -- trigger_async()
+        # deliberately skips re-running when a clean (non-error) result
+        # already exists, since normally nothing changed. Here something
+        # did change, so we invalidate the stale result and kick off a
+        # fresh check, using the exact same reset+force path the manual
+        # Re-run button uses (see api_gst_rerun above) so the same safety
+        # gates apply automatically:
+        #   - GST already approved -> never touched (human decision is final)
+        #   - a check already running -> left alone, not interrupted
+        new_gstin = (data.get("seller_gstin") or data.get("gstin") or "").strip().upper()
+        if new_gstin and new_gstin != old_gstin:
+            try:
+                gst_row = get_gst_approval(history_id)
+                if gst_row and gst_row.get("approval_status") == "approved":
+                    logger.info(
+                        f"[save_extracted_invoice] GSTIN changed for history_id={history_id} "
+                        "but GST is already approved -- not re-running"
+                    )
+                elif is_running(history_id):
+                    logger.info(
+                        f"[save_extracted_invoice] GSTIN changed for history_id={history_id} "
+                        "but a check is already in progress -- not interrupting it"
+                    )
+                else:
+                    if gst_row:
+                        reset_gst_for_rerun(history_id)
+                    trigger_async(history_id, force=True)
+                    logger.info(
+                        f"[save_extracted_invoice] GSTIN corrected for history_id={history_id} "
+                        f"('{old_gstin}' -> '{new_gstin}') -- GST re-check triggered"
+                    )
+            except Exception as _gst_err:
+                logger.warning(f"GST re-trigger on GSTIN edit failed (non-fatal): {_gst_err}")
+
         return jsonify({"success": True, "message": "Invoice data saved"})
     return jsonify({"success": False, "error": "Failed to save"}), 500
 
@@ -1138,7 +1183,17 @@ def api_rerun_ocr(history_id):
             extracted = process_document(doc_type, file_path, filename)
             if extracted:
                 extracted["filename"] = filename
-                if doc_type == "invoice":   save_invoice_to_db(history_id, extracted)
+                if doc_type == "invoice":
+                    save_invoice_to_db(history_id, extracted)
+                    # Same auto-trigger as the first-pass OCR save (_run_ocr_and_save)
+                    # -- this re-run path re-extracts from the source file and can
+                    # produce a GSTIN that never got checked at all (the original
+                    # OCR attempt failed before reaching the invoice save), so fire
+                    # the GST bots against whatever GSTIN comes out this time.
+                    try:
+                        trigger_async(history_id)
+                    except Exception as _gst_err:
+                        logger.warning(f"GST auto-trigger failed on OCR re-run (non-fatal): {_gst_err}")
                 elif doc_type == "ewaybill": save_ewaybill_to_db(history_id, extracted)
                 elif doc_type == "lr":       save_lr_to_db(history_id, extracted)
                 files_processed += 1
@@ -1316,10 +1371,18 @@ def save_gatein():
     # v17.1: server-side mirror of validateGateIn() in gate_in.html --
     # see _validate_required_fields()'s docstring for why this was added.
     po_flow_type = (data.get("po_flow_type") or "truck_with_po").strip()
-    valid_flow_types = {"truck_with_po", "truck_without_po", "hand_with_po", "hand_without_po"}
+    valid_flow_types = {
+        "truck_with_po",   "truck_without_po",
+        "hand_with_po",    "hand_without_po",
+        "courier_with_po", "courier_without_po",
+    }
     if po_flow_type not in valid_flow_types:
         return jsonify({"success": False, "error": f"Invalid po_flow_type: {po_flow_type!r}"}), 400
-    is_hand       = po_flow_type.startswith("hand_")
+    # "is_hand" here really means "not truck" -- Hand Delivery and Courier
+    # both skip Truck No/License No and use the "Person Name" label (see
+    # gate_in.html's onDeliveryTypeChange(), which treats them identically
+    # except for what rf_runner.py sends SAP as the truck-number placeholder).
+    is_hand       = not po_flow_type.startswith("truck_")
     is_without_po = po_flow_type.endswith("_without_po")
 
     required = [
@@ -1677,7 +1740,11 @@ def api_set_po_flow_type(history_id):
     """Manually set po_flow_type on a history record (used from Gate In tab)."""
     data = request.get_json(silent=True) or {}
     po_flow_type = (data.get("po_flow_type") or "").strip()
-    valid = {"truck_with_po", "truck_without_po", "hand_with_po", "hand_without_po"}
+    valid = {
+        "truck_with_po",   "truck_without_po",
+        "hand_with_po",    "hand_without_po",
+        "courier_with_po", "courier_without_po",
+    }
     if po_flow_type not in valid:
         return jsonify({"success": False, "error": f"Invalid po_flow_type: {po_flow_type!r}"}), 400
     ok = set_po_flow_type(history_id, po_flow_type)

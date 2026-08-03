@@ -121,13 +121,14 @@
             <th>Mat. Code</th>
             <th>Short Text</th>
             <th>HSN/SAC</th>
+            <th>UOM</th>
             <th>Qty</th>
             <th>Delivery Note Qty</th>
             <th>Batch</th>
           </tr>
         </thead>
         <tbody id="migo105ItemsBody">
-          <tr><td colspan="7" style="padding:14px;text-align:center;color:#888;">Loading line items...</td></tr>
+          <tr><td colspan="8" style="padding:14px;text-align:center;color:#888;">Loading line items...</td></tr>
         </tbody>
       </table>
     </div>
@@ -187,7 +188,7 @@ function loadMigo105Items() {
       const tbody = document.getElementById('migo105ItemsBody');
       const items = data.items || [];
       if (items.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding:14px;text-align:center;color:#888;">No line items — complete MIGO 103 first.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="padding:14px;text-align:center;color:#888;">No line items — complete MIGO 103 first.</td></tr>';
         return;
       }
       tbody.innerHTML = '';
@@ -199,6 +200,7 @@ function loadMigo105Items() {
           <td>${_esc(item.material_code || '')}</td>
           <td title="${_esc(item.short_text || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${_esc(item.short_text || '')}</td>
           <td>${_esc(item.hsn_sac || '')}</td>
+          <td>${_esc(item.unit || '')}</td>
           <td>${_esc(item.qty_expected || '')}</td>
           <td>${_esc(item.qty_actual || '')}</td>
           <td><input type="text" class="batch-input" value="${_esc(item.batch || '')}" placeholder="(auto)" ${MIGO_105_LOCKED ? 'disabled' : ''}></td>
@@ -209,7 +211,7 @@ function loadMigo105Items() {
     .catch(err => {
       console.error(err);
       document.getElementById('migo105ItemsBody').innerHTML =
-        '<tr><td colspan="7" style="padding:14px;text-align:center;color:#e17055;">Failed to load line items.</td></tr>';
+        '<tr><td colspan="8" style="padding:14px;text-align:center;color:#e17055;">Failed to load line items.</td></tr>';
     });
 }
 

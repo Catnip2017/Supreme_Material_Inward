@@ -421,6 +421,21 @@ def _process_batch(group_key: str, group_folder: str, files_by_type: dict, extra
         # Save extracted data to DB
         if extracted["invoice"]:
             save_invoice_to_db(history_id, extracted["invoice"])
+            # Auto-start GST verification the moment OCR extracts a seller
+            # GSTIN -- same trigger app.py's manual-upload path
+            # (_run_ocr_and_save) already fires. This is the network-folder
+            # intake pipeline (the primary/automated path -- see module
+            # docstring), which previously saved invoice_data here and then
+            # just stopped: nothing kicked off the GST bots until a human
+            # happened to open the GST Approval tab and its 5s poll fired
+            # trigger_async() for the first time. Best-effort/non-fatal, same
+            # as the app.py side -- a GST-trigger failure must never affect
+            # OCR intake succeeding.
+            try:
+                from services.gst_runner import trigger_async as _gst_trigger
+                _gst_trigger(history_id)
+            except Exception as _gst_err:
+                logger.warning(f"GST auto-trigger failed for history_id={history_id} (non-fatal): {_gst_err}")
         if extracted["ewaybill"]:
             save_ewaybill_to_db(history_id, extracted["ewaybill"])
         if extracted["lr"]:
