@@ -217,7 +217,19 @@
       <label>Purchase Order No <span class="req">*</span></label>
       <div style="display:flex;gap:8px;align-items:flex-start;">
         <input type="text" id="migoPoNumber" class="form-input" style="flex:1;"
-               value="{{ (migo_data.get('migo_po_number') if migo_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+               {# FIX: migo_entries has no migo_po_number column, so that
+                  first COALESCE arm was always a no-op -- this fell
+                  straight to invoice_data.po_number every time. That's the
+                  Compliance-approved OCR value, which is NOT necessarily
+                  what actually went to SAP: for a with-PO Gate In, the
+                  guard can (and does) correct the PO number right there on
+                  the Gate In form before posting (see gate_in.html's own
+                  purchaseOrder field), and that correction lives in
+                  gate_in_entries.purchase_order, not invoice_data. Prefer
+                  that guard-confirmed value now, so a Compliance mistake
+                  the guard already caught and fixed at Gate In shows up
+                  correctly here instead of the stale OCR figure. #}
+               value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
                {% if step_locked %}disabled{% endif %}>
         {% if show_manual_po_fetch %}
         <button type="button" id="fetchPoItemsBtn"
@@ -323,7 +335,12 @@
               </tr>
             </thead>
             <tbody id="invoiceItemsBody">
-              {% set items = (migo_data.get('items_data') if migo_data else []) or [] %}
+              {# Rendered live from invoice_data.hsn_details (see view_detail()
+                 in app.py), not from the migo_entries.items_data snapshot --
+                 that snapshot goes stale once Gate In posts, so corrections
+                 made afterward on the Extracted Data tab were previously
+                 never reflected here. #}
+              {% set items = invoice_line_items or [] %}
               {% for item in items %}
               <tr data-idx="{{ loop.index0 }}">
                 <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)" {% if step_locked %}disabled{% endif %}></button></td>
@@ -448,6 +465,11 @@
         {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
     </button>
   </div>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'migo103' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
 </div>
 
 <!-- Compare Documents Modal -->
@@ -477,6 +499,8 @@
 
 
 const POST_LOCKED_103 = {{ 'true' if post_locked else 'false' }};
+// FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
+const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 (function() {
   const pd = document.getElementById('migoPostDate');

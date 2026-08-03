@@ -182,8 +182,10 @@
         </div>
         <div class="dropdown-menu" id="userDropdown">
             <a href="/history"><i class="fas fa-history"></i> History</a>
-            {% if role == 'Admin' %}
+            {% if is_superadmin or has_role('compliance') or allow_user_upload %}
             <a href="/new_entry"><i class="fas fa-plus"></i> New Entry</a>
+            {% endif %}
+            {% if is_superadmin %}
             <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
             {% endif %}
             <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
@@ -227,12 +229,28 @@
     </div>
     {% endif %}
 
+    <!-- v17: Pending PO Updates panel -- without-PO records where MIGO 103
+         has already captured a real PO number, waiting on this Gate In's
+         original submitter to backfill it via zgatein_update under their
+         own login. Hidden entirely when there's nothing pending. Loaded
+         once on page load (no continuous polling) -- see loadPendingPoUpdates(). -->
+    <div class="page-header" id="pendingPoPanel" style="display:none;border-left:4px solid #f39c12;">
+        <div style="width:100%;">
+            <h1 class="page-title" style="font-size:18px;margin-bottom:12px;">
+                <i class="fas fa-clock" style="color:#f39c12;"></i>
+                Pending PO Updates
+                <span id="pendingPoCount" style="font-size:13px;font-weight:500;color:#888;"></span>
+            </h1>
+            <div id="pendingPoList"></div>
+        </div>
+    </div>
+
     <!-- Page header -->
     <div class="page-header">
         <h1 class="page-title">
             <i class="fas fa-history"></i>
             Material Inward History
-            
+
         </h1>
         {% if role == 'Admin' or allow_user_upload %}
         <button class="new-invoice-btn" onclick="window.location.href='/new_entry'">
@@ -491,6 +509,102 @@ document.addEventListener("click", function(e) {
 
 // Load on page open
 loadHistory();
+
+// ── v17: Pending PO Updates panel ───────────────────────────────────────
+// Loaded once here on page open -- no continuous polling. The existing
+// notification bell (static/js/notifications.js, 60s poll) is what nudges
+// a user that something new showed up; this panel just reflects current
+// DB state whenever /history is opened or reloaded.
+function _escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+}
+
+function loadPendingPoUpdates() {
+    fetch('/api/pending_po_updates')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            const panel = document.getElementById('pendingPoPanel');
+            const list  = document.getElementById('pendingPoList');
+            const count = document.getElementById('pendingPoCount');
+            if (!data || !data.success || !data.items || data.items.length === 0) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'block';
+            count.textContent = `(${data.items.length})`;
+            list.innerHTML = data.items.map(it => {
+                const isFailed = it.status === 'failed';
+                const btnLabel = isFailed ? 'Retry' : 'Update PO';
+                const btnColor = isFailed ? 'linear-gradient(135deg,#e74c3c,#c0392b)' : 'linear-gradient(135deg,#f39c12,#e67e22)';
+                return `
+                <div style="display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:14px;">
+                    <div style="flex:1;">
+                        <strong>${_escHtml(it.invoice_number || ('h' + it.history_id))}</strong>
+                        &nbsp;—&nbsp; GIN ${_escHtml(it.gate_in_number)} needs PO ${_escHtml(it.po_number)}
+                        ${isFailed ? '<span style="color:#e74c3c;font-weight:600;"> — last attempt failed</span>' : ''}
+                        <div style="font-size:12px;color:#888;">
+                            Requested by ${_escHtml(it.requested_by || 'unknown')} at ${_escHtml(it.requested_at || '')}
+                            ${isFailed && it.error_message ? `<br>Error: ${_escHtml(it.error_message)}` : ''}
+                        </div>
+                    </div>
+                    <button onclick="runPendingPoUpdate(${it.history_id}, this)"
+                        style="padding:8px 16px;background:${btnColor};color:white;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">
+                        ${btnLabel}
+                    </button>
+                </div>
+            `;
+            }).join('');
+        })
+        .catch(() => {});
+}
+
+function runPendingPoUpdate(historyId, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    fetch(`/api/pending_po_updates/${historyId}/run`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                alert('Failed to start: ' + (data.error || 'unknown error'));
+                btn.disabled = false;
+                btn.textContent = 'Update PO';
+                return;
+            }
+            _pollPendingPoJob(data.job_id, btn);
+        })
+        .catch(() => {
+            alert('Network error starting PO update.');
+            btn.disabled = false;
+            btn.textContent = 'Update PO';
+        });
+}
+
+function _pollPendingPoJob(jobId, btn) {
+    fetch(`/api/queue_status/${jobId}`)
+        .then(r => r.json())
+        .then(data => {
+            const status = data.job && data.job.status;   // pending | running | done | failed
+            if (status === 'pending' || status === 'running') {
+                setTimeout(() => _pollPendingPoJob(jobId, btn), 3000);
+                return;
+            }
+            // Terminal (done or failed either way) -- refresh the panel so
+            // a resolved item disappears / a still-pending one shows fresh state.
+            loadPendingPoUpdates();
+            if (status === 'failed') {
+                const errMsg = (data.job.result && data.job.result.error) || data.job.error_message || 'unknown error';
+                alert('PO update did not succeed: ' + errMsg);
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.textContent = 'Update PO';
+        });
+}
+
+loadPendingPoUpdates();
 </script>
 
 </body>

@@ -54,10 +54,22 @@ Initialize SAP and Login
     ${env_path}=    Join Path    ${EXECDIR}    .env
     Evaluate    __import__('dotenv').load_dotenv(r'''${env_path}''')
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
-    ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
-    ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
     ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
- 
+
+    # v16: per-user SAP credential pass-through (LDAP users only) -- see
+    # gate_in.robot for the full explanation.
+    ${USER_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_USER_OVERRIDE', '')
+    ${PASS_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_PASS_OVERRIDE', '')
+    IF    $USER_OVERRIDE != '' and $PASS_OVERRIDE != ''
+        ${USERNAME}=    Set Variable    ${USER_OVERRIDE}
+        ${PASSWORD}=    Set Variable    ${PASS_OVERRIDE}
+        Log To Console    SAP LOGIN: using per-user credential for ${USERNAME}
+    ELSE
+        ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
+        ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
+        Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
+    END
+
     # Kill any existing SAP processes
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe

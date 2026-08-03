@@ -141,7 +141,8 @@ def _to_sap_date(date_str: str) -> str:
 def _run_rf_script(
     script_name: str,
     variables: dict,
-    timeout_seconds: int = 120
+    timeout_seconds: int = 120,
+    extra_env: Optional[dict] = None
 ) -> dict:
     if script_name == "po_fetch.robot":
         _force_kill_sap()
@@ -180,6 +181,19 @@ def _run_rf_script(
 
     logger.info(f"Running RF: {script_name} | Variables: {list(variables.keys())}")
 
+    subprocess_env = {**os.environ, **dotenv_values()}
+    if extra_env:
+        # v16: per-user SAP credential override (LDAP users only) -- see
+        # _sap_credential_env(). Added as new env var names on top of the
+        # merged .env values, never overwriting SAP_USERNAME/SAP_PASSWORD
+        # themselves, so the robot script's own .env fallback logic keeps
+        # working untouched for local/test accounts. Never log the value.
+        subprocess_env.update(extra_env)
+        logger.info(
+            f"RF: {script_name} using per-user SAP credential override for "
+            f"'{extra_env.get('SAP_USER_OVERRIDE')}' (password not logged)."
+        )
+
     acquire_robot_lock(script_name)
     try:
         result = subprocess.run(
@@ -187,7 +201,7 @@ def _run_rf_script(
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
-            env={**os.environ, **dotenv_values()},
+            env=subprocess_env,
         )
         stdout = result.stdout or ""
         stderr = result.stderr or ""
@@ -215,6 +229,30 @@ def _run_rf_script(
         return {"success": False, "error": msg, "output": ""}
     finally:
         release_robot_lock()
+
+
+def _sap_credential_env(data: dict) -> dict:
+    """
+    v16: extracts this job's per-user SAP override credential, if any (see
+    services/credential_cache.py + services/rf_queue_worker.py — payload
+    keys "_sap_username"/"_sap_password", set only for LDAP-authenticated
+    users' jobs). Returns {} for local/.env-fallback jobs, which is the
+    common case for test accounts and is exactly today's behavior.
+
+    Returned as a dict meant for the RF subprocess's *environment*, not
+    as --variable CLI arguments -- passing a password as a command-line
+    argument would make it visible to Task Manager/ps on the SAP bot
+    machine for the life of the process, which the CLI-variable route
+    used for every other field does not need to avoid (none of those are
+    secrets). Robot scripts read SAP_USER_OVERRIDE/SAP_PASS_OVERRIDE from
+    the environment in Initialize SAP And Login and prefer them over the
+    shared .env SAP_USERNAME/SAP_PASSWORD when both are present.
+    """
+    user = data.get("_sap_username")
+    pw   = data.get("_sap_password")
+    if user and pw:
+        return {"SAP_USER_OVERRIDE": user, "SAP_PASS_OVERRIDE": pw}
+    return {}
 
 
 def _extract_marked_value(output: str, marker: str) -> Optional[str]:
@@ -265,7 +303,11 @@ def execute_gate_in_sap(data: dict) -> dict:
         "LICENSE_NO":     license_no_clean,
         "CONTAINER_NO":   cleaned.get("containerNo", ""),
         "CATEGORY":       cleaned.get("category", ""),
-        "MATERIAL":       cleaned.get("material", ""),
+        # FIX: defense-in-depth 40-char cap (matches SAP's txtP_MATNR DDIC
+        # limit) -- gatein_operations.upsert_gatein_entry now caps this at
+        # write time for anything saved going forward, but this backstop
+        # covers any row already in the DB from before that fix landed.
+        "MATERIAL":       (cleaned.get("material", "") or "")[:40],
         # "CHALLAN_NO":     cleaned.get("challanNo", ""),
         "CHALLAN_NO": challan_numeric,
         "CHALLAN_QTY":    cleaned.get("challanQty", ""),
@@ -278,7 +320,10 @@ def execute_gate_in_sap(data: dict) -> dict:
         "GATE_IN_TIME":   data.get("gateInTime", ""),
     }
 
-    result = _run_rf_script("gate_in.robot", variables, timeout_seconds=180)
+    result = _run_rf_script(
+        "gate_in.robot", variables, timeout_seconds=180,
+        extra_env=_sap_credential_env(data)
+    )
     if not result["success"]:
         return {"success": False, "error": result["error"], "gate_in_number": None}
 
@@ -326,6 +371,19 @@ def execute_migo_103_sap(data: dict) -> dict:
     if not isinstance(items_data, list):
         items_data = []
 
+    # FIX: SAP's item-text field (txtGOITEM-SGTXT, filled once per line from
+    # REMARKS today) and header text field are both ~40-char SAP fields, same
+    # class of issue as Gate In's Material field -- nothing capped these
+    # before, so an oversized OCR/typed value would ship straight through to
+    # SAP with no server-side backstop. Also capping each item's own
+    # short_text here even though migo_103.robot doesn't read it yet today
+    # (see separate note to the team about SGTXT currently being filled from
+    # REMARKS for every line, not from each item's own short_text) -- this
+    # way it's already safe the moment that gets wired in.
+    for _item in items_data:
+        if isinstance(_item, dict) and _item.get("short_text"):
+            _item["short_text"] = str(_item["short_text"])[:40]
+
     items_json_str = json.dumps(items_data)
     items_json_b64 = base64.b64encode(items_json_str.encode()).decode()
 
@@ -336,12 +394,15 @@ def execute_migo_103_sap(data: dict) -> dict:
         "DELIVERY_NOTE":  cleaned.get("migoDeliveryNote", ""),
         "BILL_OF_LADING": cleaned.get("migoBillOfLading", ""),
         "GR_SLIP_NO":     cleaned.get("migoGRSlipNo", ""),
-        "HEADER_TEXT":    cleaned.get("migoHeaderText", ""),
-        "REMARKS":        cleaned.get("migoRemarks", ""),
+        "HEADER_TEXT":    (cleaned.get("migoHeaderText", "") or "")[:40],
+        "REMARKS":        (cleaned.get("migoRemarks", "") or "")[:40],
         "ITEMS_JSON_B64": items_json_b64,
     }
 
-    result = _run_rf_script("migo_103.robot", variables, timeout_seconds=300)
+    result = _run_rf_script(
+        "migo_103.robot", variables, timeout_seconds=300,
+        extra_env=_sap_credential_env(data)
+    )
     if not result["success"]:
         return {"success": False, "error": result["error"], "material_doc_number": None}
 
@@ -399,7 +460,10 @@ def execute_migo_105_sap(data: dict) -> dict:
         "ITEMS_JSON_BATCH":    items_json_b64,
     }
 
-    result = _run_rf_script("migo_105.robot", variables, timeout_seconds=300)
+    result = _run_rf_script(
+        "migo_105.robot", variables, timeout_seconds=300,
+        extra_env=_sap_credential_env(data)
+    )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
 
@@ -434,7 +498,10 @@ def execute_miro_sap(data: dict) -> dict:
         "PO_NUMBER":        data.get("miroPurchaseOrder", ""),
         "POSTING_DATE":     _to_sap_date(datetime.now().strftime("%Y-%m-%d")),
     }
-    result = _run_rf_script("miro.robot", variables, timeout_seconds=300)
+    result = _run_rf_script(
+        "miro.robot", variables, timeout_seconds=300,
+        extra_env=_sap_credential_env(data)
+    )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
 
@@ -467,6 +534,12 @@ def execute_po_fetch_sap(data: dict) -> dict:
         logger.warning("execute_po_fetch_sap called with empty PO number — skipping.")
         return {"success": False, "error": "PO number is empty", "po_items": []}
 
+    # v16: po_fetch (ME23N line-item read) always uses the shared spl_rpa
+    # .env SAP login -- deliberately no extra_env/credential override here.
+    # It's a read-only PO lookup used to populate MIGO's line items, not an
+    # attributable posting, so the per-user LDAP credential mechanism (see
+    # credential_cache.py) intentionally never reaches this bot. See the
+    # SAP_USERNAME/SAP_PASSWORD comment block in .env for the full picture.
     variables = {"PO_NUMBER": po_number}
     result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=120)
     if not result["success"]:
@@ -496,6 +569,8 @@ def execute_po_list_fetch_sap(data: dict) -> dict:
     if not vendor_name:
         return {"success": False, "error": "Vendor name is empty", "po_list": []}
 
+    # v16: po_list_fetch (ME2N open-PO lookup) always uses the shared
+    # spl_rpa .env SAP login too -- same reasoning as po_fetch above.
     variables = {"VENDOR_NAME": vendor_name}
     result = _run_rf_script("po_list_fetch.robot", variables, timeout_seconds=120)
     if not result["success"]:
@@ -515,7 +590,18 @@ def execute_po_list_fetch_sap(data: dict) -> dict:
 
 # ============================================================
 # ZGATEIN UPDATE — update PO on an existing gate in entry
-# Called only for without_po flows after MIGO 103 completes.
+#
+# v17: no longer coupled to MIGO 103 at all (SAP confirmed posting order
+# between the two doesn't matter). For a without_po record, MIGO 103
+# capturing a real PO number just logs a pending_po_updates row (see
+# rf_queue_worker.py._process_migo_103 + database/pending_po_operations.py)
+# targeted at the original Gate In submitter (gate_in_entries.submitted_by).
+# THAT person triggers this job themselves, whenever they get to it, from
+# the History page's Pending PO Updates panel (app.py's
+# /api/pending_po_updates/<id>/run) -- so the SAP credential used here is
+# always the same person who did the original Gate In, not whoever ran
+# MIGO 103. See rf_queue_worker.py._process_update_gatein_po.
+#
 # Element paths in the robot are placeholders — SAP team must
 # provide real paths from a GUI recording of zgatein_update tcode.
 # ============================================================
@@ -544,7 +630,10 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
         "HISTORY_ID":     str(history_id),
     }
 
-    result = _run_rf_script("zgatein_update.robot", variables, timeout_seconds=180)
+    result = _run_rf_script(
+        "zgatein_update.robot", variables, timeout_seconds=180,
+        extra_env=_sap_credential_env(data)
+    )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
 

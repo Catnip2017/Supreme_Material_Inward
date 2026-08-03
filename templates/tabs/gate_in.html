@@ -413,6 +413,11 @@
       <button type="button" class="btn btn-secondary" onclick="clearGateInForm()" {% if gate_in_locked %}disabled{% endif %}>🔄 Clear Form</button>
     </div>
   </form>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'gatein' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
 </div>
 
 
@@ -420,6 +425,14 @@
 
 
 const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
+// FIX: was referenced below (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED) but
+// never actually declared anywhere -- an undefined bare identifier throws
+// in JS, so the submit handler aborted with a silent console error every
+// time POST_LOCKED_GATEIN was true, before the request ever reached the
+// server. That's why toggling ENABLE_STEP_LOCKS in .env appeared to do
+// nothing: the server-side bypass (app.py _check_step_allowed) was correct
+// all along, the request just never got there.
+const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 
 (function() {
@@ -891,11 +904,15 @@ function _renderVendorCodeDropdown(candidates, suffix) {
     item.className = 'driver-dropdown-item';
     const displayName = c.name_1 || c.name || '(no name)';
     const location = [c.city, c.district].filter(Boolean).join(', ');
+    const locationWithPin = [
+      location ? _escHtml(location) : '',
+      c.postal_code ? ('PIN: ' + _escHtml(c.postal_code)) : ''
+    ].filter(Boolean).join(' &nbsp;|&nbsp; ');
     const isAmbiguous = groupCounts[_groupKey(c)] > 1;
     const address = isAmbiguous ? _fullAddress(c) : '';
     item.innerHTML =
       '<div class="drv-name">' + _escHtml(displayName) + ' &nbsp;<span style="color:#888;font-weight:400;">(' + _escHtml(c.supplier) + ')</span></div>' +
-      '<div class="drv-meta">' + (location ? _escHtml(location) : 'No location on file') + '</div>' +
+      '<div class="drv-meta">' + (locationWithPin || 'No location on file') + '</div>' +
       (address ? '<div class="drv-meta" style="color:#c0392b;">' + _escHtml(address) + '</div>' : '');
     item.onclick = function() { _applyVendorCode(c, suffix); };
     dd.appendChild(item);

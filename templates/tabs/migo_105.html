@@ -141,11 +141,18 @@
   {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
 </button>
   </div>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'migo105' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
 </div>
 
 
 <script>
 const POST_LOCKED_105 = {{ 'true' if post_locked else 'false' }};
+// FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
+const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 
 const HISTORY_ID_105 = {{ history_id|tojson }};

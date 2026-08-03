@@ -36,6 +36,10 @@ ${PASSWORD}   ${EMPTY}
 ${DMS_PENDING_UPLOAD_FOLDER}     C:\material_inward\dms_staging
 # Destination: PDFs already uploaded, archived here after indexing
 ${DMS_UPLOADED_ARCHIVE_FOLDER}   C:\material_inward\dms_staging\uploaded
+# v16: where each uploaded document's Contentverse sharing link gets
+# appended -- services/dms_links_import.py reads this back into the app's
+# own DB (dms_document_links table) afterward. Loaded from .env below.
+${DMS_LINKS_EXCEL_PATH}   ${EMPTY}
 
 *** Keywords ***
 
@@ -44,10 +48,13 @@ Load Environment Variables
     Evaluate    __import__('dotenv').load_dotenv(r'''${env_path}''')
     ${USERNAME}=    Evaluate    __import__('os').getenv('CV_USERNAME')
     ${PASSWORD}=    Evaluate    __import__('os').getenv('CV_PASSWORD')
+    ${LINKS_PATH}=    Evaluate    __import__('os').getenv('DMS_LINKS_EXCEL_PATH')
     Should Not Be Empty    ${USERNAME}
     Should Not Be Empty    ${PASSWORD}
+    Should Not Be Empty    ${LINKS_PATH}
     Set Suite Variable    ${USERNAME}
     Set Suite Variable    ${PASSWORD}
+    Set Suite Variable    ${DMS_LINKS_EXCEL_PATH}    ${LINKS_PATH}
     Create Directory    ${DMS_UPLOADED_ARCHIVE_FOLDER}
 
 Open Login Page
@@ -539,6 +546,323 @@ Move All Files To Uploaded Archive
         Log To Console    📦 Moved ${filename} → ${DMS_UPLOADED_ARCHIVE_FOLDER}
     END
 
+# ── v16: document-link generation ──────────────────────────────────────────
+# Ported from the originally dropped dms_bot/dms_bot.robot (Send To >
+# Generate Document link > copy > save to Excel). dms_upload.robot's own
+# upload/index steps above never generated a link at all until now.
+
+Click View On Document Created Popup
+    ${popup_found}=    Run Keyword And Return Status
+    ...    Wait Until Element Is Visible
+    ...    xpath=//*[contains(text(),'Document created successfully')]    10s
+
+    IF    ${popup_found}
+        Log    🟢 Document created popup found — clicking Navigate
+        Click Element    xpath=//button[normalize-space()='Navigate']
+        Sleep    10s
+    ELSE
+        Log    ⚠️ Document created popup not found
+    END
+
+Select Document Row By Name
+    [Arguments]    ${report_name}
+    Wait Until Element Is Visible
+    ...    xpath=//*[normalize-space(text())='${report_name}']    10s
+    Sleep    1s
+
+    ${status}=    Execute Javascript
+    ...    var target = null;
+    ...    var candidates = document.querySelectorAll('a, span, td, div');
+    ...    for (var i=0; i<candidates.length; i++){
+    ...        if (candidates[i].textContent.trim() === '${report_name}'){
+    ...            target = candidates[i];
+    ...            break;
+    ...        }
+    ...    }
+    ...    if(!target) return 'ROW_NOT_FOUND';
+    ...    var row = target.closest('tr');
+    ...    if(!row) return 'TR_NOT_FOUND';
+    ...    var checkbox = row.querySelector('input[type="checkbox"]');
+    ...    if(!checkbox){
+    ...        var firstCell = row.querySelector('td');
+    ...        if(firstCell){ checkbox = firstCell.querySelector('input, span, div'); }
+    ...    }
+    ...    if(!checkbox) return 'CHECKBOX_NOT_FOUND';
+    ...    if(checkbox.tagName === 'INPUT' && !checkbox.checked){
+    ...        checkbox.click();
+    ...    } else if (checkbox.tagName !== 'INPUT') {
+    ...        checkbox.click();
+    ...    }
+    ...    return 'OK';
+
+    Log To Console    ☑️ Select row status for '${report_name}': ${status}
+    Should Be Equal As Strings    ${status}    OK
+    ...    msg=Could not select checkbox for document '${report_name}' — got status: ${status}
+    Sleep    1s
+
+Deselect Document Row By Name
+    [Arguments]    ${report_name}
+    ${status}=    Execute Javascript
+    ...    var target = null;
+    ...    var candidates = document.querySelectorAll('a, span, td, div');
+    ...    for (var i=0; i<candidates.length; i++){
+    ...        if (candidates[i].textContent.trim() === '${report_name}'){
+    ...            target = candidates[i];
+    ...            break;
+    ...        }
+    ...    }
+    ...    if(!target) return 'ROW_NOT_FOUND';
+    ...    var row = target.closest('tr');
+    ...    if(!row) return 'TR_NOT_FOUND';
+    ...    var checkbox = row.querySelector('input[type="checkbox"]');
+    ...    if(!checkbox){
+    ...        var firstCell = row.querySelector('td');
+    ...        if(firstCell){ checkbox = firstCell.querySelector('input, span, div'); }
+    ...    }
+    ...    if(!checkbox) return 'CHECKBOX_NOT_FOUND';
+    ...    if(checkbox.tagName === 'INPUT' && checkbox.checked){
+    ...        checkbox.click();
+    ...    } else if (checkbox.tagName !== 'INPUT') {
+    ...        checkbox.click();
+    ...    }
+    ...    return 'OK';
+
+    Log To Console    ☐ Deselect row status for '${report_name}': ${status}
+    Sleep    1s
+
+Close Any Open Context Menu
+    Execute Javascript
+    ...    document.body.click();
+    Sleep    1s
+    Press Keys    NONE    ESCAPE
+    Sleep    1s
+
+Right Click Document Row And Open Send To
+    [Arguments]    ${report_name}
+
+    # Clean up any leftover menu from the previous file before starting
+    Close Any Open Context Menu
+
+    ${locator}=    Set Variable
+    ...    xpath=//*[normalize-space(text())='${report_name}']
+
+    Wait Until Element Is Visible    ${locator}    10s
+    Scroll Element Into View    ${locator}
+    ${row_element}=    Get WebElement    ${locator}
+
+    # Attempt 1: Selenium's native context menu (real right-click)
+    Open Context Menu    ${row_element}
+    Sleep    2s
+
+    # Tag the visible "Send To" element with a unique id we control
+    ${tag_result}=    Execute Javascript
+    ...    var candidates = document.querySelectorAll('*');
+    ...    var target = null;
+    ...    for (var i=0; i<candidates.length; i++){
+    ...        var txt = candidates[i].textContent.trim();
+    ...        if (txt === 'Send To' && candidates[i].offsetParent !== null){
+    ...            target = candidates[i];
+    ...            break;
+    ...        }
+    ...    }
+    ...    if(!target) return 'NOT_FOUND';
+    ...    var el = target;
+    ...    var safeguard = 0;
+    ...    while (el && safeguard < 6){
+    ...        var rect = el.getBoundingClientRect();
+    ...        if (rect.width > 0 && rect.height > 0){
+    ...            break;
+    ...        }
+    ...        el = el.parentElement;
+    ...        safeguard++;
+    ...    }
+    ...    if(!el) return 'NOT_FOUND';
+    ...    el.id = 'cv_send_to_target';
+    ...    return 'TAGGED';
+
+    Log To Console    📤 Send To tag result: ${tag_result}
+
+    # Attempt 2 (fallback): if native right-click didn't open the menu, dispatch contextmenu event via JS
+    IF    '${tag_result}' == 'NOT_FOUND'
+        Log To Console    ⚠️ Native right-click didn't reveal 'Send To', retrying with JS contextmenu event
+        Execute Javascript
+        ...    var target = null;
+        ...    var candidates = document.querySelectorAll('*');
+        ...    for (var i=0; i<candidates.length; i++){
+        ...        if (candidates[i].textContent.trim() === '${report_name}' && candidates[i].offsetParent !== null){
+        ...            target = candidates[i];
+        ...        }
+        ...    }
+        ...    if(target){
+        ...        var rect = target.getBoundingClientRect();
+        ...        var evt = new MouseEvent('contextmenu', {
+        ...            bubbles: true, cancelable: true, view: window,
+        ...            clientX: rect.left + 5, clientY: rect.top + 5, button: 2
+        ...        });
+        ...        target.dispatchEvent(evt);
+        ...    }
+        Sleep    2s
+
+        ${tag_result}=    Execute Javascript
+        ...    var candidates = document.querySelectorAll('*');
+        ...    var target = null;
+        ...    for (var i=0; i<candidates.length; i++){
+        ...        var txt = candidates[i].textContent.trim();
+        ...        if (txt === 'Send To' && candidates[i].offsetParent !== null){
+        ...            target = candidates[i];
+        ...            break;
+        ...        }
+        ...    }
+        ...    if(!target) return 'NOT_FOUND';
+        ...    var el = target;
+        ...    var safeguard = 0;
+        ...    while (el && safeguard < 6){
+        ...        var rect = el.getBoundingClientRect();
+        ...        if (rect.width > 0 && rect.height > 0){
+        ...            break;
+        ...        }
+        ...        el = el.parentElement;
+        ...        safeguard++;
+        ...    }
+        ...    if(!el) return 'NOT_FOUND';
+        ...    el.id = 'cv_send_to_target';
+        ...    return 'TAGGED';
+
+        Log To Console    📤 Send To tag result (retry): ${tag_result}
+    END
+
+    Should Be Equal As Strings    ${tag_result}    TAGGED
+    ...    msg=Could not find a visible 'Send To' menu item in the context menu for '${report_name}'
+
+    # Skip real mouse hover entirely (Edge WebDriver DPI/coordinate bug causes
+    # MoveTargetOutOfBoundsException regardless of element size/position).
+    # Instead, find "Generate Document link" directly in the DOM (even while
+    # hidden) and force every ancestor's CSS to make it visible — no hover needed.
+    ${force_result}=    Execute Javascript
+    ...    var candidates = document.querySelectorAll('*');
+    ...    var genLink = null;
+    ...    for (var i=0; i<candidates.length; i++){
+    ...        if (candidates[i].textContent.trim() === 'Generate Document link'
+    ...            && candidates[i].children.length === 0){
+    ...            genLink = candidates[i];
+    ...            break;
+    ...        }
+    ...    }
+    ...    if(!genLink) return 'GENLINK_NOT_FOUND';
+    ...    var el = genLink;
+    ...    var count = 0;
+    ...    while (el && count < 8){
+    ...        el.style.setProperty('display', 'block', 'important');
+    ...        el.style.setProperty('visibility', 'visible', 'important');
+    ...        el.style.setProperty('opacity', '1', 'important');
+    ...        el.style.setProperty('max-height', 'none', 'important');
+    ...        el.classList.remove('hidden');
+    ...        el.classList.remove('hide');
+    ...        el.classList.remove('collapsed');
+    ...        el = el.parentElement;
+    ...        count++;
+    ...    }
+    ...    genLink.id = 'cv_gen_doc_link_target';
+    ...    return 'FORCED';
+
+    Log To Console    🔓 Force-show Generate Document link result: ${force_result}
+
+    IF    '${force_result}' == 'GENLINK_NOT_FOUND'
+        Capture Page Screenshot    send_to_failure_${report_name}.png
+        ${html}=    Execute Javascript    return document.body.innerHTML;
+        Create File    ${EXECDIR}/send_to_failure_${report_name}.html    ${html}
+        Log    ⚠️ Dumped page HTML/screenshot for debugging: send_to_failure_${report_name}
+    END
+
+    Should Be Equal As Strings    ${force_result}    FORCED
+    ...    msg=Could not find/force-show 'Generate Document link' for '${report_name}'
+    Sleep    1s
+
+Click Generate Document Link
+    ${click_status}=    Execute Javascript
+    ...    var el = document.getElementById('cv_gen_doc_link_target');
+    ...    if(!el) return 'NOT_FOUND';
+    ...    el.click();
+    ...    return 'CLICKED';
+    Log To Console    🔗 Generate Document link click status: ${click_status}
+    Should Be Equal As Strings    ${click_status}    CLICKED
+    ...    msg=Could not click 'Generate Document link'
+    Sleep    2s
+
+Copy Generated Link And Close Popup
+    Wait Until Element Is Visible
+    ...    xpath=//*[contains(text(),'openDocumentLogin')] | //input[contains(@value,'openDocumentLogin')]    10s
+
+    ${doc_link}=    Execute Javascript
+    ...    var inputs = document.querySelectorAll('input, textarea');
+    ...    for (var i=0; i<inputs.length; i++){
+    ...        if (inputs[i].value && inputs[i].value.indexOf('openDocumentLogin') > -1){
+    ...            return inputs[i].value;
+    ...        }
+    ...    }
+    ...    var els = document.querySelectorAll('div, span, p, td');
+    ...    for (var j=0; j<els.length; j++){
+    ...        if (els[j].textContent && els[j].textContent.indexOf('openDocumentLogin') > -1){
+    ...            return els[j].textContent.trim();
+    ...        }
+    ...    }
+    ...    return 'NOT_FOUND';
+
+    Log To Console    🔗 Generated Link: ${doc_link}
+
+    ${ok_clicked}=    Run Keyword And Return Status
+    ...    Click Element    xpath=//button[normalize-space()='Ok']
+
+    IF    not ${ok_clicked}
+        Log To Console    ⚠️ Native click on 'Ok' failed — trying JS click
+        Execute Javascript
+        ...    var buttons = document.querySelectorAll('button');
+        ...    for (var i=0; i<buttons.length; i++){
+        ...        if (buttons[i].textContent.trim() === 'Ok' && buttons[i].offsetParent !== null){
+        ...            buttons[i].click();
+        ...            break;
+        ...        }
+        ...    }
+    END
+    Sleep    2s
+
+    [Return]    ${doc_link}
+
+Save File Name And Link To Excel
+    [Arguments]    ${file_name}    ${doc_link}
+    ${result}=    Run Process    python
+    ...    ${CURDIR}${/}dms_excel_writer.py
+    ...    ${file_name}    ${doc_link}    ${DMS_LINKS_EXCEL_PATH}
+    ...    stdout=PIPE    stderr=PIPE
+    Log    STDOUT: ${result.stdout}
+    Log    STDERR: ${result.stderr}
+    Log To Console    📊 Saved to Excel: ${file_name} → ${doc_link}
+
+Generate And Save Document Link
+    [Arguments]    ${excel_file_name}
+    # FIX: ${excel_file_name} carries the h{id}_ prefix (guaranteed-unique,
+    # used only for matching this row back to a history record in
+    # services/dms_links_import.py). Everything that has to match what's
+    # actually indexed/visible inside Contentverse -- the row lookup, the
+    # right-click target -- must use the STRIPPED name instead, since that
+    # (not the prefixed one) is what Index Each File typed into
+    # Contentverse's ReportName field. Only the Excel write uses the full,
+    # prefixed name.
+    ${display_name}=    Evaluate    __import__('re').sub(r'^h\d+_', '', '''${excel_file_name}''')
+    Select Document Row By Name    ${display_name}
+    Right Click Document Row And Open Send To    ${display_name}
+    Click Generate Document Link
+    ${doc_link}=    Copy Generated Link And Close Popup
+    Save File Name And Link To Excel    ${excel_file_name}    ${doc_link}
+    Deselect Document Row By Name    ${display_name}
+
+Process All Document Links
+    [Arguments]    @{report_names}
+    FOR    ${report_name}    IN    @{report_names}
+        Log To Console    ▶️ Processing link for: ${report_name}
+        Generate And Save Document Link    ${report_name}
+    END
+
 *** Test Cases ***
 Upload Consolidated PDFs To DMS Portal
     # Step 1: Login
@@ -585,10 +909,31 @@ Upload Consolidated PDFs To DMS Portal
 
         Select All And Index Files
         ${pending_files}=    Get List Of Pending Upload Files
+
+        # Build report names BEFORE moving files out of the staging folder --
+        # Move All Files To Uploaded Archive below empties this directory.
+        # ${report_names} stores the FULL h{id}_-prefixed name (used later
+        # for the Excel/DB-matching write in Generate And Save Document
+        # Link). ${display_name} -- the prefix stripped off -- is what
+        # actually gets typed into Contentverse's ReportName field here,
+        # so the client only ever sees invoice_vendorcode_date.
+        @{report_names}=    Create List
         FOR    ${invoice}    IN    @{pending_files}
             ${report_name}=    Evaluate    __import__('os').path.splitext('${invoice}')[0]
-            Index Each File    ${report_name}
+            ${display_name}=    Evaluate    __import__('re').sub(r'^h\d+_', '', '''${report_name}''')
+            Index Each File    ${display_name}
+            Append To List    ${report_names}    ${report_name}
         END
         Move All Files To Uploaded Archive
+
+        # Popup appears once, after all files are indexed -> click Navigate
+        # to return to folder view before generating links.
+        Click View On Document Created Popup
+
+        # v16: for every uploaded file, generate its Contentverse sharing
+        # link and append it to DMS_LINKS_EXCEL_PATH (services/
+        # dms_links_import.py picks these rows up afterward).
+        Process All Document Links    @{report_names}
+
         Log To Console    RESULT:DMS_UPLOAD_STATUS:SUCCESS
     END

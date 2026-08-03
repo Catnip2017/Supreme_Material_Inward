@@ -56,10 +56,18 @@ Execute PO Fetch
 Initialize SAP And Login
     Evaluate    __import__('dotenv').load_dotenv()
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
-    ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
-    ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
     ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
     ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
+
+    # v16: PO Fetch (ME23N line-item read) ALWAYS uses the shared spl_rpa
+    # .env account below -- unlike gate_in/migo_103/migo_105/miro/
+    # zgatein_update, this bot never checks for a per-user SAP_USER_OVERRIDE/
+    # SAP_PASS_OVERRIDE credential. It's a read-only PO lookup feeding
+    # MIGO's line items, not an attributable posting, so rf_runner.py
+    # deliberately never passes an override into this bot's environment --
+    # by client decision, not an oversight. See .env for the full comment.
+    ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
+    ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
 
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Sleep    2s
@@ -134,6 +142,13 @@ Fetch PO Line Items
 
         ${price_res}=    Run Keyword And Ignore Error    Get Value    ${price_path}
         ${price_raw}=    Clean SAP Value    ${price_res}[1]
+
+        # Diagnostic: log every value read for this row, per field, before
+        # it goes anywhere else -- makes it obvious in the console/log
+        # whether SAP actually returned something for material/qty (vs.
+        # them arriving blank at the SAP-read step itself) versus getting
+        # lost further down the pipeline (rf_runner parsing, DB save, etc).
+        Log To Console    Row ${row_idx} READ: material="${material}" short_text="${short_text}" qty="${qty_raw}" net_price="${price_raw}"
 
         &{row_data}=    Create Dictionary
         ...    material=${material}
@@ -246,6 +261,12 @@ Fetch PO Line Items
         END
 
         ${item_no}=    Evaluate    str(($i + 1) * 10)
+
+        # Diagnostic: log the final per-item values right before they're
+        # written into the JSON that RESULT:PO_DATA: carries out of this
+        # script -- this is the last point inside the robot where these
+        # values are still individual variables, not yet a JSON blob.
+        Log To Console    Item ${item_no} FINAL: material_code="${material}" short_text="${short_text}" qty="${qty_str}" rate="${price_str}" amount="${line_amount}" hsn_sac="${hsn}"
 
         ${json}=    Set Variable
         ...    {"item_no":"${item_no}","material_code":"${material}","short_text":"${short_text}","qty":"${qty_str}","rate":"${price_str}","amount":"${line_amount}","hsn_sac":"${hsn}"}

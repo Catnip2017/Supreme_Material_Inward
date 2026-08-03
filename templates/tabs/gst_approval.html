@@ -40,22 +40,9 @@
   text-transform:uppercase; letter-spacing:0.4px; margin-bottom:5px; }
 .gst-field-value { font-size:13px; color:#2c3e50; font-weight:500; }
 
-.gst-irn-input {
-  flex:1; min-width:0; padding:7px 10px; border:1.5px solid #e0e0e0;
-  border-radius:6px; font-size:13px; transition:border-color .2s;
-}
-.gst-irn-input:focus { outline:none; border-color:#1e5ca8; }
-.gst-irn-input:disabled { background:#f8f9fb; color:#666; cursor:not-allowed; }
-.gst-irn-save-btn {
-  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; border:none;
-  padding:7px 16px; border-radius:6px; font-size:12px; font-weight:600;
-  cursor:pointer; white-space:nowrap;
-}
-.gst-irn-save-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
-.gst-irn-save-btn:disabled { background:#ccc; cursor:not-allowed; transform:none; box-shadow:none; }
-.gst-irn-save-status { font-size:11px; margin-left:8px; font-weight:600; }
-.gst-irn-save-status.ok  { color:#1a7a3c; }
-.gst-irn-save-status.err { color:#c0392b; }
+/* IRN is now a read-only display here (editing moved to Extracted Data >
+   Invoice tab) -- .gst-field-value from the shared block styles above
+   handles its appearance, no dedicated input/save-button CSS needed. */
 
 /* Approval banner */
 .approval-banner { border-radius:10px; padding:14px 20px; margin-bottom:20px;
@@ -140,6 +127,7 @@
   padding:8px 18px; border-radius:6px; font-weight:600; cursor:pointer; margin-top:10px;
 }
 .gst-retry-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.gst-retry-btn:disabled { background:#b0bec5; cursor:not-allowed; transform:none; box-shadow:none; }
 
 /* Inline notification (replaces alert() popups) */
 .gst-inline-msg { display:none; border-radius:8px; padding:12px 16px; margin-bottom:14px;
@@ -230,12 +218,12 @@
       <div class="gst-field-row" style="margin-top:12px; margin-bottom:0;">
         <div class="gst-field-block">
           <div class="gst-field-label">IRN Number</div>
-          <div style="display:flex; align-items:center; gap:8px; margin-top:2px;">
-            <input type="text" id="gstIrnInput" class="gst-irn-input"
-                   value="{{ invoice_data.get('irn','') if invoice_data else '' }}">
-            <button id="gstIrnSaveBtn" class="gst-irn-save-btn" onclick="gstSaveIrn()">Save</button>
-          </div>
-          <span id="gstIrnSaveStatus" class="gst-irn-save-status"></span>
+          <!-- Read-only display -- IRN is now entered/edited on the
+               Extracted Data > Invoice tab (inv_irn) and saved via
+               saveExtractedInvoice(); this tab just mirrors whatever was
+               last saved there, sourced fresh from invoice_data on every
+               page load. No save action lives here anymore. -->
+          <div class="gst-field-value">{{ (invoice_data.get('irn') if invoice_data else '') or '—' }}</div>
         </div>
       </div>
     </div>
@@ -298,11 +286,16 @@
             title="Refresh status if the spinner is stuck — does not restart the bot">
       🔄 Refresh Status
     </button>
-    <button class="gst-retry-btn" onclick="gstRerun()"
+    <button class="gst-retry-btn" id="gstRerunBtn" onclick="gstRerun()"
             title="Restart full verification — use after correcting the GSTIN in Extracted Data tab">
       ↺ Re-run Verification
     </button>
   </div>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'gst' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
 
 </div>
 
@@ -348,19 +341,6 @@
   let _initialized = false;
   let _currentData = null;
 
-  /* ── IRN field: dirty tracking ────────────────────────────────────────
-     _irnDirty is set true only by an actual content-change event on the
-     input (typing/paste/delete) -- never by merely clicking/focusing it.
-     It is cleared only after a *confirmed* successful save. This flag
-     (a) blocks Approve while an edit is unsaved, per instruction, and
-     (b) would guard the field from being clobbered by the 5s poll --
-     though in practice the poll never rewrites this field's value at
-     all (IRN comes from invoice_data, not the gst_approval poll
-     payload), so (b) has no live value-overwrite to actually protect
-     against; the poll only toggles the field's disabled state via
-     approval_status, which is safe to update regardless of dirty state. */
-  let _irnDirty = false;
-
   /* ── Inline notification (replaces browser alert()) ─────────────────── */
   function _showMsg(text, type) {
     var el = document.getElementById('gstInlineMsg');
@@ -402,6 +382,18 @@
       .then(function (d) {
         if (d.status === 'checking') {
           _show('gstCheckingWrap');
+          /* A bot run is actively in progress -- disable Re-run so it can't
+             be clicked again mid-run (see api_gst_rerun()'s matching
+             is_running() guard in app.py, which now refuses a second
+             reset+trigger while one is already running; this just stops the
+             user from hitting that refusal in the first place). Re-enabled
+             in _renderResults() below, which only ever runs once status
+             is no longer 'checking'. */
+          var rerunBtn = document.getElementById('gstRerunBtn');
+          if (rerunBtn) {
+            rerunBtn.disabled = true;
+            rerunBtn.title = 'A GST check is already in progress — please wait for it to finish.';
+          }
           _pollTimer = setTimeout(_gstPoll, 5000);
           return;
         }
@@ -418,6 +410,18 @@
   /* ── Render ──────────────────────────────────────────────────────────── */
   function _renderResults(d) {
     _hide('gstCheckingWrap');
+
+    /* Re-enable Re-run unconditionally as soon as a run is no longer in
+       progress -- done here, before the hard-error early return below, so a
+       full bot failure (which returns early and never reaches
+       _renderBanner()'s own disable/enable logic) doesn't leave the button
+       stuck disabled forever. _renderBanner() below will still override this
+       back to disabled if the record turns out to be approved. */
+    var rerunBtn = document.getElementById('gstRerunBtn');
+    if (rerunBtn) {
+      rerunBtn.disabled = false;
+      rerunBtn.title = 'Restart full verification — use after correcting the GSTIN in Extracted Data tab';
+    }
 
     /* Hard error — both bots failed and no data at all */
     if (d.bot_error && !d.einvoice_status && !d.gstin_status) {
@@ -485,15 +489,18 @@
     var byStr = by ? ' by <strong>' + by + '</strong>' : '';
     var atStr = at ? ' on ' + at : '';
 
-    /* IRN field: editable through pending / checking / hold, locked only
-       once approval_status is actually 'approved'. Safe to set every poll
-       cycle regardless of _irnDirty -- this only touches the disabled
-       attribute, never the field's value. */
-    var irnInput = document.getElementById('gstIrnInput');
-    var irnBtn   = document.getElementById('gstIrnSaveBtn');
-    if (irnInput) {
-      irnInput.disabled = (status === 'approved');
-      if (irnBtn) irnBtn.disabled = (status === 'approved');
+    /* Re-run is permanently blocked server-side once approved (see
+       trigger_async()'s human-decision gate and api_gst_rerun()'s own check
+       in app.py) -- disable the button here too so it doesn't sit there
+       looking clickable only to be rejected. Safe to set on every poll
+       cycle regardless of status, same pattern as every other status-driven
+       UI toggle in this file. */
+    var rerunBtn = document.getElementById('gstRerunBtn');
+    if (rerunBtn) {
+      rerunBtn.disabled = (status === 'approved');
+      rerunBtn.title = (status === 'approved')
+        ? 'Record is approved -- re-run is permanently disabled.'
+        : 'Restart full verification — use after correcting the GSTIN in Extracted Data tab';
     }
 
     if (status === 'approved') {
@@ -523,13 +530,6 @@
 
   /* ── Actions ─────────────────────────────────────────────────────────── */
   window.gstApprove = function () {
-    /* Hard block -- an unsaved IRN edit must be saved (or reverted) before
-       approving. Hold is intentionally NOT blocked here: it doesn't lock
-       the field, so there's no risk of losing the edit by clicking Hold. */
-    if (_irnDirty) {
-      _showMsg('You have an unsaved IRN Number change. Please Save it before approving.', 'error');
-      return;
-    }
     fetch('/api/gst/approve/' + HISTORY_ID, { method: 'POST' })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -624,46 +624,6 @@
         _showMsg('Request failed: ' + e.message, 'error');
       });
   };
-
-  /* ── IRN save ────────────────────────────────────────────────────────── */
-  window.gstSaveIrn = function () {
-    var input   = document.getElementById('gstIrnInput');
-    var statusEl = document.getElementById('gstIrnSaveStatus');
-    var value   = input.value.trim();
-
-    fetch('/api/gst/save_irn/' + HISTORY_ID, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ irn: value })
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (d.success) {
-          _irnDirty = false;
-          statusEl.textContent = '✓ Saved';
-          statusEl.className = 'gst-irn-save-status ok';
-        } else {
-          statusEl.textContent = '❌ ' + (d.error || 'Save failed');
-          statusEl.className = 'gst-irn-save-status err';
-        }
-        clearTimeout(statusEl._timer);
-        statusEl._timer = setTimeout(function () { statusEl.textContent = ''; }, 5000);
-      })
-      .catch(function (e) {
-        statusEl.textContent = '❌ Network error';
-        statusEl.className = 'gst-irn-save-status err';
-      });
-  };
-
-  /* Dirty flag is set only by an actual content-change event (typing,
-     paste, delete) -- never by focus/click alone -- and cleared only
-     inside gstSaveIrn() above, on a *confirmed* successful save. */
-  (function () {
-    var irnInput = document.getElementById('gstIrnInput');
-    if (irnInput) {
-      irnInput.addEventListener('input', function () { _irnDirty = true; });
-    }
-  })();
 
   /* ── Helpers ─────────────────────────────────────────────────────────── */
   function _show(id) { document.getElementById(id).style.display = 'block'; }
