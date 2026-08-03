@@ -24,6 +24,26 @@ v5 changes (filename convention):
   today's processing date. This filename-derived value is used for
   file/folder naming ONLY -- invoice_data.invoice_number in the database
   still comes from OCR, unchanged.
+
+v13 changes (partial document scenarios -- see schema_migration_v13.sql):
+- A group no longer has to have all 3 doc types before it's processed.
+  It's processed once it is COMPLETE (all 3 present) OR once it has been
+  STABLE (no new files landing) for GROUP_GRACE_SECONDS with at least an
+  Invoice present. Invoice is always required -- it's the anchor document
+  every downstream tab keys off (buyer/seller/GSTIN, etc.); a group with
+  only an E-Way Bill and/or LR and no Invoice is left waiting indefinitely,
+  same as before.
+- Files whose filename suffix doesn't match INV/EWB/LR at all are no
+  longer silently skipped -- they're copied into the upload folder,
+  attached to the new history record via history_extras, and left out of
+  the rename/move step (they're not part of the OCR pipeline). Reviewers
+  see them under the "Extras" banner on the Extracted Data tab.
+- Missing E-Way Bill and/or LR is not an error condition any more --
+  gst_runner/rf_runner/map_ocr_to_* already tolerate empty
+  ewaybill_data/lr_data (see the None-safety audit before this change).
+  The Extracted Data tab prompts the reviewer for why the document is
+  missing (goods_delivery_mode / ewb_exemption_reasons) before Approve
+  is allowed.
 """
  
 import os
@@ -44,7 +64,8 @@ from database.migo_operations import upsert_migo_entry, map_ocr_to_migo
 from database.miro_operations import upsert_miro_entry, map_ocr_to_miro
 from services.extract import process_document
 from services.mail_service import send_ocr_failure_alert
- 
+from database.scenario_operations import add_history_extra
+
 logger = get_logger(__name__)
  
 WATCH_FOLDER     = os.getenv("WATCH_FOLDER", r"C:\material_inward\incoming")
@@ -55,6 +76,14 @@ FAILED_FOLDER    = os.path.join(os.path.dirname(WATCH_FOLDER), "failed")
 STABLE_SECONDS = 30      # File must be unmodified this long before being touched
 ORPHAN_DAYS    = 60      #Must match DB_RETENTION_DAYS in app.py cleanup
 POLL_INTERVAL  = 30      # Watcher cycle interval
+
+# v13: how long a group with at least an Invoice, but not all 3 doc types,
+# waits (with no new files landing) before it's treated as "this is a
+# partial-document scenario, not a straggler" and processed with whatever
+# it has. Same window as STABLE_SECONDS -- deliberately short, per client
+# decision, rather than a long separate grace window: a group that's gone
+# quiet for 30s is assumed final.
+GROUP_GRACE_SECONDS = STABLE_SECONDS
  
 # Uppercase suffix used when renaming files into ocr_done/ on success --
 # matches the incoming INVOICENO_<SUFFIX>.pdf convention, just re-applied
@@ -152,51 +181,110 @@ def _sweep_loose_files():
  
  
 # ============================================================
-# STEP 2: PROCESS GROUPS THAT HAVE ALL 3 DOCS
+# STEP 2: PROCESS GROUPS THAT ARE COMPLETE, OR STABLE-BUT-PARTIAL
 # ============================================================
- 
+
+def _group_last_activity(group_folder: str, filenames) -> float:
+    """Most recent mtime across every file in the group -- used to decide
+    whether a partial group has gone quiet long enough to process."""
+    latest = os.path.getmtime(group_folder)
+    for filename in filenames:
+        try:
+            latest = max(latest, os.path.getmtime(os.path.join(group_folder, filename)))
+        except OSError:
+            continue
+    return latest
+
+
 def _process_complete_groups():
-    """Find groups with all 3 docs present and stable, then run OCR."""
+    """
+    Find groups that are either complete (all 3 doc types) or, per v13,
+    stable-but-partial (at least Invoice present, no new files landing
+    for GROUP_GRACE_SECONDS) -- then run OCR on whatever's present.
+    Unrecognized-suffix files travel along as "extras" rather than being
+    silently skipped.
+    """
     if not os.path.exists(GROUPED_FOLDER):
         return
- 
+
     for group_key in os.listdir(GROUPED_FOLDER):
         group_folder = os.path.join(GROUPED_FOLDER, group_key)
         if not os.path.isdir(group_folder):
             continue
- 
-        # Map files in group by doc type
+
+        # Map recognized files by doc type; collect unrecognized ones as
+        # extras. Duplicate files of an already-seen type just overwrite
+        # in files_by_type (unchanged pre-v13 behavior) -- not treated as
+        # extras, per client instruction that extras means "unrecognized
+        # suffix only".
         files_by_type = {}
+        extra_files = []
+        all_names = []
         all_stable = True
- 
+
         for filename in os.listdir(group_folder):
             if not filename.lower().endswith(".pdf"):
                 continue
+            all_names.append(filename)
             file_path = os.path.join(group_folder, filename)
-            doc_type = _detect_doc_type(filename)
-            if not doc_type:
-                continue
-            files_by_type[doc_type] = file_path
             if not _is_stable(file_path):
                 all_stable = False
- 
-        # Require ALL 3 doc types
+            doc_type = _detect_doc_type(filename)
+            if doc_type:
+                files_by_type[doc_type] = file_path
+            else:
+                extra_files.append(file_path)
+
         if not all_stable:
+            continue  # something in the group is still being copied
+
+        complete = all(t in files_by_type for t in ["invoice", "ewaybill", "lr"])
+
+        if complete:
+            logger.info(f"Group ready for OCR (complete): {group_key}")
+            _process_batch(group_key, group_folder, files_by_type, extra_files)
             continue
-        if not all(t in files_by_type for t in ["invoice", "ewaybill", "lr"]):
+
+        # v13: not complete -- process anyway once it's an Invoice-anchored
+        # partial group that's gone quiet for GROUP_GRACE_SECONDS. A group
+        # with no Invoice at all still waits indefinitely, same as before,
+        # since Invoice is the anchor document every downstream tab and
+        # workflow step keys off.
+        if "invoice" not in files_by_type:
             continue
- 
-        logger.info(f"Group ready for OCR: {group_key}")
-        _process_batch(group_key, group_folder, files_by_type)
- 
- 
-def _process_batch(group_key: str, group_folder: str, files_by_type: dict):
+
+        last_activity = _group_last_activity(group_folder, all_names)
+        if time.time() - last_activity < GROUP_GRACE_SECONDS:
+            continue  # still might be waiting on a late-arriving doc
+
+        present = sorted(files_by_type.keys())
+        logger.info(f"Group ready for OCR (partial — {present}): {group_key}")
+        _process_batch(group_key, group_folder, files_by_type, extra_files)
+
+
+def _process_batch(group_key: str, group_folder: str, files_by_type: dict, extra_files: list = None):
     """Run OCR on a complete group, save to DB, move files appropriately."""
     history_id = create_history_record()
     if not history_id:
         logger.error(f"Failed to create history record for group: {group_key}")
         return
- 
+
+    # v13: copy unrecognized-suffix files into the record's uploads
+    # (view/download only, via /view_document & /download_document --
+    # same _find_file() lookup already used for invoice/eway/LR, no new
+    # route needed). Copied regardless of whether OCR below succeeds --
+    # the original stays in group_folder and travels with it either way
+    # (to ocr_done/ or failed/), this copy is purely for UI access.
+    for extra_path in (extra_files or []):
+        extra_filename = os.path.basename(extra_path)
+        safe_extra_name = f"h{history_id}_{extra_filename}"
+        try:
+            shutil.copy2(extra_path, os.path.join(config.UPLOAD_FOLDER, safe_extra_name))
+            add_history_extra(history_id, safe_extra_name, extra_filename)
+            logger.info(f"Extra file attached: {extra_filename} → history_id={history_id}")
+        except Exception as e:
+            logger.error(f"Failed to attach extra file {extra_filename} to history_id={history_id}: {e}")
+
     extracted = {"invoice": None, "ewaybill": None, "lr": None}
     ocr_succeeded = True
     error_detail = None

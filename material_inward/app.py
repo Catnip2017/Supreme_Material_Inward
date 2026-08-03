@@ -42,6 +42,11 @@ from database.db_operations import (
     set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
     set_dms_status, set_po_flow_type
 )
+from database.scenario_operations import (
+    get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
+    delivery_mode_remark_text, ewb_exemption_remark_text, append_remark,
+    DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS
+)
 from database.vehicle_master_operations import get_drivers_by_truck
 from database.supplier_operations import search_suppliers, get_supplier_by_code
 from database.gatein_operations import (
@@ -518,6 +523,11 @@ def view_detail(history_id):
 
         po_data = get_po_line_items(history_id)
 
+        # v13: files folder_watcher.py couldn't recognize as INV/EWB/LR --
+        # shown under the "Extras" banner on Extracted Data (view/download
+        # only, see /view_document & /download_document, doctype='extra').
+        history_extras = get_history_extras(history_id)
+
         # E-way Bill validity check — flags (does not block) an EWB whose
         # "Valid Upto" date has already passed as of today. validity_date is
         # already normalized to YYYY-MM-DD by services/extract.py, so this is
@@ -591,6 +601,7 @@ def view_detail(history_id):
             ewaybill_data=details.get("ewaybill_data"),
             ewb_expired=ewb_expired,
             lr_data=details.get("lr_data"),
+            history_extras=history_extras,
             gatein_data=gatein_data,
             migo_data=migo_data,
             invoice_line_items=invoice_line_items,
@@ -728,6 +739,81 @@ def save_extracted_lr(history_id):
 
 
 # ============================================================
+# v13: PARTIAL-DOCUMENT SCENARIOS — goods delivery mode / EWB exemption
+# reasons / extras. See database/scenario_operations.py and
+# schema_migration_v13.sql.
+# ============================================================
+
+@app.route("/api/save_delivery_mode/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_save_delivery_mode(history_id):
+    """
+    Set goods_delivery_mode -- required when the LR document is missing
+    (Invoice + E-Way Bill present, or Invoice only). Same edit gate as the
+    rest of Extracted Data (Compliance/SuperAdmin), and write-once: once
+    set, this cannot be changed (client instruction — no later editing).
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "pending") == "approved":
+        return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
+    if history.get("goods_delivery_mode"):
+        return jsonify({"success": False, "error": "Delivery mode already set — cannot be changed."}), 403
+
+    body = request.get_json(silent=True) or {}
+    mode = (body.get("mode") or "").strip()
+    if mode not in DELIVERY_MODE_LABELS:
+        return jsonify({"success": False, "error": "Invalid delivery mode."}), 400
+
+    if not set_goods_delivery_mode(history_id, mode, _current_user()):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    append_remark(history_id, delivery_mode_remark_text(mode), "compliance", _current_user())
+
+    return jsonify({"success": True, "mode": mode, "label": DELIVERY_MODE_LABELS[mode]})
+
+
+@app.route("/api/save_ewb_exemption/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_save_ewb_exemption(history_id):
+    """
+    Set ewb_exemption_reasons -- required when the E-Way Bill document is
+    missing (Invoice + LR present, or Invoice only). Multi-select; write-once
+    same as delivery mode above.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "pending") == "approved":
+        return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
+    if history.get("ewb_exemption_reasons"):
+        return jsonify({"success": False, "error": "Exemption reasons already set — cannot be changed."}), 403
+
+    body = request.get_json(silent=True) or {}
+    reasons = body.get("reasons") or []
+    if not isinstance(reasons, list) or not reasons or any(r not in EWB_EXEMPTION_LABELS for r in reasons):
+        return jsonify({"success": False, "error": "Select at least one valid exemption reason."}), 400
+
+    if not set_ewb_exemption_reasons(history_id, reasons, _current_user()):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    append_remark(history_id, ewb_exemption_remark_text(reasons), "compliance", _current_user())
+
+    return jsonify({
+        "success": True,
+        "reasons": reasons,
+        "labels": [EWB_EXEMPTION_LABELS[r] for r in reasons]
+    })
+
+
+# ============================================================
 # APPROVE / HOLD
 # ============================================================
 
@@ -740,6 +826,21 @@ def api_approve(history_id):
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
+
+    # v13: mirror the client-side block on the Extracted Data tab -- a
+    # record missing LR and/or E-Way Bill must have the corresponding
+    # picker answered before Approve, not just visually disabled. Doesn't
+    # apply once already approved (can't happen twice) or to records that
+    # never went through this route (e.g. legacy pre-v13 records where
+    # both docs are simply absent and neither column will ever be set --
+    # those are only reachable here if they have all 3 docs already).
+    details_for_gate = get_history_details_by_id(history_id)
+    has_eway = bool(details_for_gate.get("ewaybill_data"))
+    has_lr   = bool(details_for_gate.get("lr_data"))
+    if not has_lr and not history.get("goods_delivery_mode"):
+        return jsonify({"success": False, "error": "Select a goods delivery mode before approving — LR document is missing."}), 400
+    if not has_eway and not history.get("ewb_exemption_reasons"):
+        return jsonify({"success": False, "error": "Select an E-Way Bill exemption reason before approving — E-Way Bill is missing."}), 400
 
     if not set_approval_status(history_id, _current_user()):
         return jsonify({"success": False, "error": "Failed to approve"}), 500

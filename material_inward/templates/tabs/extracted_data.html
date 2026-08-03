@@ -131,6 +131,77 @@
   font-weight:600; font-size:14px; cursor:pointer; }
 .hold-cancel { background:#ecf0f1; color:#333; }
 .hold-confirm { background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
+
+/* v13: Extras banner + partial-document scenario panel */
+.extras-banner {
+  background:#fff8e6; border:1px solid #f0d58c; border-radius:8px;
+  padding:10px 16px; margin-bottom:16px; font-size:12px; color:#7a5c00;
+}
+.extras-banner-title { font-weight:700; margin-bottom:6px; }
+.extras-file-list { display:flex; flex-wrap:wrap; gap:8px; }
+.extras-file-chip {
+  background:white; border:1px solid #f0d58c; border-radius:6px;
+  padding:5px 10px; display:inline-flex; gap:8px; align-items:center;
+}
+.extras-file-chip a { color:#1e5ca8; text-decoration:none; font-weight:600; }
+.extras-file-chip a:hover { text-decoration:underline; }
+
+.scenario-panel {
+  background:#f7f9ff; border:1.5px solid #c5d8f8; border-radius:10px;
+  padding:16px 20px; margin-bottom:20px;
+}
+.scenario-block { margin-bottom:14px; }
+.scenario-block:last-child { margin-bottom:0; }
+.scenario-title { font-weight:700; color:#1e5ca8; font-size:13px; margin-bottom:4px; }
+.scenario-subtitle { font-size:12px; color:#666; margin-bottom:10px; }
+.scenario-options { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.scenario-option {
+  background:white; border:1.5px solid #d5deee; border-radius:8px;
+  padding:8px 16px; font-size:13px; font-weight:600; color:#444;
+  cursor:pointer; user-select:none; transition:.15s;
+}
+.scenario-option:hover { border-color:#1e5ca8; }
+.scenario-option.selected {
+  border-color:#1e5ca8; background:#e8f0fe; color:#1e5ca8;
+}
+.scenario-option input { display:none; }
+.scenario-save-btn {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; border:none;
+  padding:9px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;
+}
+.scenario-save-btn:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.scenario-save-btn:disabled { background:#ccc; cursor:not-allowed; }
+.scenario-status { font-size:12px; font-weight:600; margin-left:10px; }
+.scenario-status.ok { color:#1a7a3c; }
+.scenario-status.err { color:#c0392b; }
+.scenario-locked {
+  background:#ecfdf5; border:1px solid #00b894; border-radius:8px;
+  padding:10px 14px; font-size:12px; color:#1a7a3c; display:flex;
+  align-items:center; gap:8px;
+}
+
+/* Courier confirm modal — same visual language as the Approve/Hold modals */
+.courier-modal {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.6); z-index:10000;
+  align-items:center; justify-content:center;
+}
+.courier-modal.show { display:flex; }
+.courier-box {
+  background:white; border-radius:12px; padding:30px;
+  width:90%; max-width:460px; text-align:center;
+  box-shadow:0 8px 32px rgba(0,0,0,0.2);
+}
+.courier-box h3 { color:#1e5ca8; margin-bottom:10px; }
+.courier-box p { color:#555; font-size:13px; margin-bottom:22px; }
+.courier-box-actions { display:flex; gap:10px; }
+.courier-box-actions button { flex:1; padding:12px; border:none; border-radius:8px;
+  font-weight:600; font-size:14px; cursor:pointer; transition:.2s; }
+.courier-box-cancel { background:#ecf0f1; color:#333; }
+.courier-box-cancel:hover { background:#d5dbdc; }
+.courier-box-confirm {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
+.courier-box-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
 </style>
 
 <div class="content-card">
@@ -207,6 +278,82 @@
   </div>
   {% endif %}
 
+  <!-- v13: Extras banner — files folder_watcher.py couldn't recognize as
+       Invoice/E-Way Bill/LR (unrecognized filename suffix). View/download
+       only, no other action. -->
+  {% if history_extras %}
+  <div class="extras-banner">
+    <div class="extras-banner-title">📎 Extras — {{ history_extras|length }} unrecognized file{{ 's' if history_extras|length != 1 else '' }} from intake</div>
+    <div class="extras-file-list">
+      {% for extra in history_extras %}
+      <span class="extras-file-chip">
+        📄 {{ extra.original_filename or extra.filename }}
+        <a href="{{ url_for('view_document', doctype='extra', filename=extra.filename) }}" target="_blank">View</a>
+        <a href="{{ url_for('download_document', doctype='extra', filename=extra.filename) }}">Download</a>
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- v13: partial-document scenario panel. Shown above the sub-tabs
+       (rather than pinned to whichever sub-tab happens to be "last") so
+       it's visible no matter which sub-tab the reviewer is on -- there's
+       only ever one real Approve button in the DOM at a time regardless
+       (see last_doc below), so blocking that one button has the same
+       effect either way. Once answered, goods_delivery_mode /
+       ewb_exemption_reasons are permanent -- the panel switches to a
+       locked summary instead of the picker. -->
+  {% set need_delivery_mode = invoice_data and not lr_data %}
+  {% set need_ewb_exemption = invoice_data and not ewaybill_data %}
+  {% if (need_delivery_mode or need_ewb_exemption) and can_edit_extracted %}
+  <div class="scenario-panel" id="scenarioPanel">
+
+    {% if need_delivery_mode %}
+    <div class="scenario-block">
+      {% if history.goods_delivery_mode %}
+      <div class="scenario-locked">✓ <strong>Goods Delivery Mode:</strong> {{ {'utility_van':'Utility Van','vendor_vehicle':"Vendor Own Vehicle",'hand_delivery':'Hand Delivery','courier':'Courier'}.get(history.goods_delivery_mode, history.goods_delivery_mode) }} — locked</div>
+      {% else %}
+      <div class="scenario-title">🚚 Goods Delivery Mode Required</div>
+      <div class="scenario-subtitle">No LR (Lorry Receipt) was received for this record. Select how the goods actually arrived — this cannot be changed once saved.</div>
+      <div class="scenario-options" id="deliveryModeOptions">
+        <label class="scenario-option" data-value="utility_van"><input type="radio" name="deliveryMode" value="utility_van">Utility Van</label>
+        <label class="scenario-option" data-value="vendor_vehicle"><input type="radio" name="deliveryMode" value="vendor_vehicle">Vendor Own Vehicle</label>
+        <label class="scenario-option" data-value="hand_delivery"><input type="radio" name="deliveryMode" value="hand_delivery">Hand Delivery</label>
+        <label class="scenario-option" data-value="courier"><input type="radio" name="deliveryMode" value="courier">Courier</label>
+      </div>
+      <button type="button" class="scenario-save-btn" id="deliveryModeSaveBtn" onclick="saveDeliveryMode()" disabled>💾 Save Delivery Mode</button>
+      <span class="scenario-status" id="deliveryModeStatus"></span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if need_ewb_exemption %}
+    <div class="scenario-block">
+      {% if history.ewb_exemption_reasons %}
+      {% set _labels = {'value_exemption':'Value Exemption','distance_exemption':'Distance Exemption','other_exemption':'Other Exemptions'} %}
+      {% set _parts = [] %}
+      {% for _r in history.ewb_exemption_reasons.split(',') %}
+        {% set _ = _parts.append(_labels.get(_r.strip(), _r.strip())) %}
+      {% endfor %}
+      <div class="scenario-locked">✓ <strong>E-Way Bill Exemption:</strong> {{ _parts|join(', ') }} — locked</div>
+      {% else %}
+      <div class="scenario-title">📋 E-Way Bill Exemption Reason Required</div>
+      <div class="scenario-subtitle">No E-Way Bill was received for this record. Select why — one or more may apply. This cannot be changed once saved.</div>
+      <div class="scenario-options" id="ewbExemptionOptions">
+        <label class="scenario-option" data-value="value_exemption"><input type="checkbox" name="ewbExemption" value="value_exemption">Value Exemption</label>
+        <label class="scenario-option" data-value="distance_exemption"><input type="checkbox" name="ewbExemption" value="distance_exemption">Distance Exemption</label>
+        <label class="scenario-option" data-value="other_exemption"><input type="checkbox" name="ewbExemption" value="other_exemption">Other Exemptions</label>
+      </div>
+      <button type="button" class="scenario-save-btn" id="ewbExemptionSaveBtn" onclick="saveEwbExemption()" disabled>💾 Save Exemption Reason(s)</button>
+      <span class="scenario-status" id="ewbExemptionStatus"></span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+  </div>
+  {% endif %}
+
   {% if history %}
 <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#4a5568;">
   <strong>Status:</strong>
@@ -247,8 +394,8 @@
       {% if ewaybill_data %}
         <button class="tab-button {% if not invoice_data %}active{% endif %}" onclick="switchDataTab('ewaybill')">E-Way Bill Data</button>
       {% endif %}
-      {% if lr_data %}
-        <button class="tab-button {% if not invoice_data and not ewaybill_data %}active{% endif %}" onclick="switchDataTab('lr')">LR Data</button>
+      {% if lr_data or history.goods_delivery_mode == 'courier' %}
+        <button class="tab-button {% if not invoice_data and not ewaybill_data %}active{% endif %}" onclick="switchDataTab('lr')">LR Data{% if not lr_data %} (Manual Entry){% endif %}</button>
       {% endif %}
     </div>
 
@@ -628,25 +775,32 @@
     {% endif %}
 
     <!-- ============================ LR DATA ============================ -->
-    {% if lr_data %}
+    {% if lr_data or history.goods_delivery_mode == 'courier' %}
+    {% set lr = lr_data or {} %}
     <div id="lrData" class="tab-content {% if not invoice_data and not ewaybill_data %}active{% endif %}">
       <div class="data-display">
         <input type="hidden" id="lr_history_id" value="{{ history_id }}">
+
+        {% if not lr_data %}
+        <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#4a5568;">
+          ✍️ <strong>Manual Entry</strong> — no LR document was scanned for this record (Courier delivery). Fill in the LR details below from the courier's consignment note.
+        </div>
+        {% endif %}
 
         <div class="section-card">
           <div class="section-title">📋 Lorry Receipt Information</div>
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">LR Number</div>
-              <input class="editable-input" id="lr_lr_number" value="{{ lr_data.get('lr_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_lr_number" value="{{ lr.get('lr_number','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">LR Date</div>
-              <input class="editable-input" id="lr_lr_date" type="date" value="{{ lr_data.get('lr_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_lr_date" type="date" value="{{ lr.get('lr_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
-              <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ lr_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ lr.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -656,23 +810,23 @@
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Consignor Name</div>
-              <input class="editable-input" id="lr_consignor_name" value="{{ lr_data.get('consignor_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_consignor_name" value="{{ lr.get('consignor_name','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Consignee Name</div>
-              <input class="editable-input" id="lr_consignee_name" value="{{ lr_data.get('consignee_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_consignee_name" value="{{ lr.get('consignee_name','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Material Description</div>
-              <input class="editable-input" id="lr_material_description" value="{{ lr_data.get('material_description','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_material_description" value="{{ lr.get('material_description','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Quantity</div>
-              <input class="editable-input" id="lr_quantity" value="{{ lr_data.get('quantity','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_quantity" value="{{ lr.get('quantity','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Weight</div>
-              <input class="editable-input" id="lr_weight" value="{{ lr_data.get('weight','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_weight" value="{{ lr.get('weight','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -682,19 +836,19 @@
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">From Location</div>
-              <input class="editable-input" id="lr_from_location" value="{{ lr_data.get('from_location','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_from_location" value="{{ lr.get('from_location','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">To Location</div>
-              <input class="editable-input" id="lr_to_location" value="{{ lr_data.get('to_location','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_to_location" value="{{ lr.get('to_location','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Delivery Address</div>
-              <input class="editable-input" id="lr_delivery_address" value="{{ lr_data.get('delivery_address') or '' }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_delivery_address" value="{{ lr.get('delivery_address') or '' }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
-              <input class="editable-input" id="lr_transporter_name" value="{{ lr_data.get('transporter_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_transporter_name" value="{{ lr.get('transporter_name','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -713,8 +867,8 @@
           <span class="save-status" id="lrSaveStatus"></span>
             {% endif %}
           {% endif %}
-          {% if lr_data.get('filename') %}
-          <a href="{{ url_for('view_document', doctype='lr', filename=lr_data['filename']) }}" target="_blank"
+          {% if lr.get('filename') %}
+          <a href="{{ url_for('view_document', doctype='lr', filename=lr['filename']) }}" target="_blank"
              style="background:#f0f4ff;color:#1e5ca8;border:1px solid #c5d8f8;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
             📄 View Original LR
           </a>
@@ -750,6 +904,18 @@
   </div>
 </div>
 
+<!-- Courier confirm modal (v13) -->
+<div class="courier-modal" id="courierModal">
+  <div class="courier-box">
+    <h3>🚚 Confirm Courier Delivery</h3>
+    <p>Choosing <strong>Courier</strong> will make the LR tab active so you can fill in the courier's consignment note by hand. This choice cannot be changed once saved. Continue?</p>
+    <div class="courier-box-actions">
+      <button class="courier-box-cancel" onclick="closeCourierModal()">Cancel</button>
+      <button class="courier-box-confirm" onclick="_doSaveDeliveryMode('courier')">Yes, Use Courier</button>
+    </div>
+  </div>
+</div>
+
 <!-- Hold modal -->
 <div class="hold-modal" id="holdModal">
   <div class="hold-box">
@@ -766,6 +932,12 @@
 <script>
 const HISTORY_ID = {{ history_id|tojson }};
 const IS_APPROVED = {{ 'true' if is_approved else 'false' }};
+// v13: partial-document scenario gating -- see scenario-panel above.
+// NEED_* is true only while the corresponding picker hasn't been answered
+// yet (the template hides the picker and shows a locked summary once it
+// has, so these mirror what's actually still outstanding).
+const NEED_DELIVERY_MODE = {{ 'true' if (need_delivery_mode and not history.goods_delivery_mode) else 'false' }};
+const NEED_EWB_EXEMPTION = {{ 'true' if (need_ewb_exemption and not history.ewb_exemption_reasons) else 'false' }};
 // Sequential Invoice -> E-way -> LR flow -- only lists documents that
 // actually exist for this record (see doc_order in the template above).
 const DOC_ORDER = {{ doc_order|tojson }};
@@ -997,9 +1169,119 @@ function _collectInvHsn() {
 }
 
 // ============================================================
+// v13: Partial-document scenario pickers (Goods Delivery Mode / E-Way
+// Bill Exemption Reasons). Selection just highlights an option -- the
+// actual DB write (and Remarks auto-text) happens on Save, since both
+// are permanent/write-once and shouldn't fire on a stray click.
+// ============================================================
+(function () {
+  function wireOptionGroup(containerId, saveBtnId, multi) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.querySelectorAll('.scenario-option').forEach(function (label) {
+      label.addEventListener('click', function () {
+        const input = label.querySelector('input');
+        if (multi) {
+          input.checked = !input.checked;
+          label.classList.toggle('selected', input.checked);
+        } else {
+          container.querySelectorAll('.scenario-option').forEach(function (l) { l.classList.remove('selected'); });
+          input.checked = true;
+          label.classList.add('selected');
+        }
+        const anyChecked = !!container.querySelector('input:checked');
+        const btn = document.getElementById(saveBtnId);
+        if (btn) btn.disabled = !anyChecked;
+      });
+    });
+  }
+  wireOptionGroup('deliveryModeOptions', 'deliveryModeSaveBtn', false);
+  wireOptionGroup('ewbExemptionOptions', 'ewbExemptionSaveBtn', true);
+})();
+
+function saveDeliveryMode() {
+  const checked = document.querySelector('#deliveryModeOptions input:checked');
+  if (!checked) return;
+  if (checked.value === 'courier') {
+    document.getElementById('courierModal').classList.add('show');
+    return;
+  }
+  _doSaveDeliveryMode(checked.value);
+}
+
+function closeCourierModal() {
+  document.getElementById('courierModal').classList.remove('show');
+}
+
+async function _doSaveDeliveryMode(mode) {
+  closeCourierModal();
+  const btn = document.getElementById('deliveryModeSaveBtn');
+  const status = document.getElementById('deliveryModeStatus');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/save_delivery_mode/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: mode })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✓ Delivery mode saved: ' + data.label, 'success');
+      // Reload so the panel switches to its locked summary, the LR tab
+      // appears if Courier was chosen, and NEED_DELIVERY_MODE clears --
+      // simplest way to keep every dependent piece of the page in sync.
+      window.location.reload();
+    } else {
+      if (status) { status.textContent = '❌ ' + (data.error || 'Save failed'); status.className = 'scenario-status err'; }
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    if (status) { status.textContent = '❌ Network error'; status.className = 'scenario-status err'; }
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function saveEwbExemption() {
+  const checked = Array.from(document.querySelectorAll('#ewbExemptionOptions input:checked')).map(function (i) { return i.value; });
+  if (!checked.length) return;
+  const btn = document.getElementById('ewbExemptionSaveBtn');
+  const status = document.getElementById('ewbExemptionStatus');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/save_ewb_exemption/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reasons: checked })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✓ Exemption reason(s) saved: ' + data.labels.join(', '), 'success');
+      window.location.reload();
+    } else {
+      if (status) { status.textContent = '❌ ' + (data.error || 'Save failed'); status.className = 'scenario-status err'; }
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    if (status) { status.textContent = '❌ Network error'; status.className = 'scenario-status err'; }
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ============================================================
 // Approve / Hold / Re-run OCR
 // ============================================================
 function approveRecord() {
+  // v13: block the one real Approve button in the DOM (whichever sub-tab
+  // it's rendered on -- see last_doc) until every outstanding scenario
+  // picker for this record has been answered and saved.
+  if (NEED_DELIVERY_MODE) {
+    showToast('❌ Select a Goods Delivery Mode above before approving — LR document is missing.', 'error');
+    return;
+  }
+  if (NEED_EWB_EXEMPTION) {
+    showToast('❌ Select an E-Way Bill Exemption reason above before approving — E-Way Bill is missing.', 'error');
+    return;
+  }
   document.getElementById('approveModal').classList.add('show');
 }
 
