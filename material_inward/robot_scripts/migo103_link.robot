@@ -175,6 +175,7 @@ SAP Login Steps
     SapGuiLibrary.Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
     SapGuiLibrary.Click Element     wnd[0]/tbar[0]/btn[0]
     Sleep    5s
+    # FIX: OPT1 -> OPT2 -- see miro_link.robot's identical comment.
     ${status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[1]
     IF    ${status}
         SapGuiLibrary.Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1

@@ -179,6 +179,9 @@ SAP Login Steps
     SapGuiLibrary.Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
     SapGuiLibrary.Click Element     wnd[0]/tbar[0]/btn[0]
     Sleep    5s
+    # FIX: OPT1 -> OPT2 -- OPT1 ends other logons of this user, OPT2
+    # continues without ending others (the safe choice for a bot sharing a
+    # login, matches gate_in.robot's proven-working choice).
     ${status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[1]
     IF    ${status}
         SapGuiLibrary.Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1

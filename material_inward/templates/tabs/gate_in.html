@@ -165,8 +165,8 @@
       <div class="form-row">
         <div class="form-group driver-dropdown-wrap">
           <label>Vendor Name <span class="req">*</span>
-            <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
-              Type to search, or click Fetch — selecting a match replaces this with the SAP vendor code
+            <span style="font-size:11px;color:#e17055;font-weight:600;margin-left:6px;">
+              ❗ Click Fetch for vendor code
             </span>
           </label>
           <div class="vehicle-lookup-row">
@@ -233,8 +233,8 @@
       <div class="form-row">
         <div class="form-group driver-dropdown-wrap">
           <label>Vendor Name <span class="req">*</span>
-            <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
-              Type to search, or click Fetch — selecting a match replaces this with the SAP vendor code
+            <span style="font-size:11px;color:#e17055;font-weight:600;margin-left:6px;">
+              ❗ Click Fetch for vendor code
             </span>
           </label>
           <div class="vehicle-lookup-row">
@@ -267,7 +267,7 @@
         <div class="field-error-msg" id="err_driverName">Required</div>
       </div>
       <div class="form-group">
-        <label>No. of Persons</label>
+        <label>No. of Persons <span style="font-size:11px;color:#e17055;font-weight:600;">❗ Default is 1</span></label>
         <input type="number" id="numPersons" class="form-input"
                value="{{ (gatein_data.get('num_persons') if gatein_data else '1') or '1' }}"
                min="1" max="99" {% if gate_in_locked %}disabled{% endif %}>
@@ -410,7 +410,7 @@
 
     <div class="action-buttons">
       <button type="submit" id="gateInSubmitBtn" class="btn btn-primary"
-              {% if history and history.gate_in %}style="background:#00b894;"{% endif %}>
+              {% if history and history.gate_in %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.gate_in %}✓ Gate In Done (GIN: {{ history.gate_in_number }}){% else %}💾 Save & Post Gate In{% endif %}
       </button>
       <button type="button" class="btn btn-secondary" onclick="clearGateInForm()" {% if gate_in_locked %}disabled{% endif %}>🔄 Clear Form</button>
@@ -435,7 +435,18 @@ const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
 // server. That's why toggling ENABLE_STEP_LOCKS in .env appeared to do
 // nothing: the server-side bypass (app.py _check_step_allowed) was correct
 // all along, the request just never got there.
-const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+// v20 FIX: this was named plain STEP_LOCKS_ENABLED, and migo_103.html/
+// migo_105.html/miro.html each independently declared their OWN const of
+// that exact same name to fix the identical bug in their own file. Since
+// all four tabs render on one page in one shared global scope (see
+// index.html -- they're all server-side Jinja-included together, not
+// lazy-loaded separately), a second `const` with the same name is a
+// SyntaxError the moment the browser parses it -- which silently killed
+// the ENTIRE script block of whichever tab's <script> ran second (migo_103
+// in DOM order), taking down every function in it (openCompareModal,
+// addInvoiceRow, onInvPairClick, the matching logic, all of it), not just
+// the step-lock check. Renamed per-tab so they can never collide again.
+const STEP_LOCKS_ENABLED_GATEIN = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 
 (function() {
@@ -642,7 +653,7 @@ function validateGateIn() {
 
 document.getElementById('gateInForm').addEventListener('submit', function(e) {
   e.preventDefault();
-  if (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED) {
+  if (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED_GATEIN) {
     showToast('⏸ Record must be approved before Gate In can be posted.', 'warning');
     return;
   }
@@ -715,6 +726,20 @@ function _doSubmitGateIn(historyId) {
       statusEl.textContent   = `✓ Gate In posted! Gate In Number: ${result.gate_in_number || '—'}`;
       btn.textContent        = `✓ Gate In Done (GIN: ${result.gate_in_number || ''})`;
       btn.style.background   = '#00b894';
+      // FIX: submitAndPoll()/pollRFJob() re-enable the button once the job
+      // finishes (needed so a FAILED post can be retried) -- but that meant
+      // a SUCCESSFUL post left the button clickable again with nothing
+      // stopping a second submission. Disable it permanently here; a page
+      // reload also now renders it disabled from the start (see the
+      // {% if history.gate_in %}disabled{% endif %} above). Server-side
+      // guard is _check_step_allowed() in app.py either way.
+      btn.disabled = true;
+      // FIX: other tabs (e.g. MIGO 103's Header Text/Vendor Name, which
+      // come from this Gate In result) were staying stale until a manual
+      // page reload -- auto-reload so every tab picks up fresh data, and
+      // restore this tab afterward (see main.js's DOMContentLoaded hook).
+      sessionStorage.setItem('mi_reload_tab', 'gateIn');
+      setTimeout(() => window.location.reload(), 1800);
     },
     onFailure: (error) => {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';

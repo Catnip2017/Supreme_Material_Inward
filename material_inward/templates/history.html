@@ -123,6 +123,8 @@
         .status-miro     { background:linear-gradient(135deg,#55efc4,#00b894); color:white; }
         .status-migo     { background:linear-gradient(135deg,#a29bfe,#6c5ce7); color:white; }
         .status-gate-in  { background:linear-gradient(135deg,#74b9ff,#0984e3); color:white; }
+        .status-data-approved { background:linear-gradient(135deg,#ffd3a5,#fd9853); color:white; }
+        .status-gst-approved  { background:linear-gradient(135deg,#a1c4fd,#4a7ee0); color:white; }
 
         .view-btn {
             display:inline-flex; align-items:center; gap:6px;
@@ -272,6 +274,8 @@
             <select class="filter-select" id="statusFilter" onchange="loadHistory()">
                 <option value="">All Status</option>
                 <option value="pending">Pending</option>
+                <option value="data_approved">Data Approved</option>
+                <option value="gst_approved">GST Approved</option>
                 <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>
             </select>
@@ -294,6 +298,7 @@
         <table>
             <thead>
                 <tr>
+                    <th>ID</th>
                     <th>Invoice No</th>
                     <th>Vendor Name</th>
                     <th>Vehicle Number</th>
@@ -305,7 +310,7 @@
                 </tr>
             </thead>
             <tbody id="historyTableBody">
-                <tr class="loading-row"><td colspan="8">Loading...</td></tr>
+                <tr class="loading-row"><td colspan="9">Loading...</td></tr>
             </tbody>
         </table>
         <div class="pagination" id="paginationBar"></div>
@@ -343,7 +348,7 @@ function loadHistory(page) {
     });
 
     const tbody = document.getElementById('historyTableBody');
-    tbody.innerHTML = '<tr class="loading-row"><td colspan="8">⏳ Loading...</td></tr>';
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="9">⏳ Loading...</td></tr>';
 
     fetch('/api/history_search?' + params)
         .then(r => {
@@ -356,7 +361,7 @@ function loadHistory(page) {
             renderPagination(data.page, data.total_pages, data.total);
         })
         .catch(err => {
-            tbody.innerHTML = '<tr class="loading-row"><td colspan="8">Error loading records.</td></tr>';
+            tbody.innerHTML = '<tr class="loading-row"><td colspan="9">Error loading records.</td></tr>';
         });
 }
 
@@ -364,7 +369,7 @@ function renderTable(records) {
     const tbody = document.getElementById('historyTableBody');
     if (!records || records.length === 0) {
         tbody.innerHTML = `
-            <tr><td colspan="8">
+            <tr><td colspan="9">
                 <div class="empty-state">
                     <div class="empty-state-icon">📂</div>
                     <p>No records found</p>
@@ -390,6 +395,7 @@ function renderTable(records) {
             : (val || '-');
         return `
         <tr${isProcessing ? ' class="history-row-processing" data-history-id="' + r.id + '"' : ''}>
+            <td>${r.id}</td>
             <td>${cell(r.invoice_number)}</td>
             <td>${cell(r.vendor_name)}</td>
             <td>${cell(r.vehicle_number)}</td>
@@ -404,7 +410,7 @@ function renderTable(records) {
             <td><a href="/view/${r.id}" class="view-btn"><i class="fas fa-eye"></i> View</a></td>
         </tr>
         <tr id="${rowId}" class="step-times-row" style="display:none;">
-            <td colspan="8">${renderStepTimes(r)}</td>
+            <td colspan="9">${renderStepTimes(r)}</td>
         </tr>`;
     }).join('');
 
@@ -449,10 +455,12 @@ function formatStepTime(iso) {
 
 function renderStepTimes(r) {
     const steps = [
-        { label: 'Gate In',   iso: r.gatein_done_at },
-        { label: 'MIGO 103',  iso: r.migo_103_done_at },
-        { label: 'MIGO 105',  iso: r.migo_105_done_at },
-        { label: 'MIRO',      iso: r.miro_done_at },
+        { label: 'Data Approved', iso: r.approval_at },
+        { label: 'GST Approved',  iso: r.gst_check_done_at },
+        { label: 'Gate In',       iso: r.gatein_done_at },
+        { label: 'MIGO 103',      iso: r.migo_103_done_at },
+        { label: 'MIGO 105',      iso: r.migo_105_done_at },
+        { label: 'MIRO',          iso: r.miro_done_at },
     ];
     return `
         <div class="step-times-panel">
@@ -472,6 +480,8 @@ function getStatusBadge(status) {
         'MIGO 105 Done': '<span class="status-badge status-migo">✓ MIGO 105 Done</span>',
         'MIGO 103 Done': '<span class="status-badge status-migo">✓ MIGO 103 Done</span>',
         'Gate In Done':  '<span class="status-badge status-gate-in">✓ Gate In Done</span>',
+        'GST Approved':  '<span class="status-badge status-gst-approved">✓ GST Approved</span>',
+        'Data Approved': '<span class="status-badge status-data-approved">✓ Data Approved</span>',
         'Pending':       '<span class="status-badge status-pending">⏳ Pending</span>',
     };
     return map[status] || '<span class="status-badge status-pending">⏳ Pending</span>';

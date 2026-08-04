@@ -165,6 +165,36 @@
       line-height:1;
     }
     .app-toast-close:hover { opacity:1; }
+
+    /* ── v20: persistent SAP posting-result panel ────────────────────────
+       Separate from the toast system above on purpose: toasts auto-dismiss
+       after 5s and sit bottom-right; the numbers here (GIN / Material Doc /
+       MIRO Doc) are ones the user actually needs to note down, and on a
+       long form the inline in-page status banner is easy to miss if
+       they've already scrolled away from the submit button. Fixed
+       bottom-left, stays until manually dismissed. */
+    #stickyResultPanel {
+      position:fixed; bottom:20px; left:20px; z-index:99998;
+      display:flex; flex-direction:column; gap:10px;
+      max-width:340px; pointer-events:none;
+    }
+    .sticky-result-card {
+      background:#ffffff; border:1px solid #bfe8d9; border-left:4px solid #00b894;
+      border-radius:10px; padding:14px 16px;
+      box-shadow:0 6px 24px rgba(0,0,0,0.18);
+      font-size:13px; animation:toastIn .25s ease; pointer-events:auto;
+    }
+    .sticky-result-card .src-title {
+      font-weight:700; color:#1a7a3c; margin-bottom:6px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+    }
+    .sticky-result-card .src-close {
+      cursor:pointer; opacity:.5; font-size:14px; background:none; border:none;
+      line-height:1; flex-shrink:0;
+    }
+    .sticky-result-card .src-close:hover { opacity:1; }
+    .sticky-result-card .src-line { color:#2c3e50; line-height:1.7; }
+    .sticky-result-card .src-line b { color:#1e5ca8; }
   </style>
 </head>
 <body>
@@ -436,6 +466,28 @@ function showToast(msg, type) {
   setTimeout(function () { if (toast.parentNode) { toast.remove(); } }, 5000);
 }
 
+// v20: persistent bottom-left panel for SAP posting results (GIN /
+// Material Doc / MIRO Doc numbers) -- see #stickyResultPanel CSS comment
+// above for why this is separate from showToast. Called generically from
+// static/js/rf_poller.js's pollRFJob() the moment any posting job
+// finishes successfully, so this one place covers Gate In / MIGO 103 /
+// MIGO 105 / MIRO without needing to duplicate it per tab.
+// lines: array of {label, value}
+function showPostingResult(title, lines) {
+  const panel = document.getElementById('stickyResultPanel');
+  if (!panel) return;
+  const card = document.createElement('div');
+  card.className = 'sticky-result-card';
+  const linesHtml = lines.map(function (l) {
+    return '<div class="src-line"><b>' + l.label + ':</b> ' + l.value + '</div>';
+  }).join('');
+  card.innerHTML =
+    '<div class="src-title"><span>✓ ' + title + '</span>' +
+    '<button class="src-close" onclick="this.closest(\'.sticky-result-card\').remove()" title="Dismiss">✕</button></div>' +
+    linesHtml;
+  panel.appendChild(card);
+}
+
 
 document.getElementById('confirmYesBtn').onclick = function() {
   if (_confirmCallback) {
@@ -500,6 +552,9 @@ async function processAllDocs() {
 
 <!-- ── Toast container ───────────────────────────────────────────────────── -->
 <div id="appToastContainer"></div>
+
+<!-- ── v20: persistent SAP posting-result panel (bottom-left) ─────────────── -->
+<div id="stickyResultPanel"></div>
 
 </body>
 </html>

@@ -45,12 +45,24 @@ from database.db_operations import (
 from database.migo_operations import get_migo_entry
 from database.miro_operations import get_miro_entry
 from database.rf_queue_operations import enqueue_rf_job
+from config.logger import get_logger
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [dms_links_import] %(message)s",
-)
-logger = logging.getLogger(__name__)
+# v20 FIX: this used to call logging.basicConfig() directly with its own
+# hardcoded "[dms_links_import]" tag. basicConfig() only ever takes effect
+# on the FIRST call in a process and attaches its handler to the ROOT
+# logger -- and because this module gets imported early in the worker
+# process's chain (rf_queue_worker -> dms_upload_runner -> here), its
+# format won that race and got applied to every other module's log lines
+# too (they all propagate up to root by default), so e.g. gst_runner/
+# gst_operations
+# lines were showing up tagged "[dms_links_import]" even though they have
+# nothing to do with this file. Switched to the same get_logger() every
+# other module in this codebase already uses, which attaches handlers
+# directly to each named logger instead of the root logger -- no more
+# race, and this script's own logs now also land in the shared rotating
+# logs/application.log and logs/errors.log files, which raw basicConfig()
+# never wrote to (console only).
+logger = get_logger(__name__)
 
 
 def run_dms_links_import() -> dict:

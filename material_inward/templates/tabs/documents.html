@@ -15,6 +15,12 @@
   <span>✓ Consolidated document uploaded to DMS</span>
   <a href="{{ dms_document_link }}" target="_blank" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;text-decoration:none;background:#1a7a3c;color:white;">🔗 Open in DMS</a>
 </div>
+{% elif history and history.migo_103 %}
+<div style="background:#fff8e6;border:1px solid #ffd889;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px;color:#8a6100;display:flex;align-items:center;gap:10px;">
+  <span>⏳ Consolidated document {% if history.dms_status == 'staged' %}staged but not yet confirmed uploaded to DMS{% else %}not yet uploaded to DMS{% endif %}</span>
+  <button id="dmsRetryBtn" onclick="retryDmsUpload({{ history_id }})" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;border:none;cursor:pointer;background:#8a6100;color:white;">🔁 Retry DMS Upload</button>
+</div>
+<div id="dmsRetryStatus" style="display:none;font-size:12px;margin-bottom:16px;"></div>
 {% endif %}
 <div class="content-card" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
   <h3 style="color: #333; margin-bottom: 20px;">📁 Original Documents</h3>
@@ -283,6 +289,39 @@ function confirmDelete(doctype, filename, btn) {
 
 function cancelDelete(btn) {
   btn.closest('.inline-confirm').classList.remove('show');
+}
+
+function retryDmsUpload(historyId) {
+  const btn = document.getElementById('dmsRetryBtn');
+  const statusEl = document.getElementById('dmsRetryStatus');
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#555';
+    statusEl.textContent = 'Queuing DMS upload retry...';
+  }
+  // Reuses the shared submitAndPoll()/pollRFJob() from rf_poller.js --
+  // same pattern Gate In/MIGO 103/MIGO 105/MIRO submit buttons use.
+  submitAndPoll(`/api/dms_upload/retry/${historyId}`, {}, btn, {
+    onSuccess: () => {
+      if (statusEl) {
+        statusEl.style.color = '#00b894';
+        statusEl.textContent = '✓ DMS upload retried successfully. Reloading...';
+      }
+      setTimeout(() => window.location.reload(), 1500);
+    },
+    onFailure: (error) => {
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ ' + error;
+      }
+    },
+    onError: (error) => {
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ ' + error;
+      }
+    }
+  });
 }
 
 function downloadAllDocuments(historyId) {

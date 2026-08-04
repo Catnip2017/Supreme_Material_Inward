@@ -31,12 +31,12 @@ if _ROOT not in sys.path:
 from database.db_operations import get_pending_dms_records, set_dms_status
 from database.connection import init_pool
 from config.config import config
+from config.logger import get_logger
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [dms_scheduler] %(message)s",
-)
-logger = logging.getLogger(__name__)
+# v20 FIX: was its own logging.basicConfig() with a hardcoded tag -- see
+# services/dms_links_import.py's comment for why that's unsafe (root
+# logger race across imports). Switched to the shared get_logger().
+logger = get_logger(__name__)
 
 # ── Brand colours (RGB 0-1 scale) ─────────────────────────────────────────────
 _BLUE  = (0.118, 0.361, 0.659)   # #1e5ca8

@@ -68,7 +68,7 @@ Initialize SAP And Login
 
     ${login_popup}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
     IF    ${login_popup}
-        Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT2
+        Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
         Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
         Sleep    2s
     END

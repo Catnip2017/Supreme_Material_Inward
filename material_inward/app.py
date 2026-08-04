@@ -308,6 +308,18 @@ def _enqueue_sap_job(history_id, step: str, payload: dict):
     username  = session.get("username")
     auth_type = session.get("auth_type", "local")
 
+    # v20: Gate In (and update_gatein_po — the zgatein_update PO-backfill
+    # flow, same underlying GIN entry as Gate In, just triggered later) are
+    # always posted by the shared spl_rpa/.env account, regardless of the
+    # submitting user's own account auth_type — client decision. Only
+    # MIGO 103 / MIGO 105 / MIRO still route through an LDAP user's own
+    # cached SAP credential. This mirrors the same carve-out po_fetch
+    # already had (see its own call site further down) — it just never
+    # went through this shared wrapper in the first place.
+    FORCE_LOCAL_STEPS = {"gate_in", "update_gatein_po"}
+    if step in FORCE_LOCAL_STEPS:
+        auth_type = "local"
+
     sap_username = None
     sap_password = None
     if auth_type == "ldap":
@@ -429,6 +441,22 @@ def _extracted_data_view_state(history: dict) -> tuple:
 
 
 def _check_step_allowed(history: dict, step: str) -> tuple:
+    # FIX: duplicate-post guard -- always enforced regardless of
+    # ENABLE_STEP_LOCKS. That toggle (currently false in prod) only
+    # controls whether steps must happen IN ORDER; it was never meant to
+    # allow the SAME step to be posted to SAP twice. Before this, nothing
+    # server-side stopped a second POST to /save_gatein, /api/run_migo_103,
+    # /api/run_migo_105, or /api/run_miro for a record whose step was
+    # already done -- the frontend button also never disabled itself after
+    # a successful post (see the matching JS fix), so a double-click, a
+    # second tab, or a direct API call could post a duplicate GRN/invoice.
+    step_label = {
+        "gate_in": "Gate In", "migo_103": "MIGO 103",
+        "migo_105": "MIGO 105", "miro": "MIRO",
+    }.get(step)
+    if step_label and history.get(step):
+        return False, f"{step_label} has already been posted for this record."
+
     step_locks = os.getenv('ENABLE_STEP_LOCKS', 'true').lower() == 'true'
     if not step_locks:
         return True, ""
@@ -714,7 +742,36 @@ def view_detail(history_id):
         if history.get("material_doc_number"):
             migo_data["material_doc_number"] = history["material_doc_number"]
 
+        # v20: GIN is zero-padded in SAP (e.g. "0000038656") -- Header Text
+        # should show/post the number without the leading zeros. Strip here
+        # (covers both a fresh fallback to history.gate_in_number above and
+        # an already-saved migo_header_text from a prior draft/posting,
+        # since _process_gate_in's upsert_migo_entry stores the raw padded
+        # GIN as-is) so this is correct on every view regardless of source.
+        # The actual SAP posting value gets the same treatment independently
+        # in services/rf_runner.py's execute_migo_103_sap, as a backstop.
+        if migo_data.get("migo_header_text"):
+            _raw_header_text = str(migo_data["migo_header_text"])
+            migo_data["migo_header_text"] = _raw_header_text.lstrip("0") or _raw_header_text
+
         po_data = get_po_line_items(history_id)
+
+        # v20: MIGO 103 wants a view-only vendor NAME field once Gate In has
+        # happened -- gatein_data.vendor_name is the resolved SAP vendor
+        # CODE (not a name, see get_history_search()'s own comment on this
+        # same fact), so it needs the same supplier_master lookup that
+        # already resolves it for the History page listing. View-only,
+        # deliberately not fed back into any SAP posting payload -- purely
+        # informational so the user isn't stuck reading the OCR seller_name
+        # fallback (invoice_data.seller_name) once a real, verified vendor
+        # is known from Gate In.
+        resolved_vendor_name = None
+        if gatein_data.get("vendor_name"):
+            _supplier = get_supplier_by_code(gatein_data["vendor_name"]) or {}
+            resolved_vendor_name = (
+                _supplier.get("name_1") or _supplier.get("name")
+                or gatein_data.get("vendor_name")
+            )
 
         # v13: files folder_watcher.py couldn't recognize as INV/EWB/LR --
         # shown under the "Extras" banner on Extracted Data (view/download
@@ -809,6 +866,7 @@ def view_detail(history_id):
             lr_data=details.get("lr_data"),
             history_extras=history_extras,
             gatein_data=gatein_data,
+            resolved_vendor_name=resolved_vendor_name,
             migo_data=migo_data,
             invoice_line_items=invoice_line_items,
             miro_data=miro_data,
@@ -2140,6 +2198,39 @@ def delete_all_documents(history_id):
         return jsonify({"success": False, "error": "Files removed but DB cleanup failed"}), 500
 
     return jsonify({"success": True, "message": "All documents deleted", "deleted": deleted_any})
+
+
+@app.route("/api/dms_upload/retry/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_dms_upload_retry(history_id):
+    """
+    Manual retry for a record whose consolidated PDF didn't make it to DMS
+    on its own (dms_status stuck at 'staged', or the earlier automatic
+    dms_upload RF job simply failed/timed out). Enqueues the exact same
+    "dms_upload" RF-queue step _enqueue_dms_upload() uses automatically
+    after MIGO 103 -- run_dms_upload() (see _process_dms_upload in
+    rf_queue_worker.py) always processes the WHOLE staging folder and
+    skips files already uploaded, so re-running it here is safe and can't
+    double-upload or disturb any other pending record. enqueue_rf_job()
+    itself blocks duplicate submission if a dms_upload job for this
+    history_id is already pending/running.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if not history.get("migo_103"):
+        return jsonify({"success": False, "error": "DMS upload only runs after MIGO 103 is done."}), 400
+    if history.get("dms_status") == "uploaded":
+        return jsonify({"success": False, "error": "This record's document is already uploaded to DMS."}), 400
+
+    job_id = enqueue_rf_job(history_id, "dms_upload", {"history_id": history_id})
+    if not job_id:
+        return jsonify({"success": False, "error": "A DMS upload is already queued or running for this record."}), 409
+    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
 
 # ============================================================

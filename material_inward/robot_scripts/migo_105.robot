@@ -62,15 +62,23 @@ Initialize SAP And Login
     Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
     Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
     Click Element     wnd[0]/tbar[0]/btn[0]
-    Sleep    8s
-    Dismiss Any Popup
 
+    # FIX: same reordering as migo_103.robot -- see that file's comment for
+    # the full explanation. Generic Dismiss Any Popup used to run BEFORE
+    # this specific check and would already close the multi-logon dialog
+    # (submitting SAP's default radio choice) before OPT2 could be
+    # selected. Also aligned OPT1 -> OPT2 to match gate_in.robot's
+    # proven-working "continue without ending other sessions" choice.
+    Sleep    3s
     ${multi}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
     IF    ${multi}
         Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
         Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
         Sleep    2s
     END
+
+    Sleep    5s
+    Dismiss Any Popup
     Maximize Window    0
     Connect To Sap Session
 

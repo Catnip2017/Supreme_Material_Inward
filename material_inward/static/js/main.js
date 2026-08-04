@@ -1,5 +1,34 @@
 // Main Dashboard Navigation and Common Functions
 
+// FIX: after a successful Gate In/MIGO 103/MIGO 105/MIRO post, the page now
+// auto-reloads (see each tab's onSuccess handler) so every OTHER tab-pane
+// picks up the fields that depend on what just posted (e.g. MIGO 103's
+// Header Text/Vendor Name come from Gate In's result, but that tab's HTML
+// was only rendered once at initial page load and never re-fetches on its
+// own when you just click over to it) -- previously the only way to see
+// this was a manual page refresh. A plain reload would always drop the
+// user back on whichever tab is server-rendered as default, so whichever
+// tab just posted stores its own name here right before reloading, and
+// this restores it once the fresh page has loaded.
+document.addEventListener('DOMContentLoaded', function() {
+  const savedTab = sessionStorage.getItem('mi_reload_tab');
+  if (savedTab) {
+    sessionStorage.removeItem('mi_reload_tab');
+    if (typeof goToTabProgrammatic === 'function') {
+      goToTabProgrammatic(savedTab);
+    }
+  }
+});
+
+// Shared helper for the same pattern -- used by extracted_data.html's save
+// functions too (Extracted Data edits like vendor name/PO number feed
+// Gate In/MIGO/MIRO's pre-filled fields, so those tabs need the same
+// refresh once the user is done editing here).
+function reloadToFreshData(tabName, delayMs) {
+  sessionStorage.setItem('mi_reload_tab', tabName);
+  setTimeout(() => window.location.reload(), delayMs || 1200);
+}
+
 // Tab switching functionality
 function switchTab(tabName) {
   // Hide all tab panes

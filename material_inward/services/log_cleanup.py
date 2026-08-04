@@ -42,12 +42,12 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from config.config import config
+from config.logger import get_logger
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [log_cleanup] %(message)s",
-)
-logger = logging.getLogger(__name__)
+# v20 FIX: was its own logging.basicConfig() with a hardcoded tag -- see
+# services/dms_links_import.py's comment for why that's unsafe (root
+# logger race across imports). Switched to the shared get_logger().
+logger = get_logger(__name__)
 
 DMS_PREFIX = "dms_upload_"
 DMS_RETENTION_DAYS = 3

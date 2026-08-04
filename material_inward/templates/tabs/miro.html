@@ -89,14 +89,14 @@
     <div class="form-row">
       <div class="form-group">
         <label>Reference <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Invoice Number)</span></label>
-        <input type="text" id="miroReference" class="form-input"
+        <input type="text" id="miroReference" class="form-input" maxlength="16"
                value="{{ (miro_data.get('miro_reference') if miro_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
                {% if step_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_miroReference">Required</div>
       </div>
       <div class="form-group">
         <label>Amount <span class="req">*</span></label>
-        <input type="text" id="miroAmount" class="form-input"
+        <input type="text" id="miroAmount" class="form-input" maxlength="23"
                value="{{ (miro_data.get('miro_amount') if miro_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
                {% if step_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_miroAmount">Required</div>
@@ -106,7 +106,7 @@
     <div class="form-row">
       <div class="form-group">
         <label>Tax Amount</label>
-        <input type="text" id="miroTaxAmount" class="form-input"
+        <input type="text" id="miroTaxAmount" class="form-input" maxlength="23"
                value="{{ (miro_data.get('miro_tax_amount') if miro_data else '') or (invoice_data.get('total_tax_amount') if invoice_data else '') or '' }}"
                {% if step_locked %}disabled{% endif %}>
       </div>
@@ -130,7 +130,7 @@
     <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🔗 PO Reference</h4>
     <div class="form-group">
       <label>Purchase Order <span class="req">*</span></label>
-      <input type="text" id="miroPurchaseOrder" class="form-input"
+      <input type="text" id="miroPurchaseOrder" class="form-input" maxlength="10"
              value="{{ (miro_data.get('miro_purchase_order') if miro_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
              {% if step_locked %}disabled{% endif %}>
       <div class="field-error-msg" id="err_miroPurchaseOrder">Required</div>
@@ -140,7 +140,7 @@
 
     <div class="action-buttons">
       <button type="submit" id="miroSubmitBtn" class="btn btn-primary"
-        {% if history and history.miro %}style="background:#00b894;"{% endif %}>
+        {% if history and history.miro %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.miro %}✓ MIRO Posted — Complete{% else %}📮 Post MIRO{% endif %}
       </button>
     </div>
@@ -158,7 +158,10 @@
 
 const POST_LOCKED_MIRO = {{ 'true' if post_locked else 'false' }};
 // FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
-const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+// v20 FIX: renamed to a per-tab name -- this collided with the other tabs'
+// identically-named const in the shared page-level scope and was silently
+// killing this whole script block (see gate_in.html's comment for detail).
+const STEP_LOCKS_ENABLED_MIRO = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 (function() {
   const el = document.getElementById('miroPostingDate');
@@ -193,7 +196,7 @@ function validateMiro() {
 
 document.getElementById('miroForm').addEventListener('submit', function(e) {
   e.preventDefault();
-  if (POST_LOCKED_MIRO && STEP_LOCKS_ENABLED) {
+  if (POST_LOCKED_MIRO && STEP_LOCKS_ENABLED_MIRO) {
     showToast('⏸ MIGO 105 must be completed before posting MIRO.', 'warning');
     return;
   }
@@ -242,6 +245,13 @@ function _doSubmitMiro(historyId) {
       statusEl.textContent   = '✓ MIRO posted successfully! Process complete.';
       btn.textContent        = '✓ MIRO Posted — Complete';
       btn.style.background   = '#00b894';
+      // FIX: see gate_in.html's identical comment -- prevents a second
+      // MIRO submission once this one succeeds.
+      btn.disabled = true;
+      // FIX: see gate_in.html's identical comment -- other tabs were
+      // staying stale until a manual reload.
+      sessionStorage.setItem('mi_reload_tab', 'miro');
+      setTimeout(() => window.location.reload(), 1800);
     },
     onFailure: function(error) {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
