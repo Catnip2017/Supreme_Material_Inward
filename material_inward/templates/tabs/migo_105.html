@@ -82,7 +82,7 @@
 
   <div class="form-group">
     <label>Material Document Number <span style="font-size:11px;color:#1e5ca8;">(auto-filled from MIGO 103)</span></label>
-    <input type="text" id="materialDocNumber105" class="form-input"
+    <input type="text" id="materialDocNumber105" class="form-input" maxlength="10"
        value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
        placeholder="Material document number from MIGO 103">
   </div>
@@ -138,6 +138,7 @@
 
   <div class="action-buttons">
     <button type="button" id="migo105Btn" class="btn btn-primary" onclick="submitMigo105()"
+        {% if history and history.migo_105 %}disabled{% endif %}
         style="{% if history and history.migo_105 %}background:#00b894;{% else %}background:#1e5ca8;{% endif %};padding:10px 20px;font-size:14px;font-weight:600;min-width:160px;">
   {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
 </button>
@@ -153,7 +154,11 @@
 <script>
 const POST_LOCKED_105 = {{ 'true' if post_locked else 'false' }};
 // FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
-const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+// v20 FIX: renamed to a per-tab name -- this collided with gate_in.html's/
+// migo_103.html's identically-named const in the shared page-level scope
+// and was silently killing this whole script block (see gate_in.html's
+// comment for detail).
+const STEP_LOCKS_ENABLED_105 = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 
 const HISTORY_ID_105 = {{ history_id|tojson }};
@@ -250,7 +255,7 @@ function validateMigo105() {
 
 
 function submitMigo105() {
-  if (POST_LOCKED_105 && STEP_LOCKS_ENABLED) {
+  if (POST_LOCKED_105 && STEP_LOCKS_ENABLED_105) {
     showToast('⏸ MIGO 103 must be completed before posting MIGO 105.', 'warning');
     return;
   }
@@ -282,6 +287,13 @@ function _doSubmitMigo105() {
       statusEl.textContent   = '✓ MIGO 105 posted! Proceed to MIRO.';
       btn.textContent        = '✓ MIGO 105 Done';
       btn.style.background   = '#00b894';
+      // FIX: see gate_in.html's identical comment -- prevents a second
+      // MIGO 105 submission once this one succeeds.
+      btn.disabled = true;
+      // FIX: see gate_in.html's identical comment -- other tabs were
+      // staying stale until a manual reload.
+      sessionStorage.setItem('mi_reload_tab', 'migo105');
+      setTimeout(() => window.location.reload(), 1800);
     },
     onFailure: (error) => {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';

@@ -203,7 +203,7 @@
     <div class="form-group">
       <label>Purchase Order No <span class="req">*</span></label>
       <div style="display:flex;gap:8px;align-items:flex-start;">
-        <input type="text" id="migoPoNumber" class="form-input" style="flex:1;"
+        <input type="text" id="migoPoNumber" class="form-input" style="flex:1;" maxlength="10"
                {# FIX: migo_entries has no migo_po_number column, so that
                   first COALESCE arm was always a no-op -- this fell
                   straight to invoice_data.po_number every time. That's the
@@ -240,6 +240,16 @@
     </div>
   </div>
 
+  {% if resolved_vendor_name %}
+  <div class="form-row">
+    <div class="form-group">
+      <label>Vendor Name <span style="font-size:11px;color:#888;">(from Gate In — view only)</span></label>
+      <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled
+             style="background:#f5f6f8;color:#555;">
+    </div>
+  </div>
+  {% endif %}
+
   <div class="form-row">
     <div class="form-group">
       <label>Posting Date <span class="req">*</span></label>
@@ -250,7 +260,7 @@
     </div>
     <div class="form-group">
       <label>Delivery Note <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Invoice No)</span></label>
-      <input type="text" id="migoDeliveryNote" class="form-input"
+      <input type="text" id="migoDeliveryNote" class="form-input" maxlength="16"
              value="{{ (migo_data.get('migo_delivery_note') if migo_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
              >
       <div class="field-error-msg" id="err_migoDeliveryNote">Required</div>
@@ -260,13 +270,13 @@
   <div class="form-row">
     <div class="form-group">
       <label>Bill of Lading <span style="font-size:11px;color:#888;">(LR No)</span></label>
-      <input type="text" id="migoBillOfLading" class="form-input"
+      <input type="text" id="migoBillOfLading" class="form-input" maxlength="16"
              value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or (lr_data.get('lr_number') if lr_data else '') or '' }}"
              >
     </div>
     <div class="form-group">
       <label>GR/GI Slip No</label>
-      <input type="text" id="migoGRSlipNo" class="form-input"
+      <input type="text" id="migoGRSlipNo" class="form-input" maxlength="10"
              value="{{ migo_data.get('migo_gr_slip_no', '') if migo_data else '' }}"
              >
     </div>
@@ -274,7 +284,7 @@
 
   <div class="form-group">
     <label>Header Text <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Gate In Number)</span></label>
-    <input type="text" id="migoHeaderText" class="form-input"
+    <input type="text" id="migoHeaderText" class="form-input" maxlength="25"
            value="{{ (migo_data.get('migo_header_text') or (history.gate_in_number if history and history.gate_in_number else '')) or '' }}"
            >
     <div class="field-error-msg" id="err_migoHeaderText">Required</div>
@@ -459,7 +469,7 @@
 
   <div class="action-buttons">
     <button type="button" id="migo103Btn" class="btn btn-primary" onclick="submitMigo103()"
-        {% if history and history.migo_103 %}style="background:#00b894;"{% endif %}>
+        {% if history and history.migo_103 %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
     </button>
   </div>
@@ -498,7 +508,10 @@
 
 const POST_LOCKED_103 = {{ 'true' if post_locked else 'false' }};
 // FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
-const STEP_LOCKS_ENABLED = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+// v20 FIX: renamed to a per-tab name -- this collided with gate_in.html's
+// identically-named const in the shared page-level scope and was silently
+// killing this whole script block (see gate_in.html's comment for detail).
+const STEP_LOCKS_ENABLED_103 = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
 
 (function() {
   const pd = document.getElementById('migoPostDate');
@@ -1011,8 +1024,8 @@ function confirmMatches() {
       <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
       <td>${_esc(inv.hsn_sac || po.hsn_sac)}</td>
       <td>${_esc(inv.unit)}</td>
-      <td><input type="text" class="form-input" value="${_esc(inv.quantity || po.quantity)}" style="width:70px;"></td>
-      <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" style="width:70px;"></td>
+      <td><input type="text" class="form-input" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
+      <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
       <td><input type="text" class="form-input" value="${_esc(inv.rate || po.rate)}" style="width:80px;"></td>
       <td><input type="text" class="form-input" value="${_esc(inv.amount || po.amount)}" style="width:90px;"></td>
       <td><button type="button" class="btn-unmatch" onclick="unmatchPair(this, ${pair.pairNum})">↩ Undo</button></td>
@@ -1060,7 +1073,7 @@ function addInvoiceRow() {
     <td style="color:#888;font-size:11px;">${idx + 1}</td>
     <td><input type="text" class="form-input" placeholder="Mat. Code"></td>
     <td><input type="text" class="form-input" placeholder="Short Text"></td>
-    <td><input type="text" class="form-input" placeholder="Qty"></td>
+    <td><input type="text" class="form-input" placeholder="Qty" maxlength="13"></td>
     <td><input type="text" class="form-input" placeholder="UOM"></td>
     <td><input type="text" class="form-input" placeholder="Rate"></td>
     <td><input type="text" class="form-input" placeholder="Amount"></td>
@@ -1108,6 +1121,47 @@ function _renumberMatchedRows() {
 function _esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+{% if not (history and history.migo_103) %}
+// v22: auto-matching on page load.
+// - Exactly 1 invoice line + 1 PO line: there is only one possible
+//   pairing, so no risk in matching it automatically -- pair the two rows
+//   unconditionally (skip autoPair()'s strict 4-field-match requirement,
+//   which exists only to disambiguate between MULTIPLE candidate rows)
+//   and call confirmMatches() right away so it's ready for posting
+//   without the user having to click Auto-Pair/Confirm Matches themselves.
+// - 2+ rows on either side: run the existing autoPair() (all four of
+//   HSN/Rate/Qty/Amount must match) to pre-populate the obvious pairs.
+//   Deliberately does NOT auto-confirm here -- ambiguous/non-matching
+//   rows are left for the user to pair manually, and the pre-matched
+//   ones still go through a manual "Confirm Matches" click as a
+//   checkpoint, same as if the user had clicked Auto-Pair themselves.
+document.addEventListener('DOMContentLoaded', function() {
+  const invRows = document.querySelectorAll('#invoiceItemsBody tr');
+  const poRows  = document.querySelectorAll('#poItemsBody tr');
+  if (invRows.length === 0 || poRows.length === 0) return;
+
+  if (invRows.length === 1 && poRows.length === 1) {
+    const invBtn = invRows[0].querySelector('.pair-btn-inv');
+    const poBtn  = poRows[0].querySelector('.pair-btn-po');
+    if (invBtn && poBtn) {
+      const pairNum = _pairCounter++;
+      _pairs.push({ invIdx: 0, poIdx: 0, pairNum });
+      invBtn.setAttribute('data-pair', pairNum);
+      invBtn.textContent = pairNum;
+      invBtn.classList.add('paired-inv');
+      poBtn.setAttribute('data-pair', pairNum);
+      poBtn.textContent = pairNum;
+      poBtn.classList.add('paired-po');
+      _updateMatchHint();
+      confirmMatches();
+      showToast('✓ Single invoice/PO line auto-matched and ready for posting.', 'success');
+    }
+  } else {
+    autoPair();
+  }
+});
+{% endif %}
 
 
 
@@ -1206,7 +1260,7 @@ function validateMigo103() {
 }
 
 function submitMigo103() {
-  if (POST_LOCKED_103 && STEP_LOCKS_ENABLED) {
+  if (POST_LOCKED_103 && STEP_LOCKS_ENABLED_103) {
     showToast('⏸ Gate In must be completed before posting MIGO 103.', 'warning');
     return;
   }
@@ -1244,6 +1298,15 @@ function _doSubmitMigo103(historyId) {
       statusEl.textContent   = `✓ MIGO 103 posted! Material Doc: ${result.material_doc_number || '—'}`;
       btn.textContent        = '✓ MIGO 103 Done';
       btn.style.background   = '#00b894';
+      // FIX: see gate_in.html's identical comment -- submitAndPoll() would
+      // otherwise re-enable this button after a successful post, allowing
+      // a second MIGO 103 submission with nothing to stop it.
+      btn.disabled = true;
+      // FIX: see gate_in.html's identical comment -- other tabs (e.g.
+      // MIGO 105's Material Document Number) were staying stale until a
+      // manual reload.
+      sessionStorage.setItem('mi_reload_tab', 'migo103');
+      setTimeout(() => window.location.reload(), 1800);
     },
     onFailure: (error) => {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';

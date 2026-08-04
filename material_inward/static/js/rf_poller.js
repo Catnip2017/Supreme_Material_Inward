@@ -22,6 +22,31 @@ const RF_POLL_INTERVAL_MS  = 3000;   // Poll every 3 seconds
 const RF_POLL_TIMEOUT_MS   = 300000; // Give up after 5 minutes
 
 /**
+ * v20: shows the persistent bottom-left panel (showPostingResult(), defined
+ * in index.html) with whichever SAP document numbers are present on a
+ * successful job result -- Gate In / MIGO 103 / MIGO 105 / MIRO all funnel
+ * through pollRFJob, so hooking it here once covers all four instead of
+ * duplicating this per tab. Reads known result keys generically; a job
+ * type with none of these present (po_fetch, dms_upload, link-attach jobs,
+ * etc. -- none of which go through submitAndPoll/pollRFJob today anyway)
+ * simply shows nothing.
+ */
+function _showStickyPostingResult(result) {
+  if (typeof showPostingResult !== 'function' || !result) return;
+  const KNOWN = [
+    { key: 'gate_in_number',      label: 'Gate In Number' },
+    { key: 'material_doc_number', label: 'Material Doc No.' },
+    { key: 'miro_doc_number',     label: 'MIGO 105 Doc No.' },
+    { key: 'fi_doc_number',       label: 'MIRO Doc No.' },
+  ];
+  const lines = KNOWN
+    .filter(function (k) { return result[k.key]; })
+    .map(function (k) { return { label: k.label, value: result[k.key] }; });
+  if (lines.length === 0) return;
+  showPostingResult('SAP Posting Done', lines);
+}
+
+/**
  * Poll /api/queue_status/<jobId> until done or failed.
  * @param {number} jobId       - Job ID returned from the submit endpoint
  * @param {object} callbacks   - { onSuccess, onFailure, onTimeout }
@@ -74,6 +99,7 @@ function pollRFJob(jobId, callbacks, button = null) {
 
         if (status === 'done') {
           const result = job.result || {};
+          _showStickyPostingResult(result);
           if (callbacks.onSuccess) callbacks.onSuccess(result, job);
         } else if (status === 'failed') {
           const errorMsg = job.error_message || 'RF script failed. Check logs.';

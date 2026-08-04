@@ -213,6 +213,16 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
             # would never fire for these records at all.
             _enqueue_dms_upload(history_id)
     else:
+        # v20: was silently relying on the raw RF-subprocess log inside
+        # rf_runner.py for this -- no clearly-labeled failure line at this
+        # level, so a "posted but GIN not captured" case (execute_gate_in_sap
+        # already correctly returns success=False for this) was easy to miss
+        # in the logs against the success line's "Gate In complete" wording.
+        # This is deliberately its own ERROR line with FAILED in it so it
+        # reads unambiguously different from the success case.
+        logger.error(
+            f"Gate In FAILED — history_id={history_id}: {result.get('error')}"
+        )
         update_gatein_rf_result(
             history_id, "", status="failed",
             error_message=result.get("error"),
@@ -224,7 +234,12 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
             history_id=history_id,
             title="Gate In Failed — Manual Check Required",
             message=result.get("error", "Gate In did not capture a GIN from SAP."),
-            notification_type="ocr_failed",
+            # v20 FIX: was "ocr_failed" -- a leftover/copy-paste value that
+            # has nothing to do with a Gate In posting failure. See
+            # database/notifications_operations.py's own create_notification
+            # docstring, which documents "gate_in" as the intended type for
+            # exactly this case.
+            notification_type="gate_in",
             role_target="gate_in"
         )
     return result
@@ -386,7 +401,28 @@ def _process_migo_103(history_id: int, payload: dict) -> dict:
             history_id, "migo103_link", mat_doc, update_migo103_link_result
         )
     else:
+        # v20: MIGO 103 had no equivalent of Gate In's clearly-labeled
+        # failure log line or failure notification at all -- a failed
+        # posting was recorded correctly in the DB (migo_103_rf_status=
+        # 'failed', history.migo_103 stays 0, so the button/status badge
+        # correctly never shows green "Done" for it), but nothing
+        # surfaced it the way Gate In's failure does. Added both, matching
+        # Gate In's pattern.
+        logger.error(
+            f"MIGO 103 FAILED — history_id={history_id}: {result.get('error')}"
+        )
         update_migo_103_rf_result(history_id, "", status="failed", error_message=result.get("error"))
+        from database.notifications_operations import create_notification
+        create_notification(
+            history_id=history_id,
+            title="MIGO 103 Failed — Manual Check Required",
+            message=result.get(
+                "error",
+                "MIGO 103 NOT done — SAP posting failed. Please check manually and try again."
+            ),
+            notification_type="migo_103",
+            role_target="migo_103"
+        )
     return result
 
 

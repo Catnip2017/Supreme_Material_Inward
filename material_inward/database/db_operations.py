@@ -498,12 +498,12 @@ def save_lr_to_db(history_id: int, data: dict) -> bool:
         INSERT INTO lr_data (
             id, filename, lr_number, lr_date, consignor_name,
             consignee_name, vehicle_number, material_description,
-            quantity, weight, delivery_address, from_location,
+            quantity, uom, weight, delivery_address, from_location,
             to_location, transporter_name, freight_amount
         ) VALUES (
             %s, %s, %s, %s, %s,
             %s, %s, %s,
-            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
             %s, %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
@@ -520,6 +520,7 @@ def save_lr_to_db(history_id: int, data: dict) -> bool:
             vehicle_number = EXCLUDED.vehicle_number,
             material_description = EXCLUDED.material_description,
             quantity = EXCLUDED.quantity,
+            uom = EXCLUDED.uom,
             weight = EXCLUDED.weight,
             delivery_address = EXCLUDED.delivery_address,
             from_location = EXCLUDED.from_location,
@@ -531,7 +532,7 @@ def save_lr_to_db(history_id: int, data: dict) -> bool:
     values = (
         history_id, data.get("filename"), data.get("lr_number"), data.get("lr_date"),
         data.get("consignor_name"), data.get("consignee_name"), data.get("vehicle_number"),
-        data.get("material_description"), data.get("quantity"), data.get("weight"),
+        data.get("material_description"), data.get("quantity"), data.get("uom"), data.get("weight"),
         data.get("delivery_address"), data.get("from_location"), data.get("to_location"),
         data.get("transporter_name"), data.get("freight_amount")
     )
@@ -580,6 +581,17 @@ def get_history_search(
 
     if status == "pending":
         conditions.append("h.gate_in = 0")
+    # v20: two new granular buckets slotted into the existing "pending"
+    # bucket (Extracted Data approval and GST check both happen before
+    # Gate In -- see the status CASE below for the exact same conditions
+    # used for the badge). "pending" above is left as its original broad
+    # gate_in=0 definition rather than narrowed, so it keeps matching
+    # anything not yet gated in same as before; these are additive,
+    # more specific filters a user can pick instead.
+    elif status == "data_approved":
+        conditions.append("h.approval_status = 'approved' AND COALESCE(h.gst_check, 0) = 0")
+    elif status == "gst_approved":
+        conditions.append("COALESCE(h.gst_check, 0) = 1 AND h.gate_in = 0")
     elif status == "in_progress":
         conditions.append("h.gate_in = 1 AND h.miro = 0")
     elif status == "completed":
@@ -631,14 +643,26 @@ def get_history_search(
             COALESCE(gatein.truck_no, eway.vehicle_number)    AS vehicle_number,
             h.gate_in, h.migo_103, h.migo_105, h.miro,
             h.gate_in_number, h.material_doc_number,
-            h.approval_status, h.ocr_status,
+            h.approval_status, h.approval_at, h.ocr_status,
+            h.gst_check, h.gst_check_done_at,
             h.created_at,
             h.gatein_done_at, h.migo_103_done_at, h.migo_105_done_at, h.miro_done_at,
+            -- v20: "Data Approved" (Extracted Data tab approval,
+            -- history.approval_status) and "GST Approved"
+            -- (history.gst_check, already the same column
+            -- services/gst_operations.py._mark_gst_check_done sets, no
+            -- migration needed) slotted in before Gate In Done, matching
+            -- the actual order a record has to clear both gates before
+            -- Gate In is allowed (see the Extracted Data approve modal's
+            -- own "GST Verification must also be completed before Gate
+            -- In" text).
             CASE
                 WHEN h.miro = 1     THEN 'MIRO Done'
                 WHEN h.migo_105 = 1 THEN 'MIGO 105 Done'
                 WHEN h.migo_103 = 1 THEN 'MIGO 103 Done'
                 WHEN h.gate_in = 1  THEN 'Gate In Done'
+                WHEN COALESCE(h.gst_check, 0) = 1 AND h.approval_status = 'approved' THEN 'GST Approved'
+                WHEN h.approval_status = 'approved' THEN 'Data Approved'
                 ELSE 'Pending'
             END AS status
         {base_sql}
@@ -658,7 +682,7 @@ def get_history_search(
                 records = [dict(r) for r in cur.fetchall()]
 
                 timestamp_cols = (
-                    "created_at", "gatein_done_at",
+                    "created_at", "approval_at", "gst_check_done_at", "gatein_done_at",
                     "migo_103_done_at", "migo_105_done_at", "miro_done_at"
                 )
                 for r in records:

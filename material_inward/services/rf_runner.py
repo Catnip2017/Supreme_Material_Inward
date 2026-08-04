@@ -49,6 +49,21 @@ def _clean_dict(data: dict, keys: list) -> dict:
     return result
 
 
+def _s(value) -> str:
+    """
+    Coerce None to '' so it never reaches _run_rf_script's `str(value)` and
+    gets posted into SAP as the literal 4-character word "None". Unlike
+    _clean_value(), this does NOT strip whitespace/symbols or truncate to
+    the first word -- free-text fields (vendor name, note, remarks, delivery
+    note, etc.) need every word intact, only the None-vs-missing-key gap
+    needs closing. A dict.get(key, "") default only kicks in when the key is
+    ABSENT; a direct API POST (or any caller building the payload from a
+    nullable DB column) can send the key present with value None, which
+    .get() happily returns as-is.
+    """
+    return value if value is not None else ""
+
+
 # ============================================================
 # RF SCRIPT EXECUTOR HELPERS
 # ============================================================
@@ -304,28 +319,28 @@ def execute_gate_in_sap(data: dict) -> dict:
     purchase_order_clean = "" if is_without_po else cleaned.get("purchaseOrder", "")
 
     variables = {
-        "VENDOR_NAME":    cleaned.get("vendorName", ""),
-        "TRANSPORTER":    cleaned.get("transporter", ""),
-        "TRUCK_NO":       truck_no_clean,
-        "DRIVER_NAME":    cleaned.get("driverName", ""),
-        "LICENSE_NO":     license_no_clean,
-        "CONTAINER_NO":   cleaned.get("containerNo", ""),
-        "CATEGORY":       cleaned.get("category", ""),
+        "VENDOR_NAME":    _s(cleaned.get("vendorName", "")),
+        "TRANSPORTER":    _s(cleaned.get("transporter", "")),
+        "TRUCK_NO":       _s(truck_no_clean),
+        "DRIVER_NAME":    _s(cleaned.get("driverName", "")),
+        "LICENSE_NO":     _s(license_no_clean),
+        "CONTAINER_NO":   _s(cleaned.get("containerNo", "")),
+        "CATEGORY":       _s(cleaned.get("category", "")),
         # FIX: defense-in-depth 40-char cap (matches SAP's txtP_MATNR DDIC
         # limit) -- gatein_operations.upsert_gatein_entry now caps this at
         # write time for anything saved going forward, but this backstop
         # covers any row already in the DB from before that fix landed.
-        "MATERIAL":       (cleaned.get("material", "") or "")[:40],
+        "MATERIAL":       _s(cleaned.get("material", ""))[:40],
         # "CHALLAN_NO":     cleaned.get("challanNo", ""),
         "CHALLAN_NO": challan_numeric,
-        "CHALLAN_QTY":    cleaned.get("challanQty", ""),
-        "BOE_NO":         cleaned.get("boeNo", ""),
-        "PURCHASE_ORDER": purchase_order_clean,
-        "NUM_PERSONS":    cleaned.get("numPersons", "1"),
-        "GATE_PASS_NO":   cleaned.get("gatePassNo", ""),
-        "NOTE":           cleaned.get("note", ""),
+        "CHALLAN_QTY":    _s(cleaned.get("challanQty", "")),
+        "BOE_NO":         _s(cleaned.get("boeNo", "")),
+        "PURCHASE_ORDER": _s(purchase_order_clean),
+        "NUM_PERSONS":    _s(cleaned.get("numPersons", "1")) or "1",
+        "GATE_PASS_NO":   _s(cleaned.get("gatePassNo", "")),
+        "NOTE":           _s(cleaned.get("note", "")),
         "GATE_IN_DATE":   _to_sap_date(data.get("gateInDate", "")),
-        "GATE_IN_TIME":   data.get("gateInTime", ""),
+        "GATE_IN_TIME":   _s(data.get("gateInTime", "")),
     }
 
     result = _run_rf_script(
@@ -388,21 +403,41 @@ def execute_migo_103_sap(data: dict) -> dict:
     # (see separate note to the team about SGTXT currently being filled from
     # REMARKS for every line, not from each item's own short_text) -- this
     # way it's already safe the moment that gets wired in.
+    # FIX: server-side char-limit backstops matching each field's real SAP
+    # DDIC length (client-confirmed 2026-08-04) -- mirrors the maxlength
+    # attributes on migo_103.html's inputs, so a direct API call bypassing
+    # the browser can't ship an oversized value into SAP either. qty is
+    # capped the same way per line (13 chars, matches SAP's quantity field).
     for _item in items_data:
         if isinstance(_item, dict) and _item.get("short_text"):
             _item["short_text"] = str(_item["short_text"])[:40]
+        if isinstance(_item, dict):
+            if _item.get("qty_expected") is not None:
+                _item["qty_expected"] = str(_item["qty_expected"])[:13]
+            if _item.get("qty_actual") is not None:
+                _item["qty_actual"] = str(_item["qty_actual"])[:13]
 
     items_json_str = json.dumps(items_data)
     items_json_b64 = base64.b64encode(items_json_str.encode()).decode()
 
+    # v20: strip leading zeros off the Gate In Number before it goes into
+    # SAP's header text field -- SAP itself zero-pads GIN (e.g.
+    # "0000038656") but the client doesn't want that padding posted.
+    # Backstop for the same strip already applied to what's displayed/
+    # submitted from migo_103.html (see app.py's view_detail()) -- kept
+    # here too in case this is ever called with an unstripped value from
+    # somewhere else.
+    header_text_raw = cleaned.get("migoHeaderText", "") or ""
+    header_text_clean = header_text_raw.lstrip("0") or header_text_raw
+
     variables = {
-        "PO_NUMBER":      cleaned.get("purchaseOrder", "") or cleaned.get("migoPoNumber", ""),
+        "PO_NUMBER":      (_s(cleaned.get("purchaseOrder", "")) or _s(cleaned.get("migoPoNumber", "")))[:10],
         "DOC_DATE":       _to_sap_date(cleaned.get("migoDocDate", "")),
         "POST_DATE":      _to_sap_date(cleaned.get("migoPostDate", datetime.now().strftime("%Y-%m-%d"))),
-        "DELIVERY_NOTE":  cleaned.get("migoDeliveryNote", ""),
-        "BILL_OF_LADING": cleaned.get("migoBillOfLading", ""),
-        "GR_SLIP_NO":     cleaned.get("migoGRSlipNo", ""),
-        "HEADER_TEXT":    (cleaned.get("migoHeaderText", "") or "")[:40],
+        "DELIVERY_NOTE":  _s(cleaned.get("migoDeliveryNote", ""))[:16],
+        "BILL_OF_LADING": _s(cleaned.get("migoBillOfLading", ""))[:16],
+        "GR_SLIP_NO":     _s(cleaned.get("migoGRSlipNo", ""))[:10],
+        "HEADER_TEXT":    header_text_clean[:25],
         "REMARKS":        (cleaned.get("migoRemarks", "") or "")[:40],
         "ITEMS_JSON_B64": items_json_b64,
     }
@@ -460,10 +495,10 @@ def execute_migo_105_sap(data: dict) -> dict:
     items_json_b64 = base64.b64encode(items_json_str.encode()).decode()
 
     variables = {
-        "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
-        "STORAGE_LOCATION":    data.get("migo_105_storage_loc", ""),
-        "VENDOR_INVOICE":      cleaned.get("migo_105_vendor_invoice", ""),
-        "REMARKS":             data.get("migo_105_remarks", ""),
+        "MATERIAL_DOC_NUMBER": _s(data.get("material_doc_number", ""))[:10],
+        "STORAGE_LOCATION":    _s(data.get("migo_105_storage_loc", "")),
+        "VENDOR_INVOICE":      _s(cleaned.get("migo_105_vendor_invoice", "")),
+        "REMARKS":             _s(data.get("migo_105_remarks", "")),
         "POST_DATE":           _to_sap_date(datetime.now().strftime("%Y-%m-%d")),
         "ITEMS_JSON_BATCH":    items_json_b64,
     }
@@ -501,9 +536,9 @@ def execute_migo_105_sap(data: dict) -> dict:
 
 def execute_miro_sap(data: dict) -> dict:
     variables = {
-        "REFERENCE_NUMBER": data.get("miroReference", ""),
+        "REFERENCE_NUMBER": _s(data.get("miroReference", ""))[:16],
         "INVOICE_DATE":     _to_sap_date(data.get("miroInvoiceDate", "")),
-        "PO_NUMBER":        data.get("miroPurchaseOrder", ""),
+        "PO_NUMBER":        _s(data.get("miroPurchaseOrder", ""))[:10],
         "POSTING_DATE":     _to_sap_date(datetime.now().strftime("%Y-%m-%d")),
     }
     result = _run_rf_script(

@@ -651,7 +651,7 @@
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
           {% if not is_approved %}
             {% if last_doc == 'invoice' %}
-          <button class="btn-save-section" onclick="saveExtractedInvoice()">💾 Save Invoice Changes</button>
+          <button class="btn-save-section" onclick="saveExtractedInvoice().then(ok => { if (ok) reloadToFreshData('extracted'); })">💾 Save Invoice Changes</button>
           <span class="save-status" id="invSaveStatus"></span>
               {% if can_edit_extracted %}
           <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
@@ -766,7 +766,7 @@
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
           {% if not is_approved %}
             {% if last_doc == 'ewaybill' %}
-          <button class="btn-save-section" onclick="saveExtractedEway()">💾 Save E-Way Bill Changes</button>
+          <button class="btn-save-section" onclick="saveExtractedEway().then(ok => { if (ok) reloadToFreshData('extracted'); })">💾 Save E-Way Bill Changes</button>
           <span class="save-status" id="ewaySaveStatus"></span>
               {% if can_edit_extracted %}
           <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
@@ -842,6 +842,10 @@
               <div class="field-label">Weight</div>
               <input class="editable-input" id="lr_weight" value="{{ lr.get('weight','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
+            <div class="field-block">
+              <div class="field-label">UOM</div>
+              <input class="editable-input" id="lr_uom" value="{{ lr.get('uom','') }}" {% if is_approved %}disabled{% endif %}>
+            </div>
           </div>
         </div>
 
@@ -870,7 +874,7 @@
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
           {% if not is_approved %}
             {% if last_doc == 'lr' %}
-          <button class="btn-save-section" onclick="saveExtractedLr()">💾 Save LR Changes</button>
+          <button class="btn-save-section" onclick="saveExtractedLr().then(ok => { if (ok) reloadToFreshData('extracted'); })">💾 Save LR Changes</button>
           <span class="save-status" id="lrSaveStatus"></span>
               {% if can_edit_extracted %}
           <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
@@ -1085,6 +1089,7 @@ async function saveExtractedLr() {
     vehicle_number:  document.getElementById('lr_vehicle_number').value,
     material_description: document.getElementById('lr_material_description').value,
     quantity:        document.getElementById('lr_quantity').value,
+    uom:             document.getElementById('lr_uom').value,
     weight:          document.getElementById('lr_weight').value,
     delivery_address: document.getElementById('lr_delivery_address').value,
     from_location:   document.getElementById('lr_from_location').value,
@@ -1121,7 +1126,15 @@ async function saveAndNext(step) {
 
   if (ok) {
     const next = _nextDocStep(step);
-    if (next) switchDataTab(next);
+    if (next) {
+      switchDataTab(next);
+    } else {
+      // FIX: last document section in this record's chain -- nothing left
+      // to advance to within Extracted Data, so this is the natural point
+      // to refresh. Other tabs (Gate In/MIGO/MIRO) pre-fill fields from
+      // this data and were staying stale until a manual reload.
+      reloadToFreshData('extracted');
+    }
   }
 }
 

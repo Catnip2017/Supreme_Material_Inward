@@ -194,26 +194,54 @@ def _run_bots(history_id: int) -> None:
         result = {"checked_at": datetime.now()}
         errors = []
 
-        # Site 1: EInvoiceBot
-        try:
-            from services.einvoice_bot import EInvoiceBot
-            EInvoiceBot.cleanup_old_screenshots()
-            bot1 = EInvoiceBot(headless=False)
+        # v20 FIX: each site already has its own fully independent
+        # captcha-solving loop (see EInvoiceBot/TaxpayerSearchBot's own
+        # _solve_captcha_and_submit -- separate class instances, separate
+        # browser sessions, no shared state). But THIS function has always
+        # re-run BOTH sites from scratch on every retry, with no way to
+        # resume just the half that failed -- so a Site 2 captcha/portal
+        # hiccup needing a retry was also silently re-solving Site 1's
+        # captcha for no reason, even though it already succeeded. Only
+        # skip re-running Site 1 if its last stored result was genuinely
+        # clean (einvoice_status present, no "Site1:" in the last
+        # bot_error) -- if Site 1 itself failed too, or this is the very
+        # first run for this history_id (no existing row), run it fresh
+        # exactly as before. Site 2 always runs fresh below, unconditionally.
+        existing = get_gst_approval(history_id)
+        site1_reusable = bool(
+            existing
+            and existing.get("einvoice_status")
+            and "Site1:" not in (existing.get("bot_error") or "")
+        )
+
+        if site1_reusable:
+            logger.info(
+                f"[gst_runner] Site1 already clean for history_id={history_id} "
+                "-- reusing previous result, only retrying Site2"
+            )
+            result["einvoice_status"]     = existing.get("einvoice_status", "")
+            result["einvoice_screenshot"] = existing.get("einvoice_screenshot", "")
+        else:
+            # Site 1: EInvoiceBot
             try:
-                r1 = bot1.search(gstin)
-                logger.info(f"[gst_runner] site1 raw result: {r1}")
-                result["einvoice_status"]     = r1.get("einvoice_status", "")
-                result["einvoice_screenshot"] = r1.get("screenshot", "")
-                if r1.get("error"):
-                    errors.append(f"Site1: {r1['error']}")
-                    logger.warning(f"[gst_runner] site1 error: {r1['error']}")
-                else:
-                    logger.info(f"[gst_runner] site1 einvoice_status='{result['einvoice_status']}'")
-            finally:
-                bot1.quit()
-        except Exception as e:
-            errors.append(f"Site1 exception: {e}")
-            logger.error(f"[gst_runner] site1 crashed: {e}", exc_info=True)
+                from services.einvoice_bot import EInvoiceBot
+                EInvoiceBot.cleanup_old_screenshots()
+                bot1 = EInvoiceBot(headless=False)
+                try:
+                    r1 = bot1.search(gstin)
+                    logger.info(f"[gst_runner] site1 raw result: {r1}")
+                    result["einvoice_status"]     = r1.get("einvoice_status", "")
+                    result["einvoice_screenshot"] = r1.get("screenshot", "")
+                    if r1.get("error"):
+                        errors.append(f"Site1: {r1['error']}")
+                        logger.warning(f"[gst_runner] site1 error: {r1['error']}")
+                    else:
+                        logger.info(f"[gst_runner] site1 einvoice_status='{result['einvoice_status']}'")
+                finally:
+                    bot1.quit()
+            except Exception as e:
+                errors.append(f"Site1 exception: {e}")
+                logger.error(f"[gst_runner] site1 crashed: {e}", exc_info=True)
 
         # Site 2: TaxpayerSearchBot
         try:

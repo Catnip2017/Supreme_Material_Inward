@@ -291,13 +291,52 @@ Check If Invoice Already Exists
 
 Expand Folder Node
     [Arguments]    ${folder_name}
+    # v19: ported from a colleague's working copy of this bot after ours hit
+    # a real failure at the 2026 year rollover (empty "2026" tree node, no
+    # expand icon yet -> the old hard Click Element aborted the whole batch).
+    # Their version is more robust in three ways, not just error-tolerant:
+    # (a) waits for the folder link itself to be rendered before touching
+    # it, (b) targets the expand icon with a tag-agnostic
+    # preceding-sibling::*[1] instead of assuming it's always an <ins>
+    # element (Contentverse renders none at all for a genuinely childless
+    # node, and may use a different tag otherwise), and (c) falls back to a
+    # JS DOM search across the common jsTree toggle selectors if the plain
+    # Selenium click can't find/click it. None of these hard-fail if
+    # there's truly nothing to expand -- they just no-op -- but they have a
+    # real chance of actually succeeding first instead of always giving up.
+    Wait Until Element Is Visible
+    ...    xpath=//a[text()='${folder_name}']    10s
+
     ${already_open}=    Run Keyword And Return Status
     ...    Page Should Contain Element
     ...    xpath=//a[text()='${folder_name}']/ancestor::li[1][contains(@class,'jstree-open')]
-    Run Keyword Unless    ${already_open}
-    ...    Run Keywords
-    ...    Click Element    xpath=//a[text()='${folder_name}']/preceding-sibling::ins[1]
-    ...    AND    Sleep    2s
+
+    IF    not ${already_open}
+        ${node_element}=    Get WebElement
+        ...    xpath=//a[text()='${folder_name}']
+        Mouse Over    ${node_element}
+        Sleep    1s
+
+        ${arrow_clicked}=    Run Keyword And Return Status
+        ...    Click Element
+        ...    xpath=//a[text()='${folder_name}']/preceding-sibling::*[1]
+
+        IF    not ${arrow_clicked}
+            Execute Javascript
+            ...    var els = document.querySelectorAll('a');
+            ...    for(var i=0; i<els.length; i++){
+            ...        if(els[i].textContent.trim() === '${folder_name}'){
+            ...            var li = els[i].closest('li');
+            ...            if(li){
+            ...                var arrow = li.querySelector('.jstree-ocl, ins, i');
+            ...                if(arrow){ arrow.click(); }
+            ...            }
+            ...            break;
+            ...        }
+            ...    }
+        END
+        Sleep    2s
+    END
 
 Click New Document Tab
     Execute Javascript
@@ -879,11 +918,22 @@ Upload Consolidated PDFs To DMS Portal
     Expand Material Inward Process
     Expand MIP Docs
 
-    # Step 4a: Create YEAR folder under MIP Docs if missing
-    Create Folder If Not Exists    xpath=//*[contains(text(),'MIP Docs')]    ${year_folder}
+    # Step 4a: Create YEAR folder under MIP Docs if missing.
+    # v19: switched from the old Create Folder If Not Exists (checks for ANY
+    # element anywhere on the page with this exact text) to the
+    # MIP-Docs-scoped Create Subfolder If Not Exists -- same fix source as
+    # Expand Folder Node above. The unscoped version is a latent risk any
+    # time the current year (or any folder name) could also appear elsewhere
+    # on the page -- breadcrumb, another folder, a label -- since it could
+    # click the wrong element and desync the page from what Expand Folder
+    # Node expects next. Scoping to MIP Docs as the parent removes that
+    # ambiguity, matching how the month folder one step below has always
+    # been handled.
+    Create Subfolder If Not Exists
+    ...    xpath=//*[contains(text(),'MIP Docs')]    MIP Docs    ${year_folder}
 
-    # Step 4b: Open year folder
-    Open Folder By Name    ${year_folder}
+    # Step 4b: Open year folder (scoped to MIP Docs for the same reason)
+    Open Subfolder By Name    MIP Docs    ${year_folder}
 
     # Step 4c: Create MONTH folder inside year folder if missing
     Create Subfolder If Not Exists

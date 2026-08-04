@@ -77,12 +77,12 @@ from database.db_operations import get_staged_dms_records, set_dms_status
 from database.connection import init_pool
 from services.robot_lock import acquire_robot_lock, release_robot_lock, is_robot_locked
 from services.dms_links_import import run_dms_links_import
+from config.logger import get_logger
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [dms_upload_runner] %(message)s",
-)
-logger = logging.getLogger(__name__)
+# v20 FIX: was its own logging.basicConfig() with a hardcoded tag -- see
+# services/dms_links_import.py's comment for why that's unsafe (root
+# logger race across imports). Switched to the shared get_logger().
+logger = get_logger(__name__)
 
 TIMEOUT_SECONDS = 1800  # 30 min — bulk upload of a whole folder can take a while
 

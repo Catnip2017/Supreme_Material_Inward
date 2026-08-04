@@ -88,8 +88,23 @@ Initialize SAP and Login
     SapGuiLibrary.Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
     SapGuiLibrary.Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
     SapGuiLibrary.Click Element     wnd[0]/tbar[0]/btn[0]
-    Sleep    5s
- 
+
+    # FIX: this login keyword had NO multi-logon popup handling at all --
+    # unlike gate_in.robot/migo_103.robot/migo_105.robot, a "continue with
+    # this logon?" dialog here would just sit unhandled and the run would
+    # stall/time out. Ported the same check gate_in.robot uses (OPT2 =
+    # "continue without ending other sessions", the safe choice).
+    Sleep    3s
+    ${multi}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[1]
+    IF    ${multi}
+        Run Keyword And Ignore Error    SapGuiLibrary.Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
+        Run Keyword And Ignore Error    SapGuiLibrary.Click Element         wnd[1]/tbar[0]/btn[0]
+        Sleep    2s
+    END
+
+    Sleep    2s
+    Dismiss Any Popup
+
     Log    SAP login successful    level=INFO
  
  
