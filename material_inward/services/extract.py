@@ -347,13 +347,25 @@ depending on template. Map whichever labels appear to these fields:
   not the billing party, even when the two blocks show identical details.
 
 Important field notes:
-- "invoice_date": Use the FIRST date that appears at the top of the invoice — typically labeled "Date", "Invoice Date", or "Dated". Do not use delivery date, dispatch date, or due date.
-- "po_number": A numeric purchase order number typically starting with 4 or 6 followed by 9 digits (e.g. 4500012345 or 6300001343). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No". If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
+- "invoice_number": Use the value labeled "Invoice No", "Invoice Number", "Bill No", or similar. On a dense/landscape layout this label often sits in a small top-right box next to Invoice Date/Due Date/Internal Ref No -- read the whole box, not just the first line, since it can wrap across two lines. FALLBACK ONLY: if there is no usable/legible Invoice Number field anywhere on the document, but there IS an "Outbound Delivery No", "Delivery No", or "ODN" label, use that value instead. Never use the Outbound Delivery Number when a proper Invoice Number is present and readable -- it is strictly a fallback for when the real Invoice Number cannot be found, not a preference.
+- "invoice_date": Use the FIRST date that appears at the top of the invoice — typically labeled "Date", "Invoice Date", or "Dated". Do not use delivery date, dispatch date, or due date. On a landscape layout it commonly sits in the same small header box as Invoice Number, immediately below or beside it -- read that whole box carefully rather than picking the first date-like text seen anywhere on the page (which is often a due date or removal/preparation date printed elsewhere).
+- "po_number": A numeric purchase order number typically starting with 4 or 6 followed by 9 digits (e.g. 4500012345 or 6300001343). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No", "Customer PO Ref". If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
+- "buyer_address"/"seller_address"/"ship_to_address": these almost always span MULTIPLE LINES (street, village/area, city, state, PIN code, country) -- read every line belonging to that address block and join them into ONE combined string (e.g. with commas or line breaks), not just the first word or first line. On a landscape layout, address blocks are often squeezed into a narrow column and wrap across 3-4 short lines -- make sure you have captured the full block down to the PIN code before moving on, rather than stopping after the first line.
+- "buyer_gstin"/"seller_gstin": always exactly 15 characters (2-digit state code, 10-character PAN, 1-digit entity code, the letter "Z", 1 checksum character) -- if what you've read is shorter or longer than 15 characters, re-examine that region of the image for a missed or extra character before returning it.
+- "company_pan": always exactly 10 characters, format 5 letters + 4 digits + 1 letter (e.g. AAACE1713F) -- note that this PAN is also embedded inside the Seller GSTIN as characters 3-12, so if the two are visible together you can cross-check one against the other.
+- "hsn_sac" (also applies to hsn_details[].hsn_sac): a numeric HSN/SAC code, commonly 4, 6, or 8 digits -- do not confuse it with Material Code (which is always 8 characters and starts with 18/20/21/23, see below) or with a batch/lot number printed in the same row.
 - "grand_total": Some invoices show two separate total blocks -- an initial total (e.g. "Total Invoice Value") and a final total after deductions (e.g. "Total Net Invoice Value", "Net Payable", after a "Less: Advance Received" or similar line). When both appear, "grand_total" is always the FINAL net payable figure -- the one after any deduction line, not the subtotal above it. If there is only one total block, use that.
--"material_code": The vendor or buyer internal item identifier — look for labels
+- "material_code" (top-level field notes, applies to hsn_details[].material_code too): The vendor or buyer internal item identifier — look for labels
   like "Item Code", "Product Code", "Part No", "SAP Code", "Material Code",
   "Art. No", "Cat. No", or any alphanumeric code column separate from HSN/SAC.
-  Return empty string if not found.
+  These material codes are always exactly 8 characters long and start with
+  one of "18", "20", "21", or "23" (e.g. 18040021, 20115032, 21987744,
+  23004410) -- use this shape to help distinguish it from other nearby
+  codes/numbers of a different length, and to sanity-check a read: if the
+  code you found is not 8 characters or does not start with one of those
+  four prefixes, double-check you have not picked up a different column
+  (HSN/SAC, batch no, etc.) before returning it. Return empty string if not
+  found.
 - "rate": The unit rate/price per item as shown in the Rate column.
 - "unit": The unit of measure for the line item (e.g., pc, Nos, EA, Num, kg).
 - "taxable_value": The line total before tax (rate x quantity, after discount).

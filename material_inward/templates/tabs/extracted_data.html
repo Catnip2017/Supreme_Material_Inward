@@ -477,6 +477,7 @@
             <div class="field-block">
               <div class="field-label">Company PAN</div>
               <input class="editable-input" id="inv_company_pan" value="{{ invoice_data.get('company_pan','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_company_pan"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Seller Address</div>
@@ -614,8 +615,10 @@
 
         <!-- Goods Information — editable, one row per invoice line item.
              Backed by invoice_data.hsn_details (single source of truth, v7).
-             Hidden per-line fields (material_code, unit, rate, taxes, total)
-             are preserved on save via ORIGINAL_HSN merge. -->
+             Hidden per-line fields (rate, taxes, total) are preserved on
+             save via ORIGINAL_HSN merge. material_code is now a visible
+             column (previously hidden -- see the Material Code pattern
+             check in the script section below). -->
         <div class="section-card">
           <div class="section-title">📦 Goods Information</div>
           <div style="overflow-x:auto;">
@@ -623,6 +626,7 @@
               <thead>
                 <tr>
                   <th style="width:30px;">#</th>
+                  <th>Material Code</th>
                   <th>Goods Description</th>
                   <th>HSN Code</th>
                   <th>Quantity</th>
@@ -636,6 +640,7 @@
                 {% for hsn in hsn_list %}
                 <tr data-orig-idx="{{ loop.index0 }}">
                   <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                  <td><input type="text" data-field="material_code" value="{{ hsn.get('material_code','') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td><input type="text" data-field="description" value="{{ hsn.get('description','') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td><input type="text" data-field="hsn_sac" value="{{ hsn.get('hsn_sac','') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td><input type="text" data-field="quantity" value="{{ hsn.get('quantity','') }}" {% if is_approved %}disabled{% endif %}></td>
@@ -1137,8 +1142,8 @@ async function saveAndNext(step) {
 // Goods Information rows add/remove/collect (v7)
 // Same pattern as MIGO 103 addInvoiceRow().
 // Rows are backed by invoice_data.hsn_details — collection merges
-// edits into the original line so hidden fields (material_code,
-// unit, rate, taxes, total) are never lost.
+// edits into the original line so hidden fields (rate, taxes, total)
+// are never lost. material_code is a visible column (see below).
 // ============================================================
 function addGoodsRow() {
   const tbody = document.getElementById('invGoodsBody');
@@ -1146,6 +1151,7 @@ function addGoodsRow() {
   tr.setAttribute('data-orig-idx', '-1');
   tr.innerHTML = `
     <td class="goods-row-num" style="color:#888;font-size:11px;"></td>
+    <td><input type="text" data-field="material_code" placeholder="Material Code"></td>
     <td><input type="text" data-field="description" placeholder="Goods Description"></td>
     <td><input type="text" data-field="hsn_sac" placeholder="HSN Code"></td>
     <td><input type="text" data-field="quantity" placeholder="Quantity"></td>
@@ -1155,6 +1161,7 @@ function addGoodsRow() {
   `;
   tbody.appendChild(tr);
   _renumberGoodsRows();
+  _checkAllMaterialCodes();
 }
 
 function deleteGoodsRow(btn) {
@@ -1191,6 +1198,42 @@ function _collectInvHsn() {
   });
   return items;
 }
+
+// ============================================================
+// Material Code pattern check (client requested: Material Codes are
+// always exactly 8 characters and start with 18/20/21/23 -- flag a
+// value that doesn't match, so a likely OCR misread or wrong-column
+// read gets noticed). Visual only, never blocks Save/Approve. Uses the
+// existing .field-mismatch amber styling plus a title tooltip, since a
+// dedicated message row doesn't fit cleanly inside a table cell. Wired
+// via event delegation on the tbody so it works for both
+// server-rendered rows and rows added later via addGoodsRow(), with no
+// per-row listener setup needed.
+// ============================================================
+const MATERIAL_CODE_PREFIXES = ['18', '20', '21', '23'];
+
+function _checkMaterialCodeInput(input) {
+  const val = (input.value || '').trim().toUpperCase();
+  const bad = !!val && !(val.length === 8 && MATERIAL_CODE_PREFIXES.includes(val.slice(0, 2)));
+  input.classList.toggle('field-mismatch', bad);
+  input.title = bad ? 'Material Code is usually 8 characters, starting with 18/20/21/23 -- please verify.' : '';
+}
+
+function _checkAllMaterialCodes() {
+  document.querySelectorAll('#invGoodsBody input[data-field="material_code"]').forEach(_checkMaterialCodeInput);
+}
+
+(function () {
+  const tbody = document.getElementById('invGoodsBody');
+  if (tbody) {
+    tbody.addEventListener('input', function (e) {
+      if (e.target.matches('input[data-field="material_code"]')) {
+        _checkMaterialCodeInput(e.target);
+      }
+    });
+  }
+  _checkAllMaterialCodes();
+})();
 
 // ============================================================
 // v13: Partial-document scenario pickers (Goods Delivery Mode / E-Way
@@ -1515,6 +1558,45 @@ function _validateGstinField(fieldId, errId) {
     _validateGstinField(fieldId, errId);
   }
 });
+
+// ============================================================
+// PAN vs GSTIN cross-check (client requested: a GSTIN's characters 3-12
+// are always that entity's own 10-character PAN by statutory format --
+// e.g. GSTIN 33AAACE1713F1ZD contains PAN AAACE1713F. Company PAN is
+// checked against the PAN embedded in Seller GSTIN, since that's the
+// pair shown together on the Invoice tab. Visual only, never blocks
+// Save/Approve -- reuses the same red field-expired styling as the
+// GSTIN checksum check above, since a mismatch here is a hard error
+// (statutory fact), not just "worth a second look" like the amber
+// cross-tab mismatch checks below.
+// ============================================================
+function _validatePanAgainstGstin() {
+  const panEl = document.getElementById('inv_company_pan');
+  const gstinEl = document.getElementById('inv_seller_gstin');
+  const err = document.getElementById('err_inv_company_pan');
+  if (!panEl || !gstinEl) return;
+  const pan = panEl.value.trim().toUpperCase();
+  const gstin = gstinEl.value.trim().toUpperCase();
+  let msg = '';
+  if (pan && gstin.length === 15) {
+    const panInGstin = gstin.slice(2, 12);
+    if (pan !== panInGstin) {
+      msg = `PAN does not match the PAN embedded in Seller GSTIN (expected ${panInGstin}) -- possible typo.`;
+    }
+  }
+  panEl.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+(function () {
+  const panEl = document.getElementById('inv_company_pan');
+  const gstinEl = document.getElementById('inv_seller_gstin');
+  if (panEl) panEl.addEventListener('blur', _validatePanAgainstGstin);
+  if (gstinEl) gstinEl.addEventListener('blur', _validatePanAgainstGstin);
+  _validatePanAgainstGstin();
+})();
 
 // ============================================================
 // Cross-tab mismatch highlighting (client requested, visual only --

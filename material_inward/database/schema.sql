@@ -275,10 +275,12 @@ CREATE TABLE IF NOT EXISTS history_remarks (
 );
 
 -- ============================================================
--- HISTORY COMMENTS TABLE — append-only log of per-role comments on the
--- Remark above. Attributed to the ROLE that posted, not the username. The
--- UI only ever shows the latest row per (history_id, role), but rows are
--- never updated or deleted -- full history is preserved for audit.
+-- HISTORY COMMENTS TABLE — append-only log of comments on the Remark
+-- above. Each row is attributed to both the ROLE it was posted as and
+-- the individual username (created_by) who posted it. Rows are never
+-- updated or deleted, and the UI now shows the FULL chronological
+-- history (not just the latest per role) -- see
+-- database/remarks_operations.py get_comments().
 -- See schema_migration_v12.sql.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS history_comments (
