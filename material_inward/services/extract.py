@@ -312,6 +312,15 @@ Rules:
 - Return all dates in DD/MM/YYYY format.
 - Return amounts as numbers only — no currency symbols, no commas.
 - Return quantities as numbers only — no units.
+- CRITICAL — every field value must be a SINGLE LINE with no actual line
+  break/newline character inside it. If a field's text wraps across
+  multiple printed lines on the document (a multi-line address is the
+  most common case), join those lines into one string separated by a
+  comma and a space -- never insert a literal line break between them.
+  A raw line break inside a JSON string value is invalid JSON and makes
+  your ENTIRE response fail to parse, discarding every field you
+  extracted, not just that one -- so this rule matters even for fields
+  that seem unimportant.
 """
 
     prompts = {
@@ -350,7 +359,7 @@ Important field notes:
 - "invoice_number": Use the value labeled "Invoice No", "Invoice Number", "Bill No", or similar. On a dense/landscape layout this label often sits in a small top-right box next to Invoice Date/Due Date/Internal Ref No -- read the whole box, not just the first line, since it can wrap across two lines. FALLBACK ONLY: if there is no usable/legible Invoice Number field anywhere on the document, but there IS an "Outbound Delivery No", "Delivery No", or "ODN" label, use that value instead. Never use the Outbound Delivery Number when a proper Invoice Number is present and readable -- it is strictly a fallback for when the real Invoice Number cannot be found, not a preference.
 - "invoice_date": Use the FIRST date that appears at the top of the invoice — typically labeled "Date", "Invoice Date", or "Dated". Do not use delivery date, dispatch date, or due date. On a landscape layout it commonly sits in the same small header box as Invoice Number, immediately below or beside it -- read that whole box carefully rather than picking the first date-like text seen anywhere on the page (which is often a due date or removal/preparation date printed elsewhere).
 - "po_number": A numeric purchase order number typically starting with 4 or 6 followed by 9 digits (e.g. 4500012345 or 6300001343). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No", "Customer PO Ref". If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
-- "buyer_address"/"seller_address"/"ship_to_address": these almost always span MULTIPLE LINES (street, village/area, city, state, PIN code, country) -- read every line belonging to that address block and join them into ONE combined string (e.g. with commas or line breaks), not just the first word or first line. On a landscape layout, address blocks are often squeezed into a narrow column and wrap across 3-4 short lines -- make sure you have captured the full block down to the PIN code before moving on, rather than stopping after the first line.
+- "buyer_address"/"seller_address"/"ship_to_address": these almost always span MULTIPLE LINES (street, village/area, city, state, PIN code, country) -- read every line belonging to that address block and join them into ONE combined string separated by ", " (comma and space), e.g. "VILLAGE: AMDOSHI / WANGANI, WAI-ROAD, TALUKA-ROHA, RAIGAD, MAHARASHTRA 402106", not just the first word or first line. Do NOT join with an actual line break -- comma-and-space only, per the SINGLE LINE rule above. On a landscape layout, address blocks are often squeezed into a narrow column and wrap across 3-4 short lines -- make sure you have captured the full block down to the PIN code before moving on, rather than stopping after the first line.
 - "buyer_gstin"/"seller_gstin": always exactly 15 characters (2-digit state code, 10-character PAN, 1-digit entity code, the letter "Z", 1 checksum character) -- if what you've read is shorter or longer than 15 characters, re-examine that region of the image for a missed or extra character before returning it.
 - "company_pan": always exactly 10 characters, format 5 letters + 4 digits + 1 letter (e.g. AAACE1713F) -- note that this PAN is also embedded inside the Seller GSTIN as characters 3-12, so if the two are visible together you can cross-check one against the other.
 - "hsn_sac" (also applies to hsn_details[].hsn_sac): a numeric HSN/SAC code, commonly 4, 6, or 8 digits -- do not confuse it with Material Code (which is always 8 characters and starts with 18/20/21/23, see below) or with a batch/lot number printed in the same row.
@@ -403,6 +412,10 @@ Before returning your answer, check:
 5. Every hsn_details row's taxable_value plus its tax amounts roughly
    equals its total -- if not, re-check that row's columns for bleed
    before finalizing.
+6. No field value contains an actual line break -- a multi-line address
+   or any other wrapped field must be one single-line string joined with
+   ", " (comma and space), never a raw newline. A single field with a
+   literal line break in it will break your entire JSON response.
 Correct any field that fails these checks before returning the JSON.
 
 {
@@ -526,6 +539,45 @@ def _build_messages(pages_b64: list, prompt: str) -> list:
     return [{"role": "user", "content": content}]
 
 
+def _sanitize_json_control_chars(text: str) -> str:
+    """
+    Defensive safety net (not a substitute for the prompt's SINGLE LINE
+    rule, but a backstop for when the model doesn't follow it): replace
+    raw control characters (newline, carriage return, tab) found INSIDE a
+    JSON string value with a single space. A literal, unescaped control
+    character inside a string is invalid per the JSON spec and makes
+    json.loads() fail on the ENTIRE response -- this is exactly what was
+    observed when the model joined a multi-line address with an actual
+    line break instead of a comma. Only whitespace control characters
+    between quotes are touched; nothing outside a string, and no other
+    character, is ever modified -- so this cannot change what value was
+    extracted, only make an otherwise-unparseable response parseable.
+    """
+    out = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if in_string:
+            if escape:
+                out.append(ch)
+                escape = False
+            elif ch == '\\':
+                out.append(ch)
+                escape = True
+            elif ch == '"':
+                in_string = False
+                out.append(ch)
+            elif ch in ('\n', '\r', '\t'):
+                out.append(' ')
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+    return ''.join(out)
+
+
 def _parse_response(raw_text: str, doc_type: str) -> Optional[dict]:
     """
     Parse WatsonX response text into a dict.
@@ -538,6 +590,10 @@ def _parse_response(raw_text: str, doc_type: str) -> Optional[dict]:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
+
+    # Safety net: repair raw line breaks/tabs left inside string values
+    # before attempting to parse -- see _sanitize_json_control_chars().
+    text = _sanitize_json_control_chars(text)
 
     try:
         parsed = json.loads(text)

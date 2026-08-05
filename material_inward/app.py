@@ -1227,6 +1227,7 @@ def api_rerun_ocr(history_id):
 
     retry_count = increment_ocr_retry(history_id)
     files_processed = 0
+    invoice_succeeded = False
 
     for filename in os.listdir(failed_path):
         if not filename.lower().endswith(".pdf"):
@@ -1243,6 +1244,7 @@ def api_rerun_ocr(history_id):
                 extracted["filename"] = filename
                 if doc_type == "invoice":
                     save_invoice_to_db(history_id, extracted)
+                    invoice_succeeded = True
                     # Same auto-trigger as the first-pass OCR save (_run_ocr_and_save)
                     # -- this re-run path re-extracts from the source file and can
                     # produce a GSTIN that never got checked at all (the original
@@ -1258,10 +1260,30 @@ def api_rerun_ocr(history_id):
         except Exception as e:
             logger.error(f"Re-run OCR error: {e}")
 
-    if files_processed > 0:
+    # Invoice is the anchor document every downstream tab/workflow step
+    # keys off (same rule now enforced in folder_watcher.py._process_batch()
+    # for the automated intake path). Only mark the record "success" if the
+    # Invoice specifically was recovered this retry -- previously any
+    # successfully re-extracted file (even just E-Way Bill or LR alone)
+    # was enough to flip the whole record to "success", which could leave
+    # a record marked successful with no Invoice data and an empty Invoice
+    # tab, exactly what happened for history_id 42 on 2026-08-05.
+    if invoice_succeeded:
         _auto_populate_form_tables(history_id)
         set_ocr_status(history_id, "success")
         return jsonify({"success": True, "message": f"OCR retry succeeded — {files_processed} document(s)", "retry_count": retry_count})
+
+    if files_processed > 0:
+        # Some other document(s) re-extracted and were saved above, but the
+        # Invoice specifically still failed -- leave the record as "failed"
+        # rather than silently marking it "success" with an empty Invoice
+        # tab. The other document(s) are not lost: they're already saved,
+        # so the next Re-run only needs to actually recover the Invoice.
+        return jsonify({
+            "success": False,
+            "error": f"Invoice could not be re-extracted ({files_processed} other document(s) saved) — record remains failed until the Invoice succeeds.",
+            "retry_count": retry_count
+        }), 500
 
     return jsonify({"success": False, "error": "OCR retry failed", "retry_count": retry_count}), 500
 

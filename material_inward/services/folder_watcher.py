@@ -391,8 +391,7 @@ def _process_batch(group_key: str, group_folder: str, files_by_type: dict, extra
     ocr_types = {k: v for k, v in files_by_type.items() if k != "others"}
 
     extracted = {"invoice": None, "ewaybill": None, "lr": None}
-    ocr_succeeded = True
-    error_detail = None
+    failures = {}  # doc_type -> error message, for whichever type(s) failed
 
     for doc_type, file_path in ocr_types.items():
         filename = os.path.basename(file_path)
@@ -407,46 +406,60 @@ def _process_batch(group_key: str, group_folder: str, files_by_type: dict, extra
                 extracted[doc_type] = data
                 logger.info(f"OCR OK: {doc_type} → history_id={history_id}")
             else:
-                ocr_succeeded = False
-                error_detail = f"OCR returned no data for {doc_type}"
-                logger.warning(error_detail)
-                break
+                failures[doc_type] = "OCR returned no data"
+                logger.warning(f"OCR returned no data for {doc_type}")
         except Exception as e:
-            ocr_succeeded = False
-            error_detail = f"OCR exception for {doc_type}: {e}"
-            logger.error(error_detail, exc_info=True)
-            break
+            failures[doc_type] = str(e)
+            logger.error(f"OCR exception for {doc_type}: {e}", exc_info=True)
+        # NOTE: no `break` here (previously present) -- each document type
+        # is now attempted independently, so one type's OCR failure no
+        # longer discards another type's already-successful extraction.
+        # Previously, a failed Invoice (for example) would also silently
+        # throw away a perfectly good E-Way Bill read, because the whole
+        # batch's DB save below only ran when EVERY type succeeded.
 
-    if ocr_succeeded:
-        # Save extracted data to DB
-        if extracted["invoice"]:
-            save_invoice_to_db(history_id, extracted["invoice"])
-            # Auto-start GST verification the moment OCR extracts a seller
-            # GSTIN -- same trigger app.py's manual-upload path
-            # (_run_ocr_and_save) already fires. This is the network-folder
-            # intake pipeline (the primary/automated path -- see module
-            # docstring), which previously saved invoice_data here and then
-            # just stopped: nothing kicked off the GST bots until a human
-            # happened to open the GST Approval tab and its 5s poll fired
-            # trigger_async() for the first time. Best-effort/non-fatal, same
-            # as the app.py side -- a GST-trigger failure must never affect
-            # OCR intake succeeding.
-            try:
-                from services.gst_runner import trigger_async as _gst_trigger
-                _gst_trigger(history_id)
-            except Exception as _gst_err:
-                logger.warning(f"GST auto-trigger failed for history_id={history_id} (non-fatal): {_gst_err}")
-        if extracted["ewaybill"]:
-            save_ewaybill_to_db(history_id, extracted["ewaybill"])
-        if extracted["lr"]:
-            save_lr_to_db(history_id, extracted["lr"])
+    # Save whatever succeeded, regardless of whether another type failed.
+    if extracted["invoice"]:
+        save_invoice_to_db(history_id, extracted["invoice"])
+        # Auto-start GST verification the moment OCR extracts a seller
+        # GSTIN -- same trigger app.py's manual-upload path
+        # (_run_ocr_and_save) already fires. This is the network-folder
+        # intake pipeline (the primary/automated path -- see module
+        # docstring), which previously saved invoice_data here and then
+        # just stopped: nothing kicked off the GST bots until a human
+        # happened to open the GST Approval tab and its 5s poll fired
+        # trigger_async() for the first time. Best-effort/non-fatal, same
+        # as the app.py side -- a GST-trigger failure must never affect
+        # OCR intake succeeding.
+        try:
+            from services.gst_runner import trigger_async as _gst_trigger
+            _gst_trigger(history_id)
+        except Exception as _gst_err:
+            logger.warning(f"GST auto-trigger failed for history_id={history_id} (non-fatal): {_gst_err}")
+    if extracted["ewaybill"]:
+        save_ewaybill_to_db(history_id, extracted["ewaybill"])
+    if extracted["lr"]:
+        save_lr_to_db(history_id, extracted["lr"])
 
-        inv  = extracted["invoice"]
-        eway = extracted["ewaybill"]
-        lr   = extracted["lr"]
+    inv  = extracted["invoice"]
+    eway = extracted["ewaybill"]
+    lr   = extracted["lr"]
+    if inv or eway or lr:
         upsert_gatein_entry(history_id, map_ocr_to_gatein(inv, eway, lr))
         upsert_migo_entry(history_id, map_ocr_to_migo(inv, eway, lr))
         upsert_miro_entry(history_id, map_ocr_to_miro(inv, eway, lr))
+
+    # Invoice is the anchor document every downstream tab and workflow
+    # step keys off (same principle already applied to the missing-file
+    # case in Change 33) -- the batch can only be considered successfully
+    # processed if the Invoice specifically was extracted, even when
+    # E-Way Bill and/or LR also succeeded. This is what actually decides
+    # ocr_succeeded now (previously "no type failed" decided it, which let
+    # a record with E-Way Bill + LR saved but NO Invoice silently end up
+    # marked "success" with an empty Invoice tab).
+    ocr_succeeded = bool(extracted["invoice"])
+
+    if ocr_succeeded:
 
         # v16: DMS staging no longer happens here -- moved to
         # services/rf_queue_worker.py._process_gate_in(), post-Gate-In, so
@@ -487,7 +500,17 @@ def _process_batch(group_key: str, group_folder: str, files_by_type: dict, extra
             set_ocr_status(history_id, "success", failed_path=group_folder)
 
     else:
-        # OCR failed — move group to failed/<group_key>_<timestamp>/
+        # OCR failed (specifically: Invoice did not extract) — move group
+        # to failed/<group_key>_<timestamp>/. Any E-Way Bill/LR data that
+        # DID succeed above has already been saved to the DB regardless,
+        # so a subsequent Re-run only actually needs to recover the
+        # Invoice -- re-extracting E-Way Bill/LR again is harmless
+        # (upsert), just not strictly necessary.
+        error_detail = failures.get("invoice", "OCR returned no data for invoice")
+        other_failures = {k: v for k, v in failures.items() if k != "invoice"}
+        if other_failures:
+            logger.warning(f"Additional non-blocking OCR failures in group {group_key}: {other_failures}")
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         fail_dest = os.path.join(FAILED_FOLDER, f"{group_key}_{timestamp}")
         try:
