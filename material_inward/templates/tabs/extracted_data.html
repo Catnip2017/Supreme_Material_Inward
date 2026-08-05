@@ -430,7 +430,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">PO Number</div>
-              <input class="editable-input" id="inv_po_number" value="{{ invoice_data.get('po_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_po_number" value="{{ (invoice_data.get('po_number') if invoice_data else '') or '' }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_po_number"></div>
             </div>
           </div>
@@ -1510,6 +1510,28 @@ function _checkIrnLength() {
   if (el) {
     el.addEventListener('input', _checkIrnLength);
     _checkIrnLength();
+  }
+})();
+
+// PO Number is expected to be 10 digits (client requested visual flag
+// only, never blocks Save/Approve) -- same pattern as _checkIrnLength above.
+function _checkPoNumberLength() {
+  const el = document.getElementById('inv_po_number');
+  const err = document.getElementById('err_inv_po_number');
+  if (!el) return;
+  const val = el.value.trim();
+  const short = val.length > 0 && val.length < 10;
+  el.classList.toggle('field-expired', short);
+  if (err) {
+    err.textContent = short ? `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.` : '';
+    err.classList.toggle('show', short);
+  }
+}
+(function () {
+  const el = document.getElementById('inv_po_number');
+  if (el) {
+    el.addEventListener('input', _checkPoNumberLength);
+    _checkPoNumberLength();
   }
 })();
 

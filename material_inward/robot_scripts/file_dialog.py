@@ -25,8 +25,26 @@ time.sleep(1)
 app = pywinauto.Application().connect(title="Open")
 dlg = app["Open"]
 
-# Type the folder path and navigate into it
-dlg["File name:Edit"].set_text(folder_path)
+# FIX: typing just the bare folder path here made the dialog list (and the
+# Ctrl+A below select) EVERY file in DMS_STAGING_FOLDER -- not just the
+# *.pdf invoices. That folder also holds each PDF's _meta.json sidecar and
+# document_links.xlsx itself (DMS_LINKS_EXCEL_PATH lives in the same
+# folder), so both were getting uploaded into Contentverse's batch queue
+# right alongside the real invoices. dms_upload.robot's own file count and
+# Index Each File loop only ever count/name the *.pdf files (via
+# List Files In Directory ... *.pdf), so Contentverse's actual queue had
+# MORE items in it than the robot had names ready for -- desyncing which
+# typed name landed on which physical document the moment a non-PDF file
+# was interleaved into Contentverse's own ordering. Confirmed in production:
+# a "File Already Exists" conflict for a _meta.json sidecar, and Contentverse
+# opening its embedded Excel editor for document_links.xlsx, both mid-batch.
+# Appending \*.pdf uses the Open dialog's standard wildcard-filter behavior
+# (same as typing a pattern into an Explorer address bar) so only PDFs are
+# ever listed or selected here, regardless of what else is in the folder.
+pdf_pattern = folder_path.rstrip("\\") + r"\*.pdf"
+
+# Type the folder+filter pattern and navigate into it
+dlg["File name:Edit"].set_text(pdf_pattern)
 time.sleep(0.5)
 dlg["File name:Edit"].type_keys("{ENTER}")
 time.sleep(2)
@@ -36,7 +54,7 @@ file_list = dlg["ShellView"]
 file_list.click()
 time.sleep(0.5)
 
-# Select all files using Ctrl+A on the file list
+# Select all files using Ctrl+A on the file list (PDF-only now, per the filter above)
 file_list.type_keys("^a")
 time.sleep(0.5)
 

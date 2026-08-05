@@ -106,7 +106,7 @@
   <div class="form-group">
     <label>Remarks</label>
     <input type="text" id="remarks105" class="form-input"
-           value="{{ migo_data.get('migo_105_remarks', '') if migo_data else '' }}"
+           value="{{ (migo_data.get('migo_105_remarks') if migo_data else '') or '' }}"
            {% if step_locked %}disabled{% endif %}>
   </div>
 
@@ -165,7 +165,7 @@ const HISTORY_ID_105 = {{ history_id|tojson }};
 const MIGO_105_LOCKED = false;
 // Load storage locations
 (function() {
-  const saved = "{{ migo_data.get('migo_105_storage_loc', '') if migo_data else '' }}";
+  const saved = "{{ (migo_data.get('migo_105_storage_loc') if migo_data else '') or '' }}";
   fetch('/api/storage_locations')
     .then(r => r.json())
     .then(data => {

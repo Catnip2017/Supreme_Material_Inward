@@ -18,6 +18,7 @@ from database.rf_queue_operations import (
     reset_stuck_running_jobs,
     enqueue_rf_job
 )
+from services.robot_lock import release_robot_lock
 from services.credential_cache import (
     get_job_credential, clear_job_credential
 )
@@ -467,13 +468,27 @@ def _process_migo_105(history_id: int, payload: dict) -> dict:
         )
         logger.info(f"MIGO 105 complete — history_id={history_id} doc={migo_105_doc}")
 
-        # v18: same pattern as MIGO 103 above -- separate follow-up job,
-        # using the same material_doc_number MIGO 105 itself just posted
-        # against (mat_doc, resolved earlier in this function from either
-        # the user override or the MIGO 103 result already in migo_entries).
-        _enqueue_link_attach(
-            history_id, "migo105_link", mat_doc, update_migo105_link_result
-        )
+        # FIX: was passing mat_doc here -- MIGO 103's material document
+        # number (the one this MIGO 105 posting was made AGAINST, resolved
+        # earlier in this function purely as SAP posting input). That meant
+        # migo105_link was attaching the Contentverse link to the WRONG SAP
+        # document. migo105_link must use migo_105_doc -- the number THIS
+        # posting just generated (already stored correctly above via
+        # update_history_step(..., "migo_105", generated_number=migo_105_doc))
+        # -- since that's the actual MIGO 105 document the link belongs on.
+        if migo_105_doc:
+            _enqueue_link_attach(
+                history_id, "migo105_link", migo_105_doc, update_migo105_link_result
+            )
+        else:
+            logger.warning(
+                f"migo105_link NOT enqueued for history_id={history_id} — "
+                "MIGO 105 posted successfully but no document number was captured."
+            )
+            update_migo105_link_result(
+                history_id, "failed",
+                error_message="No migo_105_doc_number available (not captured from SAP result)."
+            )
     else:
         update_migo_105_rf_result(history_id, status="failed", error_message=result.get("error"))
     return result
@@ -495,13 +510,18 @@ def _process_miro(history_id: int, payload: dict) -> dict:
         )
         logger.info(f"MIRO complete — history_id={history_id} FI_DOC={fi_doc}")
 
-        # v18: miro_link needs MATERIAL_DOC_NUMBER too (SAP has no concept
-        # of history_id) -- read it back from migo_entries, same place
-        # MIGO 105 reads it from. MIRO's own payload/result don't carry it
-        # (execute_miro_sap doesn't take or return one today), so this is
-        # a fresh lookup, not reused from elsewhere in this function.
-        migo_entry = get_migo_entry(history_id) or {}
-        mat_doc = migo_entry.get("material_doc_number", "")
+        # FIX: was reading migo_entries.material_doc_number here -- that
+        # column is MIGO 103's document number (schema.sql documents it as
+        # "shared, pre-filled from 103 result", kept there only so MIGO
+        # 105's own posting has something to reference as input). miro_link
+        # needs MIGO 105's own document number instead
+        # (history.migo_105_doc_number, written by this same worker's
+        # _process_migo_105 above) -- MIRO's flow continues from MIGO 105,
+        # not MIGO 103, so that's the document the link belongs on.
+        # details was already fetched a few lines up for the notification
+        # call, so this reuses it rather than a fresh migo_entries lookup.
+        history_rec = details.get("history") or {}
+        mat_doc = history_rec.get("migo_105_doc_number", "")
         if mat_doc:
             _enqueue_link_attach(
                 history_id, "miro_link", mat_doc, update_miro_link_result
@@ -509,11 +529,11 @@ def _process_miro(history_id: int, payload: dict) -> dict:
         else:
             logger.warning(
                 f"miro_link NOT enqueued for history_id={history_id} — "
-                "no material_doc_number found in migo_entries."
+                "no migo_105_doc_number found in history (MIGO 105 result missing)."
             )
             update_miro_link_result(
                 history_id, "failed",
-                error_message="No material_doc_number available (MIGO 103 result missing)."
+                error_message="No migo_105_doc_number available (MIGO 105 result missing)."
             )
     else:
         update_miro_rf_result(history_id, status="failed", error_message=result.get("error"))
@@ -723,11 +743,41 @@ STEP_HANDLERS = {
 
 def _worker_loop() -> None:
     logger.info("RF Queue Worker started.")
-    reset_stuck_running_jobs(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+    # FIX: this used to pass minutes=STUCK_JOB_TIMEOUT_MINUTES (15) here too,
+    # same as the periodic in-loop check below. That's wrong specifically at
+    # startup: a fresh process boot means nothing could possibly still be
+    # legitimately running from before (the old worker thread/subprocess is
+    # gone the moment the app restarts), so ANY row still marked 'running'
+    # at this point is orphaned by definition, regardless of how recently it
+    # started. The 15-minute-old threshold left recently-started jobs stuck
+    # forever after a restart (e.g. a job that started 2 minutes before an
+    # intentional restart stayed 'running' in the DB -- and kept blocking
+    # new enqueues for that history_id+step -- until 15 real minutes had
+    # passed since its OWN started_at, not since the restart). minutes=0
+    # makes "started_at < NOW()" match everything still marked running,
+    # so startup always clears the slate. The periodic check further below
+    # (while the worker keeps running) still uses the real 15-minute
+    # threshold, since jobs actively in-flight during normal operation must
+    # not be reset just because they're mid-run.
+    reset_stuck_running_jobs(minutes=0)
     logger.warning(
-    "Worker started — resetting any jobs stuck in 'running' "
-    f"longer than {STUCK_JOB_TIMEOUT_MINUTES} minutes."
-)
+        "Worker started — reset any jobs left in 'running' state from "
+        "before this restart (they cannot have survived it)."
+    )
+    # FIX: same "orphaned by restart" class of bug as the reset above, but
+    # for services/robot_lock.py's cross-process desktop lock file
+    # (C:\material_inward\robot.lock). That file already has its own
+    # 20-minute staleness auto-clear (see _STALE_LOCK_SECONDS), but a job
+    # that was killed by an app restart shortly after acquiring the lock
+    # left it sitting there well under 20 minutes old -- so every SAP/DMS
+    # robot attempted after a restart (dms_upload_runner.py's
+    # _wait_for_desktop_free, plus every _run_rf_script call) had to sit
+    # and wait out the rest of that 20-minute window before the lock
+    # self-cleared, even though nothing was actually holding it anymore.
+    # Same reasoning as reset_stuck_running_jobs(minutes=0) above: a fresh
+    # process boot means nothing could have survived to still legitimately
+    # hold this lock, so it's always safe to clear it unconditionally here.
+    release_robot_lock()
     last_stuck_check = datetime.now()
 
     while True:

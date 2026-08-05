@@ -254,7 +254,7 @@
     <div class="form-group">
       <label>Posting Date <span class="req">*</span></label>
       <input type="date" id="migoPostDate" class="form-input"
-             value="{{ migo_data.get('migo_post_date', '') if migo_data else '' }}"
+             value="{{ (migo_data.get('migo_post_date') if migo_data else '') or '' }}"
              >
       <div class="field-error-msg" id="err_migoPostDate">Required</div>
     </div>
@@ -277,7 +277,7 @@
     <div class="form-group">
       <label>GR/GI Slip No</label>
       <input type="text" id="migoGRSlipNo" class="form-input" maxlength="10"
-             value="{{ migo_data.get('migo_gr_slip_no', '') if migo_data else '' }}"
+             value="{{ (migo_data.get('migo_gr_slip_no') if migo_data else '') or '' }}"
              >
     </div>
   </div>
@@ -461,7 +461,7 @@
   <div class="form-group" style="margin-top:18px;">
     <label>Text <span style="font-size:11px;color:#888;">(Remarks)</span></label>
     <input type="text" id="migoRemarks" class="form-input"
-           value="{{ migo_data.get('migo_remarks', '') if migo_data else '' }}"
+           value="{{ (migo_data.get('migo_remarks') if migo_data else '') or '' }}"
            >
   </div>
 

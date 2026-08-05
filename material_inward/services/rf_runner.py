@@ -24,6 +24,15 @@ from services.robot_lock import acquire_robot_lock, release_robot_lock
 
 logger = get_logger(__name__)
 
+# FIX: same CWD-dependent dotenv issue as config/config.py and
+# dms_upload_runner.py -- dotenv_values() with no path searches upward from
+# the current working directory, which is normally fine for the Flask app
+# (launched from project root) but not guaranteed for every process that
+# might import/run this module. Anchor to this file's own project-root
+# location so the RF subprocess env is never silently missing .env values.
+_RF_RUNNER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_RF_RUNNER_ENV_PATH = os.path.join(_RF_RUNNER_ROOT, ".env")
+
 
 # ============================================================
 # DATA CLEANING
@@ -124,19 +133,6 @@ def _wake_sap_session() -> None:
     except Exception as e:
         logger.warning(f"PrepareSAPGui call failed (non-fatal): {e}")
 
-    # Step 3: Simulate mouse movement to wake display
-    try:
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-        pt = POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-        ctypes.windll.user32.SetCursorPos(pt.x + 1, pt.y)
-        time.sleep(0.1)
-        ctypes.windll.user32.SetCursorPos(pt.x, pt.y)
-        logger.info("Mouse activity simulated — display active.")
-    except Exception as e:
-        logger.warning(f"Mouse simulation failed (non-fatal): {e}")
-
     # Step 4: Final wait for display to fully render
     time.sleep(3)
     logger.info("Session wake sequence complete.")
@@ -196,7 +192,7 @@ def _run_rf_script(
 
     logger.info(f"Running RF: {script_name} | Variables: {list(variables.keys())}")
 
-    subprocess_env = {**os.environ, **dotenv_values()}
+    subprocess_env = {**os.environ, **dotenv_values(_RF_RUNNER_ENV_PATH)}
     if extra_env:
         # v16: per-user SAP credential override (LDAP users only) -- see
         # _sap_credential_env(). Added as new env var names on top of the
@@ -343,9 +339,16 @@ def execute_gate_in_sap(data: dict) -> dict:
         "GATE_IN_TIME":   _s(data.get("gateInTime", "")),
     }
 
+    # FIX: Gate In is now forced onto the shared spl_rpa .env SAP login
+    # for every submitter, regardless of LDAP identity -- explicit client
+    # decision. Same pattern as execute_po_fetch_sap's existing exception
+    # to the v16 per-user credential mechanism (see credential_cache.py):
+    # deliberately no extra_env override passed here, so _run_rf_script's
+    # subprocess always falls through to .env's SAP_USERNAME/SAP_PASSWORD.
+    # MIGO 103/105 and MIRO are UNCHANGED -- they still use each LDAP
+    # user's own SAP login as before; this exception is Gate In only.
     result = _run_rf_script(
-        "gate_in.robot", variables, timeout_seconds=180,
-        extra_env=_sap_credential_env(data)
+        "gate_in.robot", variables, timeout_seconds=180
     )
     if not result["success"]:
         return {"success": False, "error": result["error"], "gate_in_number": None}
