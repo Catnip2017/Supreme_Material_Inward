@@ -55,7 +55,27 @@ Load Environment Variables
     Set Suite Variable    ${USERNAME}
     Set Suite Variable    ${PASSWORD}
     Set Suite Variable    ${DMS_LINKS_EXCEL_PATH}    ${LINKS_PATH}
+    # FIX: DMS_PENDING_UPLOAD_FOLDER/DMS_UPLOADED_ARCHIVE_FOLDER were pure
+    # hardcoded literals in the *** Variables *** table above, completely
+    # disconnected from config.DMS_STAGING_FOLDER (the single source of
+    # truth every Python-side path -- dms_upload_runner.py, folder_watcher.py,
+    # the staging/consolidation step -- already reads from .env). Two
+    # independent copies of the same folder path is exactly how this file
+    # can silently drift out of sync with where the app is actually staging
+    # files, if .env's DMS_STAGING_FOLDER is ever changed without also
+    # hand-editing this file. Now mirrors the DMS_LINKS_EXCEL_PATH pattern
+    # immediately above: .env wins when set, hardcoded literal is only the
+    # fallback if DMS_STAGING_FOLDER is missing from .env entirely.
+    ${STAGING_FOLDER}=    Evaluate
+    ...    __import__('os').getenv('DMS_STAGING_FOLDER', r'''${DMS_PENDING_UPLOAD_FOLDER}''')
+    Set Suite Variable    ${DMS_PENDING_UPLOAD_FOLDER}    ${STAGING_FOLDER}
+    Set Suite Variable    ${DMS_UPLOADED_ARCHIVE_FOLDER}    ${STAGING_FOLDER}\\uploaded
     Create Directory    ${DMS_UPLOADED_ARCHIVE_FOLDER}
+    # Tracks every Contentverse document link already claimed by a file
+    # earlier in this run -- see Copy Generated Link And Close Popup's
+    # anti-mislink fix below.
+    @{SEEN_DOC_LINKS}=    Create List
+    Set Suite Variable    @{SEEN_DOC_LINKS}
 
 Open Login Page
     Open Browser    ${URL}    ${BROWSER}
@@ -832,20 +852,47 @@ Copy Generated Link And Close Popup
     Wait Until Element Is Visible
     ...    xpath=//*[contains(text(),'openDocumentLogin')] | //input[contains(@value,'openDocumentLogin')]    10s
 
-    ${doc_link}=    Execute Javascript
+    ${all_links}=    Execute Javascript
+    ...    var results = [];
     ...    var inputs = document.querySelectorAll('input, textarea');
     ...    for (var i=0; i<inputs.length; i++){
     ...        if (inputs[i].value && inputs[i].value.indexOf('openDocumentLogin') > -1){
-    ...            return inputs[i].value;
+    ...            results.push(inputs[i].value);
     ...        }
     ...    }
     ...    var els = document.querySelectorAll('div, span, p, td');
     ...    for (var j=0; j<els.length; j++){
     ...        if (els[j].textContent && els[j].textContent.indexOf('openDocumentLogin') > -1){
-    ...            return els[j].textContent.trim();
+    ...            results.push(els[j].textContent.trim());
     ...        }
     ...    }
-    ...    return 'NOT_FOUND';
+    ...    return results;
+
+    # FIX: production confirmed a real mislink -- h38's generated link
+    # opened a DIFFERENT file's invoice (from the same batch run) instead
+    # of its own. Root cause: this used to grab "the first element on the
+    # WHOLE page containing openDocumentLogin", with no scoping to the
+    # popup that was just opened for THIS file. When Contentverse hides
+    # (rather than removes) a previous file's link element between
+    # iterations of Process All Document Links, that stale element can
+    # still match first, silently returning an earlier file's link as if
+    # it were this file's. Fixed without touching Contentverse's own DOM
+    # (safer than trying to delete/blank stale nodes): collect every
+    # matching value on the page, then only accept the first one NOT
+    # already claimed earlier in this same run (tracked in the suite-level
+    # @{SEEN_DOC_LINKS} list, initialized in Load Environment Variables).
+    ${doc_link}=    Set Variable    NOT_FOUND
+    FOR    ${candidate}    IN    @{all_links}
+        ${already_seen}=    Run Keyword And Return Status
+        ...    List Should Contain Value    ${SEEN_DOC_LINKS}    ${candidate}
+        IF    not ${already_seen}
+            ${doc_link}=    Set Variable    ${candidate}
+            Append To List    ${SEEN_DOC_LINKS}    ${candidate}
+            Exit For Loop
+        END
+    END
+    Should Not Be Equal As Strings    ${doc_link}    NOT_FOUND
+    ...    msg=Could not find a NEW (not already claimed by an earlier file this run) document link — every openDocumentLogin value on the page was already used for a previous file.
 
     Log To Console    🔗 Generated Link: ${doc_link}
 

@@ -148,6 +148,7 @@
         .step-time-item { font-size:13px; color:#444; }
         .step-time-label { font-weight:700; margin-right:6px; color:#1e5ca8; }
         .step-time-value { color:#555; }
+        .step-time-by { color:#888; font-size:12px; font-style:italic; }
 
         /* Pagination */
         .pagination {
@@ -276,6 +277,7 @@
                 <option value="pending">Pending</option>
                 <option value="data_approved">Data Approved</option>
                 <option value="gst_approved">GST Approved</option>
+                <option value="gate_in_done">Gate In Done</option>
                 <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>
             </select>
@@ -457,7 +459,11 @@ function renderStepTimes(r) {
     const steps = [
         { label: 'Data Approved', iso: r.approval_at },
         { label: 'GST Approved',  iso: r.gst_check_done_at },
-        { label: 'Gate In',       iso: r.gatein_done_at },
+        // "by <user>" tucked into this same already-collapsed panel
+        // (not a new table column) so the main History table doesn't
+        // get any more cluttered -- see get_history_search()'s
+        // gate_in_submitted_by.
+        { label: 'Gate In',       iso: r.gatein_done_at, by: r.gate_in_submitted_by },
         { label: 'MIGO 103',      iso: r.migo_103_done_at },
         { label: 'MIGO 105',      iso: r.migo_105_done_at },
         { label: 'MIRO',          iso: r.miro_done_at },
@@ -466,9 +472,10 @@ function renderStepTimes(r) {
         <div class="step-times-panel">
             ${steps.map(s => {
                 const formatted = formatStepTime(s.iso);
+                const byText = (formatted && s.by) ? ` <span class="step-time-by">by ${s.by}</span>` : '';
                 return `<div class="step-time-item">
                     <span class="step-time-label">${s.label}:</span>
-                    <span class="step-time-value">${formatted || 'Not done yet'}</span>
+                    <span class="step-time-value">${formatted || 'Not done yet'}${byText}</span>
                 </div>`;
             }).join('')}
         </div>`;

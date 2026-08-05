@@ -220,7 +220,14 @@ def run_dms_upload() -> None:
             capture_output=True,
             text=True,
             timeout=TIMEOUT_SECONDS,
-            env={**os.environ, **dotenv_values()},
+            # FIX: dotenv_values() with no argument searches for .env from
+            # the current working directory upward -- unreliable under
+            # Task Scheduler (see config/config.py's identical fix and
+            # comment). Anchored to _ROOT (this file's own project-root
+            # location, computed at the top of this module) instead, so
+            # the subprocess always gets the real .env values regardless
+            # of what cwd this script happened to be launched with.
+            env={**os.environ, **dotenv_values(os.path.join(_ROOT, ".env"))},
         )
     except subprocess.TimeoutExpired:
         logger.error(f"dms_upload.robot timed out after {TIMEOUT_SECONDS}s")

@@ -7,7 +7,19 @@ All settings read from .env — never hardcode credentials.
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# FIX: load_dotenv() with no argument searches for .env starting from the
+# CURRENT WORKING DIRECTORY and walking upward -- fine when the Flask app is
+# launched from the project root (start_server.bat's cwd), but Windows Task
+# Scheduler tasks (dms_upload_runner.py, dms_scheduler.py) don't reliably run
+# with that same cwd. If this silently fails to find .env, every os.getenv()
+# below falls back to its hardcoded default -- e.g. RF_SCRIPTS_PATH falls
+# back to "C:\material_inward\robot_scripts" instead of the real configured
+# path, silently pointing at the wrong (possibly nonexistent, possibly
+# stale) robot_scripts folder with no error at all. Anchoring to this file's
+# own location (config/config.py -> project root is one level up) makes
+# .env resolution independent of whatever process/cwd imported this module.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 
 
 

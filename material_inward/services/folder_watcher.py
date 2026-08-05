@@ -196,9 +196,27 @@ def _is_stable(file_path: str) -> bool:
         return False
 
 
-def _ensure_dirs():
-    for folder in [WATCH_FOLDER, GROUPED_FOLDER, OCR_DONE_FOLDER, FAILED_FOLDER]:
-        os.makedirs(folder, exist_ok=True)
+def _ensure_dirs() -> bool:
+    """
+    Returns True if all watcher folders exist/were created, False if any
+    couldn't be created (e.g. WATCH_FOLDER lives on a mapped/NAS drive that
+    isn't currently mounted -- os.makedirs on a missing drive root raises
+    FileNotFoundError: [WinError 3], same class of failure the main loop
+    below already anticipates via the "NAS drive may be disconnected"
+    check). Callers must not let this raise -- an unmounted drive at
+    startup previously killed the whole FolderWatcher thread before it
+    ever reached that retry logic.
+    """
+    try:
+        for folder in [WATCH_FOLDER, GROUPED_FOLDER, OCR_DONE_FOLDER, FAILED_FOLDER]:
+            os.makedirs(folder, exist_ok=True)
+        return True
+    except OSError as e:
+        logger.error(
+            f"Could not create watcher folder(s) under {WATCH_FOLDER}: {e} — "
+            "NAS drive may be disconnected. Will keep retrying from the main loop."
+        )
+        return False
 
 
 # ============================================================
@@ -553,6 +571,11 @@ def _cleanup_orphans():
 
 def _poll_loop(interval: int = POLL_INTERVAL):
     logger.info(f"Folder watcher started — watching: {WATCH_FOLDER}")
+    # FIX: _ensure_dirs() used to be called unguarded here -- if WATCH_FOLDER
+    # sits on a NAS/mapped drive that isn't mounted yet at process startup,
+    # os.makedirs raised straight out of this line, before the thread ever
+    # reached the retry-aware loop below, killing FolderWatcher entirely
+    # instead of waiting for the drive to come back. Now non-fatal either way.
     _ensure_dirs()
 
     last_orphan_check = time.time()
@@ -565,6 +588,13 @@ def _poll_loop(interval: int = POLL_INTERVAL):
                     f"Watch folder not accessible: {WATCH_FOLDER} — "
                     f"NAS drive may be disconnected. Retrying in {interval}s."
                 )
+                time.sleep(interval)
+                continue
+
+            # Drive is reachable -- make sure the subfolders exist too
+            # (they may not have been created yet if it just came back
+            # online after being missing at startup or mid-run).
+            if not _ensure_dirs():
                 time.sleep(interval)
                 continue
 

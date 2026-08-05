@@ -592,6 +592,13 @@ def get_history_search(
         conditions.append("h.approval_status = 'approved' AND COALESCE(h.gst_check, 0) = 0")
     elif status == "gst_approved":
         conditions.append("COALESCE(h.gst_check, 0) = 1 AND h.gate_in = 0")
+    elif status == "gate_in_done":
+        # Added alongside data_approved/gst_approved above -- same v20
+        # pattern, splitting a specific, commonly-wanted state (Gate In
+        # done, nothing further posted yet) out of the broader
+        # "in_progress" bucket below, which lumps Gate In/MIGO 103/MIGO 105
+        # done states together and has no way to isolate just this one.
+        conditions.append("h.gate_in = 1 AND h.migo_103 = 0")
     elif status == "in_progress":
         conditions.append("h.gate_in = 1 AND h.miro = 0")
     elif status == "completed":
@@ -647,6 +654,11 @@ def get_history_search(
             h.gst_check, h.gst_check_done_at,
             h.created_at,
             h.gatein_done_at, h.migo_103_done_at, h.migo_105_done_at, h.miro_done_at,
+            -- who actually submitted the Gate In (gate_in_entries.submitted_by,
+            -- see schema_migration_v16.sql) -- shown in the History page's
+            -- existing collapsible step-times panel, not a new always-visible
+            -- column, so this doesn't add clutter to the main table.
+            gatein.submitted_by AS gate_in_submitted_by,
             -- v20: "Data Approved" (Extracted Data tab approval,
             -- history.approval_status) and "GST Approved"
             -- (history.gst_check, already the same column

@@ -241,7 +241,7 @@ Close SAP On Error
         END
 
         Evaluate    $session.findById('${PATH_ACTION_COMBO}').setFocus()
-        Evaluate    setattr($session.findById('${PATH_ACTION_COMBO}'), 'key', 'A05')
+        Evaluate    setattr($session.findById('${PATH_ACTION_COMBO}'), 'key', 'A12')
         Sleep    1s
 
         SapGuiLibrary.Input Text    ${PATH_MAT_DOC}    ${MATERIAL_DOC_NUMBER}

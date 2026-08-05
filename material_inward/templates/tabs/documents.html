@@ -15,7 +15,7 @@
   <span>✓ Consolidated document uploaded to DMS</span>
   <a href="{{ dms_document_link }}" target="_blank" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;text-decoration:none;background:#1a7a3c;color:white;">🔗 Open in DMS</a>
 </div>
-{% elif history and history.migo_103 %}
+{% elif history and history.gate_in %}
 <div style="background:#fff8e6;border:1px solid #ffd889;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px;color:#8a6100;display:flex;align-items:center;gap:10px;">
   <span>⏳ Consolidated document {% if history.dms_status == 'staged' %}staged but not yet confirmed uploaded to DMS{% else %}not yet uploaded to DMS{% endif %}</span>
   <button id="dmsRetryBtn" onclick="retryDmsUpload({{ history_id }})" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;border:none;cursor:pointer;background:#8a6100;color:white;">🔁 Retry DMS Upload</button>

@@ -2205,15 +2205,23 @@ def delete_all_documents(history_id):
 def api_dms_upload_retry(history_id):
     """
     Manual retry for a record whose consolidated PDF didn't make it to DMS
-    on its own (dms_status stuck at 'staged', or the earlier automatic
-    dms_upload RF job simply failed/timed out). Enqueues the exact same
-    "dms_upload" RF-queue step _enqueue_dms_upload() uses automatically
-    after MIGO 103 -- run_dms_upload() (see _process_dms_upload in
-    rf_queue_worker.py) always processes the WHOLE staging folder and
-    skips files already uploaded, so re-running it here is safe and can't
-    double-upload or disturb any other pending record. enqueue_rf_job()
-    itself blocks duplicate submission if a dms_upload job for this
-    history_id is already pending/running.
+    on its own (dms_status stuck at 'staged'/'pending', or the earlier
+    automatic dms_upload RF job simply failed/timed out). Enqueues the
+    exact same "dms_upload" RF-queue step _enqueue_dms_upload() uses
+    automatically after Gate In (for without_po flows) or PO Fetch (for
+    with_po flows, itself chained off Gate In) -- run_dms_upload() (see
+    _process_dms_upload in rf_queue_worker.py) always processes the WHOLE
+    staging folder and skips files already uploaded, so re-running it here
+    is safe and can't double-upload or disturb any other pending record.
+    enqueue_rf_job() itself blocks duplicate submission if a dms_upload
+    job for this history_id is already pending/running.
+
+    FIX: this used to gate on history.migo_103, a stale carryover from
+    before v18 moved the DMS staging+upload trigger to right after Gate In
+    -- meaning a DMS upload failure between Gate In and MIGO 103 had no
+    retry path at all until MIGO 103 happened, even though the document
+    was already staged and ready well before that. Gated on gate_in now,
+    matching what actually triggers staging.
     """
     blocked = _require_role_edit("compliance")
     if blocked:
@@ -2222,8 +2230,8 @@ def api_dms_upload_retry(history_id):
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
-    if not history.get("migo_103"):
-        return jsonify({"success": False, "error": "DMS upload only runs after MIGO 103 is done."}), 400
+    if not history.get("gate_in"):
+        return jsonify({"success": False, "error": "DMS upload only runs after Gate In is done."}), 400
     if history.get("dms_status") == "uploaded":
         return jsonify({"success": False, "error": "This record's document is already uploaded to DMS."}), 400
 

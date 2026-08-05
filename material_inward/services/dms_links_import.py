@@ -41,6 +41,7 @@ from database.connection import init_pool
 from database.db_operations import (
     find_history_id_by_consolidated_filename,
     upsert_dms_document_link,
+    get_history_details_by_id,
 )
 from database.migo_operations import get_migo_entry
 from database.miro_operations import get_miro_entry
@@ -143,30 +144,40 @@ def _catch_up_link_attach_jobs(history_id: int, document_link: str) -> None:
     that just succeeded (see caller, wrapped in the row's own try/except).
     """
     migo_entry = get_migo_entry(history_id) or {}
-    mat_doc = migo_entry.get("material_doc_number", "")
+    mat_doc_103 = migo_entry.get("material_doc_number", "")
 
-    if mat_doc and migo_entry.get("migo_103_rf_status") == "success" \
+    # FIX: migo105_link and miro_link both used mat_doc_103 (MIGO 103's
+    # document number) here too -- same mislink as rf_queue_worker.py's
+    # _process_migo_105/_process_miro (now fixed there). This is the
+    # "link landed late" catch-up path for the exact same three jobs, so it
+    # needs the identical fix: migo105_link/miro_link must use MIGO 105's
+    # own document number (history.migo_105_doc_number), not MIGO 103's --
+    # migo_entries.material_doc_number is only ever the 103 one.
+    history_rec = (get_history_details_by_id(history_id) or {}).get("history") or {}
+    mat_doc_105 = history_rec.get("migo_105_doc_number", "")
+
+    if mat_doc_103 and migo_entry.get("migo_103_rf_status") == "success" \
             and migo_entry.get("migo103_link_status") == "skipped_no_link":
         job_id = enqueue_rf_job(
             history_id, "migo103_link",
-            {"history_id": history_id, "material_doc_number": mat_doc, "document_link": document_link}
+            {"history_id": history_id, "material_doc_number": mat_doc_103, "document_link": document_link}
         )
         logger.info(f"Caught up migo103_link for history_id={history_id} (job_id={job_id})")
 
-    if mat_doc and migo_entry.get("migo_105_rf_status") == "success" \
+    if mat_doc_105 and migo_entry.get("migo_105_rf_status") == "success" \
             and migo_entry.get("migo105_link_status") == "skipped_no_link":
         job_id = enqueue_rf_job(
             history_id, "migo105_link",
-            {"history_id": history_id, "material_doc_number": mat_doc, "document_link": document_link}
+            {"history_id": history_id, "material_doc_number": mat_doc_105, "document_link": document_link}
         )
         logger.info(f"Caught up migo105_link for history_id={history_id} (job_id={job_id})")
 
     miro_entry = get_miro_entry(history_id) or {}
-    if mat_doc and miro_entry.get("rf_status") == "success" \
+    if mat_doc_105 and miro_entry.get("rf_status") == "success" \
             and miro_entry.get("miro_link_status") == "skipped_no_link":
         job_id = enqueue_rf_job(
             history_id, "miro_link",
-            {"history_id": history_id, "material_doc_number": mat_doc, "document_link": document_link}
+            {"history_id": history_id, "material_doc_number": mat_doc_105, "document_link": document_link}
         )
         logger.info(f"Caught up miro_link for history_id={history_id} (job_id={job_id})")
 
