@@ -4,21 +4,23 @@ CRUD operations for the record-wide Remarks & Comments feature
 (history_remarks + history_comments -- see schema_migration_v12.sql).
 
 Design recap:
-  - history_remarks: one row per history_id, the single root "Remark",
-    only ever edited by the Compliance role (or a SuperAdmin with edit
-    rights) -- see app.py's POST /api/remarks/<history_id>. Upserted
-    in place, same as any other single-value field.
+  - history_remarks: one row per history_id, the single root "Remark".
+    Write-once: only ever set ONE time, by the Compliance role (or a
+    SuperAdmin with edit rights) -- see app.py's POST /api/remarks/<history_id>,
+    which now rejects the request if a remark already exists for that
+    history_id. upsert_remark() itself still performs an INSERT ... ON
+    CONFLICT (kept as-is, harmless) but the write-once rule is enforced
+    one layer up, in the route, per this codebase's established
+    convention that the route layer decides permission/lock rules and
+    the db layer just executes the write.
   - history_comments: append-only log. Every add_comment() call INSERTs
-    a new row -- never UPDATEs or DELETEs one. get_comments() below only
-    ever returns the most recent row per (history_id, role), so from the
-    UI's point of view a role "overwrites" its own comment by posting
-    again, but the full history stays in the table for audit purposes.
+    a new row -- never UPDATEs or DELETEs one. get_comments() below
+    returns the FULL chronological history (oldest first), each with the
+    posting username, so every subsequent user can see who said what.
 
-Both tables intentionally store the posting username (updated_by /
-created_by) for internal audit, but neither value is ever returned by
-these functions to keep that decision centralized -- the client
-requirement is that comments show the ROLE, not the person, so the API
-layer (app.py) and the UI never see the username at all.
+history_remarks.updated_by / history_comments.created_by have always
+stored the posting username. Comments now surface it (client requirement:
+show the individual person, not just their role) -- see get_comments().
 """
 
 from typing import Optional
@@ -28,20 +30,6 @@ from database.connection import get_connection
 from config.logger import get_logger
 
 logger = get_logger(__name__)
-
-# Display order for comments -- mirrors the pipeline order used throughout
-# the rest of the app (and user_management.html's ROLE_LABELS), so the
-# comment list reads top-to-bottom in the same order the record actually
-# moves through the workflow, regardless of which role commented most
-# recently.
-_ROLE_ORDER = ["compliance", "gate_in", "migo_103", "migo_105", "miro", "SuperAdmin"]
-
-
-def _role_sort_key(role: str) -> int:
-    try:
-        return _ROLE_ORDER.index(role)
-    except ValueError:
-        return len(_ROLE_ORDER)  # unknown roles sort last, rather than erroring
 
 
 # ── Remark (single value per record) ───────────────────────────────────────
@@ -86,31 +74,27 @@ def upsert_remark(history_id: int, remark_text: str, role: str, username: str) -
         return False
 
 
-# ── Comments (append-only log, latest-per-role display) ─────────────────────
+# ── Comments (append-only log, full chronological history) ──────────────────
 
 def get_comments(history_id: int) -> list:
     """
-    Return the most recent comment per role for this record, ordered to
-    match the pipeline sequence (compliance -> gate_in -> migo_103 ->
-    migo_105 -> miro -> SuperAdmin), regardless of posting order.
-    Each item: {role, comment_text, created_at}. Username is never included.
+    Return EVERY comment ever posted on this record, oldest first, each
+    tagged with the role it was posted as AND the username of the person
+    who posted it. Comments can never be edited or removed -- this is a
+    plain, complete, append-only history (no DISTINCT ON collapsing).
+    Each item: {role, username, comment_text, created_at}.
     """
-    # DISTINCT ON (role) + ORDER BY role, created_at DESC picks exactly one
-    # row per role -- the newest one -- straight from Postgres, without
-    # needing a window function or a second query.
     sql = """
-        SELECT DISTINCT ON (role) role, comment_text, created_at
+        SELECT role, created_by AS username, comment_text, created_at
         FROM history_comments
         WHERE history_id = %s
-        ORDER BY role, created_at DESC
+        ORDER BY created_at ASC
     """
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(sql, (history_id,))
-                rows = [dict(r) for r in cur.fetchall()]
-                rows.sort(key=lambda r: _role_sort_key(r["role"]))
-                return rows
+                return [dict(r) for r in cur.fetchall()]
     except Exception as e:
         logger.error(f"[remarks_ops] get_comments failed for history_id={history_id}: {e}")
         return []

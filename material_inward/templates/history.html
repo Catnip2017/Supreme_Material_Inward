@@ -278,6 +278,8 @@
                 <option value="data_approved">Data Approved</option>
                 <option value="gst_approved">GST Approved</option>
                 <option value="gate_in_done">Gate In Done</option>
+                <option value="migo_103_done">MIGO 103 Done</option>
+                <option value="migo_105_done">MIGO 105 Done</option>
                 <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>
             </select>
@@ -338,6 +340,18 @@ function clearFilters() {
     loadHistory();
 }
 
+// FIX: loadHistory() had no protection against overlapping requests -- if
+// the filter/search changed again before the previous fetch resolved, TWO
+// requests were in flight at once, and whichever response happened to
+// arrive last (not whichever was requested last -- network timing decides)
+// is what got rendered. So selecting "Gate In Done" could still show
+// "Data Approved" results if that earlier request's response landed after
+// the Gate In Done one. _historyRequestSeq tags every request with an
+// incrementing id; a response only renders if it's still the most recent
+// one issued, so a stale/slow response from an abandoned filter selection
+// is silently dropped instead of overwriting the table.
+let _historyRequestSeq = 0;
+
 function loadHistory(page) {
     if (page) currentPage = page;
     const search   = document.getElementById('searchInput').value.trim();
@@ -352,6 +366,8 @@ function loadHistory(page) {
     const tbody = document.getElementById('historyTableBody');
     tbody.innerHTML = '<tr class="loading-row"><td colspan="9">⏳ Loading...</td></tr>';
 
+    const requestId = ++_historyRequestSeq;
+
     fetch('/api/history_search?' + params)
         .then(r => {
             if (r.status === 401) { window.location.href = '/login'; return; }
@@ -359,10 +375,12 @@ function loadHistory(page) {
         })
         .then(data => {
             if (!data) return;
+            if (requestId !== _historyRequestSeq) return; // a newer request superseded this one
             renderTable(data.records);
             renderPagination(data.page, data.total_pages, data.total);
         })
         .catch(err => {
+            if (requestId !== _historyRequestSeq) return;
             tbody.innerHTML = '<tr class="loading-row"><td colspan="9">Error loading records.</td></tr>';
         });
 }
@@ -463,7 +481,7 @@ function renderStepTimes(r) {
         // (not a new table column) so the main History table doesn't
         // get any more cluttered -- see get_history_search()'s
         // gate_in_submitted_by.
-        { label: 'Gate In',       iso: r.gatein_done_at, by: r.gate_in_submitted_by },
+        { label: 'Gate In',       iso: r.gatein_done_at, by: r.gate_in_submitted_by, no: r.gate_in_number },
         { label: 'MIGO 103',      iso: r.migo_103_done_at },
         { label: 'MIGO 105',      iso: r.migo_105_done_at },
         { label: 'MIRO',          iso: r.miro_done_at },
@@ -473,9 +491,12 @@ function renderStepTimes(r) {
             ${steps.map(s => {
                 const formatted = formatStepTime(s.iso);
                 const byText = (formatted && s.by) ? ` <span class="step-time-by">by ${s.by}</span>` : '';
+                // GIN alongside the timestamp/submitter, same collapsed
+                // panel -- not a new always-visible column.
+                const noText = (formatted && s.no) ? ` <span class="step-time-by">(GIN: ${s.no})</span>` : '';
                 return `<div class="step-time-item">
                     <span class="step-time-label">${s.label}:</span>
-                    <span class="step-time-value">${formatted || 'Not done yet'}${byText}</span>
+                    <span class="step-time-value">${formatted || 'Not done yet'}${noText}${byText}</span>
                 </div>`;
             }).join('')}
         </div>`;

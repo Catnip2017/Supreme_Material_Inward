@@ -111,29 +111,30 @@ def _force_kill_sap() -> None:
 def _wake_sap_session() -> None:
     """
     Wake RDP session and ensure display is active before SAP launches.
-    Calls the same sequence used by the standalone wake script.
+
+    FIX: removed the "PrepareSAPGui" scheduled-task call (schtasks /Run /TN
+    PrepareSAPGui) that used to run here. Confirmed via application.log
+    (2026-08-05, 16:00-17:10 window) it was failing with "Access is denied"
+    on 100% of ~18 calls in that window -- a Windows Task Scheduler ACL
+    issue on the machine (the account running run_server.py isn't allowed
+    to trigger that task), not something fixable from this codebase. Client
+    confirmed it's no longer needed. Checked first for any concurrency risk
+    from removing it (i.e. whether it was quietly preventing SAP session
+    clashes between overlapping bot runs) -- traced every RobotLock
+    Acquired/Released pair across that same window, including through one
+    process crash-restart, found no double-acquisition; claim_next_pending_
+    job() in rf_queue_operations.py also guards against concurrent claims
+    via a running-status check + FOR UPDATE SKIP LOCKED. Safe to remove --
+    it was never actually running successfully anyway, so nothing
+    functional depended on it. Kept the sleep-prevention and final render
+    wait, which are unrelated to the scheduled task and still make sense.
     """
     import ctypes
-    import subprocess as sp
 
     # Step 1: Prevent sleep
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000003)
 
-    # Step 2: tscon via scheduled task
-    try:
-        result = sp.run(
-            ["schtasks", "/Run", "/TN", "PrepareSAPGui"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode == 0:
-            logger.info("PrepareSAPGui triggered.")
-            time.sleep(6)
-        else:
-            logger.warning(f"PrepareSAPGui failed: {result.stderr.strip()}")
-    except Exception as e:
-        logger.warning(f"PrepareSAPGui call failed (non-fatal): {e}")
-
-    # Step 4: Final wait for display to fully render
+    # Step 2: wait for display to fully render
     time.sleep(3)
     logger.info("Session wake sequence complete.")
 
@@ -275,6 +276,34 @@ def _extract_marked_value(output: str, marker: str) -> Optional[str]:
         return value
     logger.warning(f"Marker '{marker}' not found in RF output.")
     return None
+
+
+def _rf_test_actually_passed(output: str) -> bool:
+    """
+    FIX: distinguishes a genuine Robot Framework test failure (the script
+    errored/crashed before completing -- e.g. "Cannot find element with
+    id ...") from a test that ran to completion (including clicking Post)
+    but a downstream marker just wasn't found in its output afterward.
+
+    _run_rf_script invokes `robot` with --nostatusrc, which forces the
+    subprocess's OS exit code to 0 regardless of whether the actual test
+    passed or failed -- so result["success"] alone can't tell these two
+    cases apart, and confirmed in production (history_id=39) that this was
+    producing a misleading "posted but Material Document Number not
+    captured" message for a run that had actually errored out at Step 2 and
+    never got anywhere near Post. Robot Framework's own final summary line
+    (e.g. "1 test, 0 passed, 1 failed") is unaffected by --nostatusrc and is
+    stable across RF versions, so it's used here instead of trying to
+    parse "| FAIL |"/"| PASS |" lines (which can appear multiple times per
+    suite/keyword and are harder to pin down reliably).
+    """
+    match = re.search(r"(\d+)\s+tests?,\s+(\d+)\s+passed,\s+(\d+)\s+failed", output)
+    if not match:
+        # Can't find the summary line at all -- don't invent a false
+        # "it passed" reading; treat as genuinely failed/unknown.
+        return False
+    failed_count = int(match.group(3))
+    return failed_count == 0
 
 
 # ============================================================
@@ -454,11 +483,60 @@ def execute_migo_103_sap(data: dict) -> dict:
 
     mat_doc = _extract_marked_value(result["output"], "MATERIAL_DOC_NUMBER")
     if not mat_doc:
+        # FIX: don't say "posted" when the script actually errored out
+        # before ever reaching Post -- see _rf_test_actually_passed's
+        # docstring. Confirmed against history_id=39's real RF log: the
+        # test failed with "Cannot find element with id ..." at Step 2 and
+        # never got near the Post button, but this branch was reporting
+        # "MIGO 103 posted but Material Document Number not captured" --
+        # worded as if SAP posting might have happened ambiguously, when it
+        # provably never did. Now distinguishes the two cases explicitly.
+        if not _rf_test_actually_passed(result["output"]):
+            return {
+                "success": False,
+                "error": (
+                    "MIGO 103 FAILED — the automation script errored out "
+                    "before completing (see the RF log for the exact step "
+                    "and error). No SAP document was created."
+                ),
+                "material_doc_number": None
+            }
         return {
             "success": False,
             "error": "MIGO 103 posted but Material Document Number not captured.",
             "material_doc_number": None
         }
+
+    # FIX: real bug, confirmed against history_id=39's flow -- migo_103.robot's
+    # own Step 6 (Read Status Bar With Retry / regexp match) returns the
+    # literal string "MANUAL_CHECK_REQUIRED" when Post was clicked but no
+    # digit pattern was found in the status bar (see migo_103.robot's Fill
+    # MIGO 103 And Post, the "IF len($matches) == 0" branch). That string is
+    # non-empty, so the `if not mat_doc:` check above never catches it --
+    # this fell straight through to "success: True" with
+    # material_doc_number = "MANUAL_CHECK_REQUIRED" (a literal string, not a
+    # real SAP document number). Consequences: history.migo_103 gets marked
+    # done, migo_entries.material_doc_number gets set to that garbage
+    # string, and _process_migo_103 (rf_queue_worker.py) enqueues
+    # migo103_link.robot to go search Contentverse/SAP for a document
+    # literally named "MANUAL_CHECK_REQUIRED" -- which doesn't exist, so
+    # that bot fails or misbehaves next, and MIGO 105 (which needs MIGO
+    # 103's real material_doc_number as its own posting input) inherits the
+    # same garbage value. execute_gate_in_sap already has the equivalent
+    # guard for its own "MANUAL_CHECK_REQUIRED" case (see gin ==
+    # "MANUAL_CHECK_REQUIRED" above) -- this mirrors that exact pattern.
+    if mat_doc == "MANUAL_CHECK_REQUIRED":
+        return {
+            "success": False,
+            "error": (
+                "MIGO 103 was posted (Post was clicked) but no material "
+                "document number could be read from the SAP status bar. "
+                "Check SAP manually (TCODE: MIGO / MB03) before retrying -- "
+                "retrying without checking risks creating a duplicate GR."
+            ),
+            "material_doc_number": None
+        }
+
     return {"success": True, "material_doc_number": mat_doc, "error": None}
 
 
@@ -526,6 +604,25 @@ def execute_migo_105_sap(data: dict) -> dict:
             "error": (
                 "MIGO 105 ran but did not capture a document number from SAP. "
                 "Check SAP manually and robot logs."
+            )
+        }
+
+    # FIX: same class of bug just found and fixed in execute_migo_103_sap
+    # above (see that function's comment for the full explanation) --
+    # migo_105.robot's own status-bar-not-found branch returns the literal
+    # string "MANUAL_CHECK_REQUIRED" (non-empty), so the `if not miro_doc:`
+    # check above never catches it and this was falling through to
+    # "success: True" with miro_doc_number = "MANUAL_CHECK_REQUIRED", which
+    # would then get stored as MIGO 105's material_doc_number and mark
+    # history.migo_105 done even though Post's outcome was never confirmed.
+    if miro_doc == "MANUAL_CHECK_REQUIRED":
+        return {
+            "success": False,
+            "error": (
+                "MIGO 105 was posted (Post was clicked) but no document "
+                "number could be read from the SAP status bar. Check SAP "
+                "manually before retrying -- retrying without checking "
+                "risks creating a duplicate posting."
             )
         }
     # ─────────────────────────────────────────────────────────────────

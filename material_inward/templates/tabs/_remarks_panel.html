@@ -94,6 +94,7 @@
   padding:10px 14px; background:#f8f9fb; border-radius:6px; margin-bottom:8px;
 }
 .remarks-comment-role { font-weight:700; color:#1e5ca8; font-size:12px; }
+.remarks-comment-role-tag { font-weight:600; color:#888; font-size:11px; }
 .remarks-comment-time { font-size:11px; color:#999; margin-left:8px; }
 .remarks-comment-text { font-size:13px; color:#2c3e50; margin-top:4px; white-space:pre-wrap; word-break:break-word; }
 .remarks-no-comments { font-size:12px; color:#999; font-style:italic; margin-bottom:12px; }
@@ -122,9 +123,9 @@
       <div class="remarks-remark-meta" data-role="remark-meta"></div>
 
       {% if (is_superadmin and admin_can_edit) or (not is_superadmin and has_role('compliance')) %}
-      <button type="button" class="remarks-edit-btn" data-role="remark-edit-btn">✏️ Edit Remark</button>
+      <button type="button" class="remarks-edit-btn" data-role="remark-edit-btn" style="display:none;">✏️ Add Remark</button>
       <div class="remarks-remark-edit" data-role="remark-edit-box" style="display:none;">
-        <textarea data-role="remark-textarea" maxlength="1000" placeholder="Add a remark visible to every role on this record…"></textarea>
+        <textarea data-role="remark-textarea" maxlength="1000" placeholder="Add a remark visible to every role on this record… (this can only be set once and cannot be edited afterwards)"></textarea>
         <div class="remarks-save-row">
           <button type="button" class="remarks-save-btn" data-role="remark-save-btn">💾 Save Remark</button>
           <button type="button" class="remarks-cancel-btn" data-role="remark-cancel-btn">Cancel</button>
@@ -210,13 +211,15 @@
   function _renderRemark(remark) {
     var el = q('remark-text');
     var meta = q('remark-meta');
+    var editBtn = q('remark-edit-btn');
+    var locked = !!(remark && remark.locked);
     if (!el) return;
     if (remark && remark.text) {
       el.textContent = remark.text;
       el.classList.remove('empty');
       if (meta) {
         var label = ROLE_LABELS[remark.updated_by_role] || remark.updated_by_role || '';
-        meta.textContent = label ? ('Last updated by ' + label + (remark.updated_at ? ' on ' + remark.updated_at : '')) : '';
+        meta.textContent = label ? ('Added by ' + label + (remark.updated_at ? ' on ' + remark.updated_at : '') + ' — locked, cannot be edited') : '';
       }
       var ta = q('remark-textarea');
       if (ta) ta.value = remark.text;
@@ -224,6 +227,14 @@
       el.textContent = 'No remark added yet.';
       el.classList.add('empty');
       if (meta) meta.textContent = '';
+    }
+    // Write-once: the "Add Remark" button (and its edit box) only ever
+    // shows up before a Remark exists. Once one is saved, it's gone for
+    // good -- there is no edit path back into it, by design.
+    if (editBtn) editBtn.style.display = locked ? 'none' : '';
+    if (locked) {
+      var box = q('remark-edit-box');
+      if (box) box.style.display = 'none';
     }
   }
 
@@ -242,8 +253,9 @@
     }
     listEl.innerHTML = comments.map(function (c) {
       var label = ROLE_LABELS[c.role] || c.role;
+      var who = c.username ? (escHtml(c.username) + ' <span class="remarks-comment-role-tag">(' + escHtml(label) + ')</span>') : escHtml(label);
       return '<div class="remarks-comment-item">' +
-        '<span class="remarks-comment-role">' + escHtml(label) + '</span>' +
+        '<span class="remarks-comment-role">' + who + '</span>' +
         '<span class="remarks-comment-time">' + escHtml(c.updated_at || '') + '</span>' +
         '<div class="remarks-comment-text">' + escHtml(c.text) + '</div>' +
       '</div>';

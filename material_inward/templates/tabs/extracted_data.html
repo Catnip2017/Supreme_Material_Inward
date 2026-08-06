@@ -45,14 +45,15 @@
 .field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
 .field-error-msg-inline.show { display:block; }
 
-/* Cross-tab mismatch highlight (client requested) -- same field captured
-   independently on two different source documents (e.g. Invoice Number on
-   both Invoice + E-Way Bill) disagreeing between tabs. Amber/yellow, not
-   red, since this isn't necessarily a hard error the way .field-expired
-   is -- just something worth a second look. Hover the field for details
-   (see checkAllCrossTabMismatches() below). */
-.editable-input.field-mismatch { border-color:#f39c12; background:#fff8e1; }
-.editable-input.field-mismatch:focus { border-color:#f39c12; }
+/* v13-follow-up: cross-tab mismatch highlight (Invoice Number / Invoice
+   Date / PO Number / Vehicle Number, compared between the tabs that share
+   them). Deliberately a different colour from .field-expired -- amber
+   "please verify" rather than red "this is malformed" -- since a mismatch
+   here isn't necessarily an error, just something worth a second look.
+   Visual only: never disables the field, never blocks Save/Approve. */
+.editable-input.field-mismatch { border-color:#e08e0b; background:#fff8e6; }
+.editable-input.field-mismatch:focus { border-color:#e08e0b; }
+.field-error-msg-inline.mismatch { color:#b8720a; }
 
 .field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:14px; }
 .field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px; border-left:3px solid #1e5ca8; }
@@ -420,10 +421,12 @@
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
               <input class="editable-input" id="inv_invoice_number" value="{{ invoice_data.get('invoice_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_invoice_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
               <input class="editable-input" id="inv_invoice_date" type="date" value="{{ invoice_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_invoice_date"></div>
             </div>
             <div class="field-block">
               <div class="field-label">PO Number</div>
@@ -474,6 +477,7 @@
             <div class="field-block">
               <div class="field-label">Company PAN</div>
               <input class="editable-input" id="inv_company_pan" value="{{ invoice_data.get('company_pan','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_inv_company_pan"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Seller Address</div>
@@ -611,8 +615,10 @@
 
         <!-- Goods Information — editable, one row per invoice line item.
              Backed by invoice_data.hsn_details (single source of truth, v7).
-             Hidden per-line fields (material_code, unit, rate, taxes, total)
-             are preserved on save via ORIGINAL_HSN merge. -->
+             Hidden per-line fields (rate, taxes, total) are preserved on
+             save via ORIGINAL_HSN merge. material_code is now a visible
+             column (previously hidden -- see the Material Code pattern
+             check in the script section below). -->
         <div class="section-card">
           <div class="section-title">📦 Goods Information</div>
           <div style="overflow-x:auto;">
@@ -620,6 +626,7 @@
               <thead>
                 <tr>
                   <th style="width:30px;">#</th>
+                  <th>Material Code</th>
                   <th>Goods Description</th>
                   <th>HSN Code</th>
                   <th>Quantity</th>
@@ -633,6 +640,7 @@
                 {% for hsn in hsn_list %}
                 <tr data-orig-idx="{{ loop.index0 }}">
                   <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                  <td><input type="text" data-field="material_code" value="{{ hsn.get('material_code','') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td><input type="text" data-field="description" value="{{ hsn.get('description','') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td><input type="text" data-field="hsn_sac" value="{{ hsn.get('hsn_sac','') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td><input type="text" data-field="quantity" value="{{ hsn.get('quantity','') }}" {% if is_approved %}disabled{% endif %}></td>
@@ -698,10 +706,12 @@
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
               <input class="editable-input" id="eway_invoice_number" value="{{ ewaybill_data.get('invoice_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_invoice_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
               <input class="editable-input" id="eway_invoice_date" type="date" value="{{ ewaybill_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_invoice_date"></div>
             </div>
             <!-- CLIENT REQUEST (still-pending items email): PO Number section
                  removed from the E-Way Bill tab. po_number stays a real column
@@ -743,6 +753,7 @@
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
               <input class="editable-input" id="eway_vehicle_number" maxlength="10" value="{{ ewaybill_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_eway_vehicle_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
@@ -816,6 +827,7 @@
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
               <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ lr.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div>
             </div>
           </div>
         </div>
@@ -1143,8 +1155,8 @@ async function saveAndNext(step) {
 // Goods Information rows add/remove/collect (v7)
 // Same pattern as MIGO 103 addInvoiceRow().
 // Rows are backed by invoice_data.hsn_details — collection merges
-// edits into the original line so hidden fields (material_code,
-// unit, rate, taxes, total) are never lost.
+// edits into the original line so hidden fields (rate, taxes, total)
+// are never lost. material_code is a visible column (see below).
 // ============================================================
 function addGoodsRow() {
   const tbody = document.getElementById('invGoodsBody');
@@ -1152,6 +1164,7 @@ function addGoodsRow() {
   tr.setAttribute('data-orig-idx', '-1');
   tr.innerHTML = `
     <td class="goods-row-num" style="color:#888;font-size:11px;"></td>
+    <td><input type="text" data-field="material_code" placeholder="Material Code"></td>
     <td><input type="text" data-field="description" placeholder="Goods Description"></td>
     <td><input type="text" data-field="hsn_sac" placeholder="HSN Code"></td>
     <td><input type="text" data-field="quantity" placeholder="Quantity"></td>
@@ -1161,6 +1174,7 @@ function addGoodsRow() {
   `;
   tbody.appendChild(tr);
   _renumberGoodsRows();
+  _checkAllMaterialCodes();
 }
 
 function deleteGoodsRow(btn) {
@@ -1197,6 +1211,42 @@ function _collectInvHsn() {
   });
   return items;
 }
+
+// ============================================================
+// Material Code pattern check (client requested: Material Codes are
+// always exactly 8 characters and start with 18/20/21/23 -- flag a
+// value that doesn't match, so a likely OCR misread or wrong-column
+// read gets noticed). Visual only, never blocks Save/Approve. Uses the
+// existing .field-mismatch amber styling plus a title tooltip, since a
+// dedicated message row doesn't fit cleanly inside a table cell. Wired
+// via event delegation on the tbody so it works for both
+// server-rendered rows and rows added later via addGoodsRow(), with no
+// per-row listener setup needed.
+// ============================================================
+const MATERIAL_CODE_PREFIXES = ['18', '20', '21', '23'];
+
+function _checkMaterialCodeInput(input) {
+  const val = (input.value || '').trim().toUpperCase();
+  const bad = !!val && !(val.length === 8 && MATERIAL_CODE_PREFIXES.includes(val.slice(0, 2)));
+  input.classList.toggle('field-mismatch', bad);
+  input.title = bad ? 'Material Code is usually 8 characters, starting with 18/20/21/23 -- please verify.' : '';
+}
+
+function _checkAllMaterialCodes() {
+  document.querySelectorAll('#invGoodsBody input[data-field="material_code"]').forEach(_checkMaterialCodeInput);
+}
+
+(function () {
+  const tbody = document.getElementById('invGoodsBody');
+  if (tbody) {
+    tbody.addEventListener('input', function (e) {
+      if (e.target.matches('input[data-field="material_code"]')) {
+        _checkMaterialCodeInput(e.target);
+      }
+    });
+  }
+  _checkAllMaterialCodes();
+})();
 
 // ============================================================
 // v13: Partial-document scenario pickers (Goods Delivery Mode / E-Way
@@ -1545,58 +1595,105 @@ function _validateGstinField(fieldId, errId) {
 });
 
 // ============================================================
-// Cross-tab mismatch highlighting (client requested): the same real-world
-// fact gets extracted independently from more than one source document --
-// Invoice Number/Date appear on both the Invoice and the E-Way Bill;
-// Vehicle Number/Transporter Name appear on both the E-Way Bill and the
-// LR. If a record's own tabs disagree on one of these, that's a genuine
-// discrepancy worth a look (OCR misread, or the wrong document attached
-// to this record) -- flagged in yellow via .field-mismatch above. Purely
-// visual, exactly like .field-expired/GSTIN checks above it -- never
-// blocks Save/Approve. Whichever tab is missing for this record (no EWB,
-// no LR, Courier manual entry, etc.) just has nothing to compare against,
-// so those pairs silently no-op below.
+// PAN vs GSTIN cross-check (client requested: a GSTIN's characters 3-12
+// are always that entity's own 10-character PAN by statutory format --
+// e.g. GSTIN 33AAACE1713F1ZD contains PAN AAACE1713F. Company PAN is
+// checked against the PAN embedded in Seller GSTIN, since that's the
+// pair shown together on the Invoice tab. Visual only, never blocks
+// Save/Approve -- reuses the same red field-expired styling as the
+// GSTIN checksum check above, since a mismatch here is a hard error
+// (statutory fact), not just "worth a second look" like the amber
+// cross-tab mismatch checks below.
 // ============================================================
-const CROSS_TAB_FIELD_PAIRS = [
-  ['inv_invoice_number',   'Invoice tab (Invoice Number)',      'eway_invoice_number',   'E-Way Bill tab (Invoice Number)'],
-  ['inv_invoice_date',     'Invoice tab (Invoice Date)',        'eway_invoice_date',     'E-Way Bill tab (Invoice Date)'],
-  ['eway_vehicle_number',  'E-Way Bill tab (Vehicle Number)',   'lr_vehicle_number',     'LR tab (Vehicle Number)'],
-  ['eway_transporter_name','E-Way Bill tab (Transporter Name)', 'lr_transporter_name',   'LR tab (Transporter Name)'],
+function _validatePanAgainstGstin() {
+  const panEl = document.getElementById('inv_company_pan');
+  const gstinEl = document.getElementById('inv_seller_gstin');
+  const err = document.getElementById('err_inv_company_pan');
+  if (!panEl || !gstinEl) return;
+  const pan = panEl.value.trim().toUpperCase();
+  const gstin = gstinEl.value.trim().toUpperCase();
+  let msg = '';
+  if (pan && gstin.length === 15) {
+    const panInGstin = gstin.slice(2, 12);
+    if (pan !== panInGstin) {
+      msg = `PAN does not match the PAN embedded in Seller GSTIN (expected ${panInGstin}) -- possible typo.`;
+    }
+  }
+  panEl.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+(function () {
+  const panEl = document.getElementById('inv_company_pan');
+  const gstinEl = document.getElementById('inv_seller_gstin');
+  if (panEl) panEl.addEventListener('blur', _validatePanAgainstGstin);
+  if (gstinEl) gstinEl.addEventListener('blur', _validatePanAgainstGstin);
+  _validatePanAgainstGstin();
+})();
+
+// ============================================================
+// Cross-tab mismatch highlighting (client requested, visual only --
+// never disables the field, never blocks Save/Approve, both sides stay
+// fully editable). Compares fields that are duplicated across two tabs:
+//   - Invoice Number / Invoice Date / PO Number: Invoice tab <-> E-Way Bill tab
+//   - Vehicle Number: E-Way Bill tab <-> LR tab
+// Transporter Name deliberately excluded (client decision) -- it's
+// legitimately abbreviated differently doc to doc (e.g. "ABC Logistics"
+// vs "ABC Logistics Pvt Ltd") and would just generate noise.
+//
+// Both fields of a pair already live in the same page (tabs are
+// show/hide, not separate loads -- see switchDataTab), so this reads the
+// sibling input directly, no extra fetch needed. A pair is only ever
+// compared when BOTH inputs exist in the DOM (a tab can be entirely
+// absent for partial-document v13 records) and BOTH already have a
+// non-empty value (an unfilled field is missing data, not a mismatch).
+// ============================================================
+function _normMismatchText(v) {
+  return (v || '').trim().toUpperCase();
+}
+function _normMismatchVehicle(v) {
+  return (v || '').trim().toUpperCase().replace(/[\s-]/g, '');
+}
+
+const MISMATCH_PAIRS = [
+  { a: 'inv_invoice_number',  b: 'eway_invoice_number', label: 'Invoice Number', norm: _normMismatchText },
+  { a: 'inv_invoice_date',    b: 'eway_invoice_date',   label: 'Invoice Date',   norm: _normMismatchText },
+  { a: 'inv_po_number',       b: 'eway_po_number',      label: 'PO Number',      norm: _normMismatchText },
+  { a: 'eway_vehicle_number', b: 'lr_vehicle_number',   label: 'Vehicle Number', norm: _normMismatchVehicle },
 ];
 
-function _normalizeForCompare(v) {
-  return (v || '').trim().replace(/\s+/g, ' ').toUpperCase();
+function _checkMismatchPair(pair) {
+  const elA = document.getElementById(pair.a);
+  const elB = document.getElementById(pair.b);
+  if (!elA || !elB) return;  // other tab not present for this record
+  const errA = document.getElementById('err_' + pair.a);
+  const errB = document.getElementById('err_' + pair.b);
+  const rawA = elA.value, rawB = elB.value;
+  const mismatch = !!rawA.trim() && !!rawB.trim() && pair.norm(rawA) !== pair.norm(rawB);
+  const msg = mismatch ? `${pair.label} differs from the value on the other tab -- please verify.` : '';
+  [[elA, errA], [elB, errB]].forEach(function ([el, err]) {
+    el.classList.toggle('field-mismatch', mismatch);
+    if (err) {
+      err.textContent = msg;
+      err.classList.toggle('show', mismatch);
+      err.classList.toggle('mismatch', mismatch);
+    }
+  });
 }
 
-function _checkCrossTabPair(idA, labelA, idB, labelB) {
-  const elA = document.getElementById(idA);
-  const elB = document.getElementById(idB);
-  if (!elA || !elB) return;
-  const valA = elA.value;
-  const valB = elB.value;
-  const normA = _normalizeForCompare(valA);
-  const normB = _normalizeForCompare(valB);
-  const mismatch = !!(normA && normB && normA !== normB);
-  elA.classList.toggle('field-mismatch', mismatch);
-  elB.classList.toggle('field-mismatch', mismatch);
-  elA.title = mismatch ? `Differs from ${labelB}: "${valB}"` : '';
-  elB.title = mismatch ? `Differs from ${labelA}: "${valA}"` : '';
-}
-
-function checkAllCrossTabMismatches() {
-  CROSS_TAB_FIELD_PAIRS.forEach(function (pair) { _checkCrossTabPair(pair[0], pair[1], pair[2], pair[3]); });
+function _checkAllMismatches() {
+  MISMATCH_PAIRS.forEach(_checkMismatchPair);
 }
 
 (function () {
-  const wired = new Set();
-  CROSS_TAB_FIELD_PAIRS.forEach(function (pair) {
-    [pair[0], pair[2]].forEach(function (id) {
-      if (wired.has(id)) return;
-      wired.add(id);
+  MISMATCH_PAIRS.forEach(function (pair) {
+    [pair.a, pair.b].forEach(function (id) {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('input', checkAllCrossTabMismatches);
+      if (el) el.addEventListener('input', _checkAllMismatches);
     });
   });
-  checkAllCrossTabMismatches();
+  _checkAllMismatches();
 })();
 </script>

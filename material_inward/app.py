@@ -1227,6 +1227,7 @@ def api_rerun_ocr(history_id):
 
     retry_count = increment_ocr_retry(history_id)
     files_processed = 0
+    invoice_succeeded = False
 
     for filename in os.listdir(failed_path):
         if not filename.lower().endswith(".pdf"):
@@ -1243,6 +1244,7 @@ def api_rerun_ocr(history_id):
                 extracted["filename"] = filename
                 if doc_type == "invoice":
                     save_invoice_to_db(history_id, extracted)
+                    invoice_succeeded = True
                     # Same auto-trigger as the first-pass OCR save (_run_ocr_and_save)
                     # -- this re-run path re-extracts from the source file and can
                     # produce a GSTIN that never got checked at all (the original
@@ -1258,10 +1260,30 @@ def api_rerun_ocr(history_id):
         except Exception as e:
             logger.error(f"Re-run OCR error: {e}")
 
-    if files_processed > 0:
+    # Invoice is the anchor document every downstream tab/workflow step
+    # keys off (same rule now enforced in folder_watcher.py._process_batch()
+    # for the automated intake path). Only mark the record "success" if the
+    # Invoice specifically was recovered this retry -- previously any
+    # successfully re-extracted file (even just E-Way Bill or LR alone)
+    # was enough to flip the whole record to "success", which could leave
+    # a record marked successful with no Invoice data and an empty Invoice
+    # tab, exactly what happened for history_id 42 on 2026-08-05.
+    if invoice_succeeded:
         _auto_populate_form_tables(history_id)
         set_ocr_status(history_id, "success")
         return jsonify({"success": True, "message": f"OCR retry succeeded — {files_processed} document(s)", "retry_count": retry_count})
+
+    if files_processed > 0:
+        # Some other document(s) re-extracted and were saved above, but the
+        # Invoice specifically still failed -- leave the record as "failed"
+        # rather than silently marking it "success" with an empty Invoice
+        # tab. The other document(s) are not lost: they're already saved,
+        # so the next Re-run only needs to actually recover the Invoice.
+        return jsonify({
+            "success": False,
+            "error": f"Invoice could not be re-extracted ({files_processed} other document(s) saved) — record remains failed until the Invoice succeeds.",
+            "retry_count": retry_count
+        }), 500
 
     return jsonify({"success": False, "error": "OCR retry failed", "retry_count": retry_count}), 500
 
@@ -2481,9 +2503,10 @@ def api_gst_screenshot(history_id, portal):
 
 # ============================================================
 # REMARKS & COMMENTS
-# One record-wide Remark (set/edited only by Compliance) plus one comment
-# per role (posting again overwrites what's shown, full history kept in
-# the DB -- see database/remarks_operations.py). Rendered by the shared
+# One record-wide Remark (write-once: set by Compliance, then permanently
+# locked -- see api_save_remark below) plus a full, append-only comment
+# history (every post kept, each tagged with who posted it -- see
+# database/remarks_operations.py). Rendered by the shared
 # templates/tabs/_remarks_panel.html partial, included at the bottom of
 # every tab so it's visible regardless of which tab is active.
 # ============================================================
@@ -2492,10 +2515,12 @@ def api_gst_screenshot(history_id, portal):
 @login_required
 def api_get_remarks(history_id):
     """
-    Read-only: returns the Remark plus the latest comment per role.
+    Read-only: returns the Remark (plus a `locked` flag -- true once a
+    Remark has ever been saved, since it can never be edited or replaced
+    after that) and the full chronological comment history, each comment
+    tagged with both its role and the individual username who posted it.
     Anyone who can view the record at all can read this -- same visibility
-    as the record itself, no per-role gating on reads. Username is never
-    included in the response; only role, text, and timestamps.
+    as the record itself, no per-role gating on reads.
     """
     history = get_history_by_id(history_id)
     if not history:
@@ -2513,10 +2538,12 @@ def api_get_remarks(history_id):
             "text": (remark or {}).get("remark_text") or "",
             "updated_by_role": (remark or {}).get("updated_by_role") or "",
             "updated_at": _fmt((remark or {}).get("updated_at")) if remark else None,
+            "locked": bool(remark and (remark.get("remark_text") or "").strip()),
         },
         "comments": [
             {
                 "role": c["role"],
+                "username": c.get("username") or "",
                 "text": c["comment_text"],
                 "updated_at": _fmt(c["created_at"]),
             }
@@ -2529,10 +2556,19 @@ def api_get_remarks(history_id):
 @api_login_required
 def api_save_remark(history_id):
     """
-    Set/edit the single record-wide Remark. Gated to the Compliance role
-    (or a SuperAdmin with edit rights) -- same rule as every other field
+    Set the single record-wide Remark. Gated to the Compliance role (or a
+    SuperAdmin with edit rights) -- same rule as every other field
     Compliance owns on Extracted Data / GST Approval, since the Remark is
     meant to be authored by whoever is reviewing those two tabs.
+
+    Write-once: once a Remark has ever been saved for this record, it is
+    permanently locked -- this call is rejected outright, regardless of
+    role. Nobody (including SuperAdmin) can edit or replace it afterwards;
+    later reviewers use Comments to add their own input instead. This
+    mirrors the route-layer-enforces-locks convention used elsewhere in
+    this codebase (e.g. goods_delivery_mode, ewb_exemption_reasons) --
+    the db layer (upsert_remark) still technically supports overwriting,
+    but the route never lets a second write through.
     """
     blocked = _require_role_edit("compliance")
     if blocked:
@@ -2540,6 +2576,10 @@ def api_save_remark(history_id):
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
+
+    existing = get_remark(history_id)
+    if existing and (existing.get("remark_text") or "").strip():
+        return jsonify({"success": False, "error": "Remark already set — it cannot be edited or replaced. Add a Comment instead."}), 403
 
     body = request.get_json(silent=True) or {}
     text = (body.get("text") or "").strip()
