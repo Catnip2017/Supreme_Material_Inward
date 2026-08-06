@@ -19,7 +19,7 @@ Documentation       SAP MIGO - Attach Invoice Document URL via GOS Toolbox (MIGO
 ...                 RESULT:MIGO103_LINK_STATUS:SUCCESS marker at the end of
 ...                 test case 04 is how rf_runner.py confirms the link was
 ...                 actually attached, on top of Robot Framework's own exit code.
-
+ 
 Library             Process
 Library             SapGuiLibrary
 Library             BuiltIn
@@ -27,10 +27,10 @@ Library             OperatingSystem
 Library             DateTime
 Library             String
 Library             Collections
-
+ 
 Suite Setup         Initialize Logging And Environment
 Suite Teardown      Finalize Logging
-
+ 
 *** Variables ***
 # ---------- FIXED VALUES (overridden from the shared .env at runtime -- see
 # Load Environment Variables below; these are only the fallback if .env
@@ -42,15 +42,15 @@ ${LOGS_FOLDER}                 %{USERPROFILE}\\Agent logs\\migo invoice logs
 ${LOG_FILE}                    ${EMPTY}
 ${FIRST_LOGIN}                 ${TRUE}
 ${session}                     ${NONE}
-
+ 
 # ---------- MIGO (sample defaults -- rf_runner.py always overrides both via
 # --variable when this is run from the app; only used if run standalone) ----------
 ${MIGO_TCODE}                  MIGO
 ${MATERIAL_DOC_NUMBER}         5000034577
 ${DOCUMENT_LINK}                http://192.168.203.92:8080/CVWeb/openDocumentLogin?serverName=SPL&roomName=DMS&documentId=458338
-
+ 
 # ---------- ELEMENT PATHS ----------
-${PATH_MAT_DOC}                 wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER
+${PATH_MAT_DOC}                 wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2010/txtGODYNPRO-MAT_DOC
 ${PATH_GOS_SHELL}                wnd[0]/titl/shellcont/shell
 ${PATH_URL_TITLE}                wnd[1]/usr/txtDOCUMENT_TITLE
 ${PATH_URL_ADDRESS}             wnd[1]/usr/txtURL
@@ -59,15 +59,15 @@ ${PATH_MIGO_ACTION}         wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB
 ${PATH_MIGO_REFDOC}         wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:1010/ctxtGODYNPRO-REFDOC
 ${PATH_ACTION_COMBO}            wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011/cmbGODYNPRO-ACTION
 ${PATH_TREE_CLOSE_BTN}          wnd[0]/shellcont/shell/shellcont[1]/shell[0]
-
+ 
 # ---------- LOADED FROM .env ----------
 ${CLIENT}                      ${EMPTY}
 ${USERNAME}                    ${EMPTY}
 ${PASSWORD}                    ${EMPTY}
-
-
+ 
+ 
 *** Keywords ***
-
+ 
 Initialize Logging And Environment
     Run Keyword And Ignore Error    Create Directory    ${LOGS_FOLDER}
     ${timestamp}=       Get Current Date    result_format=%Y-%m-%d_%H-%M-%S
@@ -80,7 +80,7 @@ Initialize Logging And Environment
     Append To File    ${LOG_FILE}    Start Time: ${start_time}\n
     Append To File    ${LOG_FILE}    ═══════════════════════════════════════════════════════════════\n\n
     Load Environment Variables
-
+ 
 Finalize Logging
     ${end_time}=    Get Current Date    result_format=%Y-%m-%d %H:%M:%S
     Append To File    ${LOG_FILE}    \n═══════════════════════════════════════════════════════════════\n
@@ -91,14 +91,14 @@ Finalize Logging
     Run Keyword If    '${SUITE_STATUS}' == 'FAIL'    Append To File    ${LOG_FILE}    Error Details: ${SUITE_MESSAGE}\n
     Append To File    ${LOG_FILE}    ═══════════════════════════════════════════════════════════════\n
     Log To Console    \n✓ Custom log saved to: ${LOG_FILE}
-
+ 
 Write Log
     [Arguments]    ${level}    ${test_case}    ${message}
     ${timestamp}=     Get Current Date    result_format=%Y-%m-%d %H:%M:%S
     ${log_entry}=     Set Variable    [${timestamp}] [${level}] ${test_case}: ${message}\n
     Append To File    ${LOG_FILE}    ${log_entry}
     Log To Console    ${log_entry}
-
+ 
 Load Environment Variables
     ${env_path}=    Join Path    ${EXECDIR}    .env
     Evaluate    __import__('dotenv').load_dotenv(r'''${env_path}''')
@@ -108,7 +108,7 @@ Load Environment Variables
     Set Suite Variable    ${CLIENT}
     Set Suite Variable    ${USERNAME}
     Set Suite Variable    ${PASSWORD}
-
+ 
     # INTEGRATION: pick up SAP_CONNECTION_NAME / SAP_LOGON_PATH from the
     # shared .env if present, so this bot follows the same QA/Production
     # switch as migo_103.robot / migo_105.robot / miro.robot instead of the
@@ -123,7 +123,7 @@ Load Environment Variables
     IF    $LOGON_PATH != ''
         Set Suite Variable    ${SAP_LOGON_PATH}    ${LOGON_PATH}
     END
-
+ 
     # INTEGRATION (v16 parity with migo_103.robot/migo_105.robot/miro.robot):
     # per-user SAP credential override for LDAP-authenticated users --
     # rf_runner.py's _sap_credential_env() passes these via the subprocess
@@ -139,14 +139,14 @@ Load Environment Variables
     ELSE
         Write Log    INFO    Environment Setup    Environment variables loaded successfully
     END
-
+ 
 Get Invoice Title
     # Builds "Invoice_<day>_<month>" with NO leading zeros, e.g. Invoice_29_7
     ${day}=      Evaluate    __import__('datetime').datetime.now().day
     ${month}=    Evaluate    __import__('datetime').datetime.now().month
     ${title}=    Set Variable    Invoice_${day}_${month}
     RETURN    ${title}
-
+ 
 Connect To Sap Session
     # Attaches to the SAME live SAP GUI Scripting session that
     # SapGuiLibrary already opened and logged into (no separate library file,
@@ -155,7 +155,7 @@ Connect To Sap Session
     ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
     Set Suite Variable    ${session}
     Write Log    INFO    SAP Session    Attached to live SAP GUI scripting session
-
+ 
 SAP Login Steps
     [Arguments]    ${log_context}
     IF    not ${FIRST_LOGIN}
@@ -184,7 +184,7 @@ SAP Login Steps
     END
     Connect To Sap Session
     Evaluate    $session.findById('wnd[0]').maximize()
-
+ 
 Close SAP On Error
     [Arguments]    ${log_context}    ${error}
     Write Log    ERROR    ${log_context}    ${error}
@@ -193,14 +193,14 @@ Close SAP On Error
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
-
-
+ 
+ 
 *** Test Cases ***
-
+ 
 # ═══════════════════════════════════════════════════════════════
 # SAP LOGIN
 # ═══════════════════════════════════════════════════════════════
-
+ 
 01 Start SAP Logon and Login
     Write Log    INFO    SAP Login    Starting SAP logon process
     TRY
@@ -210,11 +210,11 @@ Close SAP On Error
         Close SAP On Error    SAP Login    SAP Login Failed: ${error}
         Fail    SAP Login Failed: ${error}
     END
-
+ 
 # ═══════════════════════════════════════════════════════════════
 # NAVIGATE TO MIGO
 # ═══════════════════════════════════════════════════════════════
-
+ 
 02 Navigate To MIGO
     Write Log    INFO    MIGO    Navigating to ${MIGO_TCODE}
     TRY
@@ -225,11 +225,11 @@ Close SAP On Error
         Close SAP On Error    MIGO    Navigation failed: ${error}
         Fail    MIGO Navigation Failed: ${error}
     END
-
+ 
 # ═══════════════════════════════════════════════════════════════
 # ENTER MATERIAL DOCUMENT NUMBER
 # ═══════════════════════════════════════════════════════════════
-
+ 
 03 Enter Material Document Number
     Write Log    INFO    MIGO    Entering material document number: ${MATERIAL_DOC_NUMBER}
     TRY
@@ -239,17 +239,17 @@ Close SAP On Error
             Evaluate    $session.findById('wnd[0]/tbar[1]/btn[21]').press()
             Sleep    2s
         END
-
+ 
         ${tree_close_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    ${PATH_TREE_CLOSE_BTN}
         IF    ${tree_close_status}
             Evaluate    $session.findById('${PATH_TREE_CLOSE_BTN}').pressButton('OK_CLOSE')
             Sleep    2s
         END
-
+ 
         Evaluate    $session.findById('${PATH_ACTION_COMBO}').setFocus()
         Evaluate    setattr($session.findById('${PATH_ACTION_COMBO}'), 'key', 'A12')
         Sleep    1s
-
+ 
         SapGuiLibrary.Input Text    ${PATH_MAT_DOC}    ${MATERIAL_DOC_NUMBER}
         Sleep    2s
         Evaluate    setattr($session.findById('${PATH_MAT_DOC}'), 'caretPosition', 10)
@@ -263,7 +263,7 @@ Close SAP On Error
 # ═══════════════════════════════════════════════════════════════
 # CREATE GOS DOCUMENT URL (Invoice link)
 # ═══════════════════════════════════════════════════════════════
-
+ 
 04 Create Invoice URL Via GOS Toolbox
     ${doc_title}=    Get Invoice Title
     Write Log    INFO    GOS URL    Creating document URL with title: ${doc_title}
@@ -291,11 +291,11 @@ Close SAP On Error
         Close SAP On Error    GOS URL    URL creation failed: ${error}
         Fail    GOS URL Creation Failed: ${error}
     END
-
+ 
 # ═══════════════════════════════════════════════════════════════
 # LOGOUT
 # ═══════════════════════════════════════════════════════════════
-
+ 
 05 Logout
     Write Log    INFO    Logout    Closing SAP session
     TRY
@@ -309,3 +309,4 @@ Close SAP On Error
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
     Write Log    INFO    Logout    SAP processes terminated
+ 

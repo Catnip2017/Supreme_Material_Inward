@@ -1,5 +1,3 @@
-
-
 *** Settings ***
 Documentation     MIGO 103 SAP Automation — GR into Blocked Stock
 Library           SapGuiLibrary
@@ -8,7 +6,7 @@ Library           OperatingSystem
 Library           String
 Library           DateTime
 Library           Collections
-
+ 
 *** Variables ***
 ${PO_NUMBER}        ${EMPTY}
 ${DOC_DATE}         ${EMPTY}
@@ -20,15 +18,14 @@ ${HEADER_TEXT}      ${EMPTY}
 ${REMARKS}          ${EMPTY}
 ${ITEMS_JSON}       []
 ${ITEMS_JSON_B64}    W10=
-# INTEGRATION (from migo103_link/migo105_link bots): a document-overview
 # tree sidebar can pop up on this same MIGO screen -- these two paths let
 # Dismiss Overview Tree Sidebar close it if present. ${session} is the raw
 # SAP GUI Scripting session object, needed because a GuiShell tree control's
 # .pressButton() method isn't exposed by SapGuiLibrary's own keywords.
 ${PATH_TREE_CLOSE_BTN}    wnd[0]/shellcont/shell/shellcont[1]/shell[0]
 ${session}          ${NONE}
-
-
+ 
+ 
 *** Test Cases ***
 Execute MIGO 103
     [Setup]    Initialize SAP And Login
@@ -36,7 +33,7 @@ Execute MIGO 103
     Log To Console    RESULT:MATERIAL_DOC_NUMBER:${mat_doc}
     Sleep    10s
     [Teardown]    Close SAP Session
-
+ 
 *** Keywords ***
 Initialize SAP And Login
     # Evaluate    __import__('dotenv').load_dotenv()
@@ -44,7 +41,7 @@ Initialize SAP And Login
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
     ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
     ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
-
+ 
     # v16: per-user SAP credential pass-through (LDAP users only) -- see
     # gate_in.robot for the full explanation. SAP_USER_OVERRIDE/
     # SAP_PASS_OVERRIDE come from rf_runner.py's subprocess environment,
@@ -62,21 +59,21 @@ Initialize SAP And Login
         ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
         Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
     END
-
+ 
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Sleep    2s
-
-    Start Process    ${LOGON_PATH}   
+ 
+    Start Process    ${LOGON_PATH}  
     Sleep    5s
-
+ 
     Connect To Session
     Open Connection    ${CONN_NAME}
-
+ 
     Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
     Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
     Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
     Click Element     wnd[0]/tbar[0]/btn[0]
-
+ 
     # FIX: was "Dismiss Any Popup" (generic -- blindly clicks wnd[1]'s
     # default button with no radio selection) BEFORE this specific
     # multi-logon check, so on any day the popup actually appeared, the
@@ -97,14 +94,41 @@ Initialize SAP And Login
         Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
         Sleep    2s
     END
-
+ 
     Sleep    5s
     Dismiss Any Popup
-
+ 
     Maximize Window    0
     Connect To Sap Session
-
-
+ 
+ 
+ 
+ 
+ 
+ 
+Get Firstline Path
+    # The Action/RefDoc combo box subscreen can render as either :0003 or
+    # :0007 depending on MIGO's current internal state (seen in GUI Script
+    # recording: A01-A08 -> SAPLMIGO:0003, A09/A10 -> SAPLMIGO:0007). A
+    # hardcoded path silently fails to find the element whenever the
+    # screen happens to be in the other state. Probe both, use whichever
+    # actually exists right now.
+    ${path_0003}=    Set Variable    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011
+    ${path_0007}=    Set Variable    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0007/subSUB_FIRSTLINE:SAPLMIGO:0011
+ 
+    ${found_0003}=    Run Keyword And Return Status    Element Should Be Present    ${path_0003}
+    IF    ${found_0003}
+        RETURN    ${path_0003}
+    END
+ 
+    ${found_0007}=    Run Keyword And Return Status    Element Should Be Present    ${path_0007}
+    IF    ${found_0007}
+        RETURN    ${path_0007}
+    END
+ 
+    Fail    Neither SAPLMIGO:0003 nor SAPLMIGO:0007 firstline subscreen found -- MIGO screen state unrecognized.
+ 
+ 
 Connect To Sap Session
     # Attaches to the same live SAP GUI Scripting session SapGuiLibrary is
     # already driving, so Evaluate can call session.findById(...).pressButton(...)
@@ -115,8 +139,8 @@ Connect To Sap Session
     ${sess}=    Evaluate
     ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
     Set Suite Variable    ${session}    ${sess}
-
-
+ 
+ 
 Dismiss Overview Tree Sidebar
     # INTEGRATION: found by the migo103_link/migo105_link bots -- MIGO can
     # pop up a document-overview tree sidebar on this same screen. Defensive
@@ -128,14 +152,14 @@ Dismiss Overview Tree Sidebar
         Evaluate    $session.findById('wnd[0]/tbar[1]/btn[21]').press()
         Sleep    2s
     END
-
+ 
     ${tree_close_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    ${PATH_TREE_CLOSE_BTN}
     IF    ${tree_close_status}
         Evaluate    $session.findById('${PATH_TREE_CLOSE_BTN}').pressButton('OK_CLOSE')
         Sleep    2s
     END
-
-
+ 
+ 
 Fill MIGO 103 And Post
     # --- Data Cleaning ---
     ${po_clean}=      Clean Value    ${PO_NUMBER}
@@ -144,11 +168,11 @@ Fill MIGO 103 And Post
     ${slip_clean}=    Clean Value    ${GR_SLIP_NO}
     ${hdr_clean}=     Clean Value    ${HEADER_TEXT}
     ${rem_clean}=     Clean Value    ${REMARKS}
-
+ 
     # Diagnostic: log every header variable as received + after cleaning,
     # for its designated SAP field, before any of it is typed into SAP.
     Log To Console    HEADER VALUES -- PO_NUMBER="${PO_NUMBER}"->"${po_clean}" (ctxtGODYNPRO-PO_NUMBER) | DELIVERY_NOTE="${DELIVERY_NOTE}"->"${dn_clean}" (txtGOHEAD-LFSNR) | BILL_OF_LADING="${BILL_OF_LADING}"->"${bol_clean}" (txtGOHEAD-FRBNR) | GR_SLIP_NO="${GR_SLIP_NO}"->"${slip_clean}" (txtGOHEAD-XABLN) | HEADER_TEXT="${HEADER_TEXT}"->"${hdr_clean}" (txtGOHEAD-BKTXT) | REMARKS="${REMARKS}"->"${rem_clean}" (txtGOITEM-SGTXT, applied per line below)
-
+ 
     # --- Parse ITEMS_JSON ---
     # FIX: this used to decode ITEMS_JSON_B64 into ${items_json} and then
     # immediately discard it, instead parsing the unrelated ${ITEMS_JSON}
@@ -162,51 +186,74 @@ Fill MIGO 103 And Post
     ${items}=         Evaluate    __import__('json').loads('''${items_json}''')
     ${total}=    Get Length    ${items}
     Log To Console    Total matched pairs to fill: ${total}
-
+ 
     # --- Step 1: Navigate to MIGO ---
     Run Transaction    MIGO
     Sleep    3s
     Dismiss Any Popup
     Dismiss Overview Tree Sidebar
-
+ 
     # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
-    ${firstline}=    Set Variable
-    ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011
-
-    # Force action to Goods Receipt (A01)
-    Select From List By Label
-    ...    ${firstline}/cmbGODYNPRO-ACTION
-    ...    Goods Receipt
+    # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
+    #${firstline}=    Get Firstline Path
+ 
+    # Force action to Goods Receipt (A01). Using .key directly instead of
+    # Select From List By Label -- label match depends on SAP logon
+    # language ("Goods Receipt"); key "A01" is stable regardless of
+    # language, and matches the GUI Script recording.
+    #Evaluate    setattr($session.findById('${firstline}/cmbGODYNPRO-ACTION'), 'key', 'A01')
+    #Evaluate    $session.findById('${firstline}/cmbGODYNPRO-ACTION').setFocus()
+    #Sleep     5s
+ 
+    # Re-resolve firstline path -- setting ACTION can itself switch the
+    # subscreen between :0003/:0007, so REFDOC's container may differ
+    # from what ACTION was just found under.
+    # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
+    ${firstline}=    Get Firstline Path
+ 
+    # Force action to Goods Receipt (A01). setattr() used instead of a
+    # direct `.key = 'A01'` assignment because Robot's Evaluate keyword
+    # runs expressions through Python eval(), which cannot execute
+    # assignment statements (SyntaxError: invalid syntax) -- setattr()
+    # is a function call, so it's a valid expression instead.
+    Evaluate    setattr($session.findById('${firstline}/cmbGODYNPRO-ACTION'), 'key', 'A01')
+    #Evaluate    $session.findById('${firstline}/cmbGODYNPRO-ACTION').setFocus()
     Sleep    0.5s
-
+ 
+    ${firstline}=    Get Firstline Path
+ 
     # Force reference to Purchase Order (R01)
-    Select From List By Label
-    ...    ${firstline}/cmbGODYNPRO-REFDOC
-    ...    Purchase Order
+    Evaluate    setattr($session.findById('${firstline}/cmbGODYNPRO-REFDOC'), 'key', 'R01')
+    Evaluate    $session.findById('${firstline}/cmbGODYNPRO-REFDOC').setFocus()
     Sleep    0.5s
-
+ 
+    ${firstline}=    Get Firstline Path
+ 
     # Movement type 103
     Set Focus     ${firstline}/ctxtGODEFAULT_TV-BWART
     Safe Input Text    ${firstline}/ctxtGODEFAULT_TV-BWART    103
-
+ 
     # PO number
     Set Focus     ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER
     Safe Input Text    ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER    ${po_clean}
-
+ 
     Send VKey    0
     Sleep    3s
     Dismiss Any Popup
-
+ 
     # --- Step 3: Header Fields ---
     ${hdr_base}=    Set Variable
     ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110
-
+ 
     Set Focus     ${hdr_base}/ctxtGOHEAD-BLDAT
     Safe Input Text    ${hdr_base}/ctxtGOHEAD-BLDAT    ${DOC_DATE}
-
+ 
     Set Focus     ${hdr_base}/ctxtGOHEAD-BUDAT
     Safe Input Text    ${hdr_base}/ctxtGOHEAD-BUDAT    ${POST_DATE}
-
+ 
+ 
+   
+ 
     # FIX: interleaving Dismiss Any Popup between each field now, not just
     # around the whole block. On a PO with multiple line items, entering
     # Delivery Note (LFSNR) can silently trigger a split/allocation popup
@@ -222,36 +269,35 @@ Fill MIGO 103 And Post
     Safe Input Text    ${hdr_base}/txtGOHEAD-XABLN     ${slip_clean}
     Dismiss Any Popup
     Safe Input Text    ${hdr_base}/txtGOHEAD-BKTXT     ${hdr_clean}
-
+ 
     Send VKey    0
     Sleep    2s
     Dismiss Any Popup
-
+ 
     # --- Step 4: Line Items — dynamic, n pairs from ITEMS_JSON ---
-    ${det_base}=    Set Variable
+    Set Suite Variable    ${det_base}
     ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMDETAIL:SAPLMIGO:0301/subSUB_DETAIL:SAPLMIGO:0300
-
     FOR    ${i}    IN RANGE    ${total}
         ${item}=        Get From List    ${items}    ${i}
         ${line_num}=    Evaluate    ${i} + 1
-
+ 
         ${qty_actual}=    Clean Value    ${item}[qty_actual]
         ${qty_dn}=        Clean Value    ${item}[qty_expected]
         ${item_short_text}=    Run Keyword And Ignore Error    Set Variable    ${item}[short_text]
-
+ 
         # Diagnostic: log this item's own short_text alongside the header
         # REMARKS value that actually gets typed into SGTXT today (see FIX
         # note at the Post step below) -- makes it easy to see, per run,
         # whether they match coincidentally (single-item runs) or diverge
         # (multi-item runs), without having to guess from SAP afterwards.
         Log To Console    Line ${line_num}: qty_actual=${qty_actual} qty_dn=${qty_dn} item_short_text=${item_short_text}[1] (SGTXT actually filled from REMARKS="${rem_clean}" for every line -- see Step 4 note)
-
+ 
         # Navigate to correct line
         Safe Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num}
         Click Element   ${det_base}/btnOK_LOCATE
         Sleep    1s
         Dismiss Any Popup
-
+ 
         # --- Diagnostic: confirm the line actually loaded from the PO and
         # Material auto-populated, BEFORE we touch quantities. We don't have
         # a verified field ID for the Material tab's MATNR control in this
@@ -267,25 +313,25 @@ Fill MIGO 103 And Post
         ELSE
             Log To Console    Line ${line_num} READBACK: MATNR field ID not confirmed for this screen -- could not read back (${matnr_check})
         END
-
+ 
         # Quantity tab
         Click Element
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_QUANTITIES
         Sleep    1s
-
+ 
         ${qty_base}=    Set Variable
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_QUANTITIES/ssubSUB_TS_GOITEM_QUANTITIES:SAPLMIGO:0315
-
+ 
         Set Focus     ${qty_base}/txtGOITEM-ERFMG
         Safe Input Text    ${qty_base}/txtGOITEM-ERFMG    ${qty_actual}
-
+ 
         Set Focus     ${qty_base}/txtGOITEM-LSMNG
         Safe Input Text    ${qty_base}/txtGOITEM-LSMNG    ${qty_dn}
-
+ 
         Send VKey    0
         Sleep    1s
         Dismiss Any Popup
-
+ 
         # --- Diagnostic read-back: confirm SAP actually kept what we typed
         # before we ever reach the (previously broken) Post step. If these
         # come back blank/zero, the line itself never loaded from the PO
@@ -296,7 +342,7 @@ Fill MIGO 103 And Post
         ${erfmg_check}=    Get Value    ${qty_base}/txtGOITEM-ERFMG
         ${lsmng_check}=    Get Value    ${qty_base}/txtGOITEM-LSMNG
         Log To Console    Line ${line_num} READBACK: ERFMG(actual qty)="${erfmg_check}" LSMNG(DN qty)="${lsmng_check}"
-
+ 
         # Where tab — fill remarks/text
         # NOTE (flagged for review, not yet changed): SGTXT below is filled
         # from ${rem_clean} -- the single header-level REMARKS value -- for
@@ -311,45 +357,60 @@ Fill MIGO 103 And Post
         Click Element
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT.
         Sleep    1s
-
+ 
         Set Focus
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT./ssubSUB_TS_GOITEM_DESTINATION:SAPLMIGO:0325/txtGOITEM-SGTXT
         Safe Input Text
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT./ssubSUB_TS_GOITEM_DESTINATION:SAPLMIGO:0325/txtGOITEM-SGTXT
         ...    ${rem_clean}
-
+ 
         Send VKey    0
         Sleep    1s
         Dismiss Any Popup
-
+ 
         # Item OK — always last
+     
+        #Evaluate    $session.findById('${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE').setFocus()
+        #Evaluate    $session.findById('${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE').selected = True
+        #Sleep    0.5s
+ 
         Select Checkbox
         ...    ${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE
         Sleep    0.5s
+ 
+       
     END
+   
+   
+   
+   
     # --- Step 5: Post ---
     # FIX: this used to click btnMIGO_OK_GO -- the PO-check/execute button
     # from Step 2, not a Save/Post action. Confirmed via SAP GUI Script
     # Recording that the real Post button is wnd[0]/tbar[1]/btn[23]. That's
     # why every prior run returned MANUAL_CHECK_REQUIRED with an empty
     # status bar -- nothing was ever actually being saved to SAP.
+ 
+ 
+ 
+ 
     Click Element    wnd[0]/tbar[1]/btn[23]
-
+ 
     Sleep    3s
     Dismiss Any Popup
-
+ 
     # --- Step 6: Read Material Doc Number ---
     ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
     Log To Console    Final Status Message: ${status_msg}
-
+ 
     @{matches}=    Get Regexp Matches    ${status_msg}    \\d{8,12}
     IF    len($matches) == 0
         RETURN    MANUAL_CHECK_REQUIRED
     END
-
+ 
     RETURN    ${matches}[0]
-
-
+ 
+ 
 Read Status Bar With Retry
     [Arguments]    ${expected_pattern}=\\d{8,}
     ${msg}=    Set Variable    ${EMPTY}
@@ -363,8 +424,8 @@ Read Status Bar With Retry
     END
     Log To Console    Status bar timed out. Last: "${msg}"
     RETURN    ${msg}
-
-
+ 
+ 
 Safe Input Text
     # Retries once on failure -- covers the "Property text can not be set"
     # AttributeError (a stale/dead COM element reference). Two known causes
@@ -389,8 +450,8 @@ Safe Input Text
             Input Text    ${locator}    ${value}
         END
     END
-
-
+ 
+ 
 Clean Value
     # NOTE: previously ended with Split String + ${parts}[0], returning only
     # the first word -- e.g. "Storage bin A12" became just "Storage". Fixed
@@ -407,8 +468,8 @@ Clean Value
     ${cleaned}=    Replace String    ${cleaned}    ,    ${EMPTY}
     ${cleaned}=    Strip String    ${cleaned}
     RETURN         ${cleaned}
-
-
+ 
+ 
 Dismiss Any Popup
     ${popup1}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
     IF    ${popup1}
@@ -420,12 +481,12 @@ Dismiss Any Popup
         Run Keyword And Ignore Error    Click Element    wnd[2]/tbar[0]/btn[0]
         Sleep    1s
     END
-
-
+ 
+ 
 # Close SAP Session
 #     # Log    Execution finished. Session kept open.
 #     # RETURN
-
+ 
 Close SAP Session
     Log    Closing SAP session...
     Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
