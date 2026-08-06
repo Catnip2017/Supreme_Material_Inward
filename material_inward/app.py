@@ -74,6 +74,12 @@ from database.notifications_operations import (
     get_unread_for_user, mark_as_read, mark_all_as_read_for_user,
     cleanup_old_notifications, create_notification
 )
+from database.admin_operations import (
+    find_records_for_admin, get_admin_action_log,
+    delete_history_record, reset_gate_in_step,
+    reset_migo_103_step, reset_migo_105_step, reset_miro_step,
+    revert_extracted_data_approval, revert_gst_approval
+)
 from services.extract import process_document
 from services.rf_queue_worker import start_worker
 from services.mail_service import send_approval_notification
@@ -927,6 +933,112 @@ def user_management():
         role=session.get("role"),
         admin_can_edit=_admin_can_edit()
     )
+
+
+# ============================================================
+# RECORD ADMIN — delete a record entirely, reset an individual step, or
+# revert an approval, from the UI instead of raw SQL run by hand.
+#
+# Permission model matches every other step-based action in this app
+# (gate_in/migo_103/migo_105/miro/compliance): "record_admin" is just
+# another value a SuperAdmin can add to a user's step_roles via the User
+# Management page (see user_management.html/user_operations.py) --
+# _has_role("record_admin") gates viewing this page, _require_role_edit(
+# "record_admin") gates every actual mutating call below, same idiom used
+# throughout the rest of app.py (e.g. save_gatein()/run_migo_103()). A
+# SuperAdmin can always view (per _has_role's own rule) and can act only
+# if admin_edit=True, same as everywhere else.
+#
+# Every mutating route here is deliberately POST-only, requires an
+# explicit {"confirm": true} in the JSON body (belt-and-suspenders on top
+# of whatever confirmation the frontend already does -- these are
+# destructive, hard-to-undo actions on a production system), and logs to
+# admin_action_log via database/admin_operations.py before/around the
+# actual change so there's an audit trail independent of the record being
+# acted on.
+# ============================================================
+
+@app.route("/admin/records")
+@login_required
+def admin_records_page():
+    if not _has_role("record_admin"):
+        return redirect(url_for("history_page"))
+    return render_template(
+        "admin_records.html",
+        username=session.get("username"),
+        role=session.get("role"),
+        can_edit=_is_superadmin() and _admin_can_edit() or (not _is_superadmin() and "record_admin" in _current_roles()),
+        recent_actions=get_admin_action_log(limit=50)
+    )
+
+
+@app.route("/api/admin/records/search")
+@api_login_required
+def api_admin_records_search():
+    if not _has_role("record_admin"):
+        return jsonify({"success": False, "error": "Permission denied."}), 403
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"success": True, "records": []})
+    return jsonify({"success": True, "records": find_records_for_admin(query)})
+
+
+def _record_admin_action(action_fn, history_id: int):
+    """Shared body for every mutating route below -- checks permission,
+    requires an explicit confirm flag, calls the given admin_operations
+    function, and returns a consistent JSON response."""
+    blocked = _require_role_edit("record_admin")
+    if blocked:
+        return blocked
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify({"success": False, "error": "Confirmation required."}), 400
+    ok = action_fn(history_id, _current_user())
+    if not ok:
+        return jsonify({"success": False, "error": "Action failed -- check server logs."}), 500
+    return jsonify({"success": True})
+
+
+@app.route("/api/admin/records/<int:history_id>/delete", methods=["POST"])
+@api_login_required
+def api_admin_delete_record(history_id):
+    return _record_admin_action(delete_history_record, history_id)
+
+
+@app.route("/api/admin/records/<int:history_id>/reset_gate_in", methods=["POST"])
+@api_login_required
+def api_admin_reset_gate_in(history_id):
+    return _record_admin_action(reset_gate_in_step, history_id)
+
+
+@app.route("/api/admin/records/<int:history_id>/reset_migo_103", methods=["POST"])
+@api_login_required
+def api_admin_reset_migo_103(history_id):
+    return _record_admin_action(reset_migo_103_step, history_id)
+
+
+@app.route("/api/admin/records/<int:history_id>/reset_migo_105", methods=["POST"])
+@api_login_required
+def api_admin_reset_migo_105(history_id):
+    return _record_admin_action(reset_migo_105_step, history_id)
+
+
+@app.route("/api/admin/records/<int:history_id>/reset_miro", methods=["POST"])
+@api_login_required
+def api_admin_reset_miro(history_id):
+    return _record_admin_action(reset_miro_step, history_id)
+
+
+@app.route("/api/admin/records/<int:history_id>/revert_extracted_data_approval", methods=["POST"])
+@api_login_required
+def api_admin_revert_extracted_data_approval(history_id):
+    return _record_admin_action(revert_extracted_data_approval, history_id)
+
+
+@app.route("/api/admin/records/<int:history_id>/revert_gst_approval", methods=["POST"])
+@api_login_required
+def api_admin_revert_gst_approval(history_id):
+    return _record_admin_action(revert_gst_approval, history_id)
 
 
 # ============================================================

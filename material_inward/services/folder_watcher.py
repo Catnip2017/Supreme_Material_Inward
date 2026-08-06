@@ -188,12 +188,41 @@ def _get_group_key(filename: str) -> str:
     return stem.rsplit("_", 1)[0].strip().lower()
 
 
+# FIX: _is_stable() used to trust os.path.getmtime() alone -- but a file
+# copied in from elsewhere (email attachment, another folder, a scan tool)
+# commonly carries its ORIGINAL modification timestamp; Windows copy
+# preserves mtime, and renaming a file doesn't touch it either. So a file
+# that's genuinely still being copied/renamed into WATCH_FOLDER right now
+# can already look 40+ seconds "old" the instant it lands, if it happened
+# to be created/modified elsewhere more than 40s ago -- the watcher would
+# grab it immediately instead of actually waiting. Replaced with a
+# size-stability check keyed by the watcher's OWN first-observed time for
+# this exact path: a file is only "stable" once its size has stopped
+# changing for STABLE_SECONDS AS MEASURED BY US, never trusting the
+# filesystem's own timestamp. This also naturally gives a fresh full
+# STABLE_SECONDS window after a rename (a rename produces a new path,
+# which this tracker has never seen before), which is exactly the
+# "give them time to copy AND rename" behavior needed.
+_file_size_tracker = {}  # file_path -> (last_seen_size, first_seen_at_this_size)
+
+
 def _is_stable(file_path: str) -> bool:
     try:
-        modified_ago = time.time() - os.path.getmtime(file_path)
-        return modified_ago >= STABLE_SECONDS
+        current_size = os.path.getsize(file_path)
     except Exception:
         return False
+
+    now = time.time()
+    prev = _file_size_tracker.get(file_path)
+
+    if prev is None or prev[0] != current_size:
+        # First time seeing this path, or its size just changed (still
+        # being written/copied) -- (re)start the stability clock.
+        _file_size_tracker[file_path] = (current_size, now)
+        return False
+
+    _, first_seen_at_this_size = prev
+    return (now - first_seen_at_this_size) >= STABLE_SECONDS
 
 
 def _ensure_dirs() -> bool:
@@ -226,6 +255,15 @@ def _ensure_dirs() -> bool:
 def _sweep_loose_files():
     """Move stable loose files in WATCH_FOLDER root into grouped/<group_key>/."""
     try:
+        # Self-clean _file_size_tracker: drop any entry whose path no longer
+        # exists on disk (already moved into grouped/, renamed, or removed).
+        # Runs every cycle since this function runs every cycle -- keeps the
+        # tracker from growing unbounded without needing to remember to call
+        # a cleanup at every single move/rename site elsewhere in this file.
+        for _tracked_path in list(_file_size_tracker.keys()):
+            if not os.path.exists(_tracked_path):
+                _file_size_tracker.pop(_tracked_path, None)
+
         current_unrecognized = set()
 
         for filename in os.listdir(WATCH_FOLDER):

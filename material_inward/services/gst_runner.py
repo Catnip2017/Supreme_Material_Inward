@@ -19,6 +19,8 @@ Public API:
     is_running(history_id)      -- True while thread is active
 """
 
+import os
+import queue
 import threading
 from datetime import datetime, timedelta
 
@@ -31,6 +33,36 @@ logger = get_logger(__name__)
 # Track which history_ids currently have a running bot thread
 _running: set = set()
 _running_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Browser profile slot pools -- bounded concurrency for GST bots
+# ---------------------------------------------------------------------------
+# Each bot type used to point every run at ONE fixed, shared Edge profile
+# folder (EDGE_PROFILE_DIR in einvoice_bot.py / taxpayer_search_bot.py).
+# Chromium locks --user-data-dir exclusively, so two concurrent runs of the
+# SAME bot type would collide on that folder today. Fix: a small, bounded
+# pool of slot subfolders per bot type, handed out via a Queue that blocks
+# when every slot is busy -- this both avoids the folder-lock collision and
+# caps how many Edge processes of a given type can run at once (so a burst
+# of triggers doesn't pile up an unbounded number of browsers/OCR models).
+#
+# Starting at 2 slots each -- deliberately conservative. Both GST portals
+# are live government sites with no staging environment to test
+# rate-limiting against; raise these only after watching real error/retry
+# rates for a while. Each NEW slot folder needs the native Edge
+# "Allow/Block" permission prompt clicked once, manually, the first time
+# it's used -- same one-time step the original single shared folder needed,
+# just repeated per slot (einvoice slot1/slot2, taxpayer slot1/slot2 = 4
+# clicks total, once each, ever).
+EINVOICE_POOL_SIZE = 2
+TAXPAYER_POOL_SIZE = 2
+
+_einvoice_slots: "queue.Queue[int]" = queue.Queue()
+_taxpayer_slots: "queue.Queue[int]" = queue.Queue()
+for _slot_n in range(1, EINVOICE_POOL_SIZE + 1):
+    _einvoice_slots.put(_slot_n)
+for _slot_n in range(1, TAXPAYER_POOL_SIZE + 1):
+    _taxpayer_slots.put(_slot_n)
 
 # Track auto-retry attempts per history_id: {history_id: {"count": int, "last": datetime}}
 _attempts: dict = {}
@@ -221,15 +253,30 @@ def _run_bots(history_id: int) -> None:
             )
             result["einvoice_status"]     = existing.get("einvoice_status", "")
             result["einvoice_screenshot"] = existing.get("einvoice_screenshot", "")
-        else:
-            # Site 1: EInvoiceBot
+
+        # v21 FIX: Site 1 and Site 2 previously ran sequentially in this one
+        # thread even though they hit two completely independent sites, each
+        # with its own separate Edge profile folder -- nothing about them
+        # actually required running one after the other. Now launched
+        # concurrently (when Site 1 isn't being reused), so one GST check
+        # takes roughly as long as the SLOWER of the two sites instead of the
+        # sum of both. Each still runs its own full try/except exactly as
+        # before, just inside a thread target; result/errors are plain
+        # dict-item/list writes to non-overlapping keys from each site, safe
+        # under the GIL without extra locking. Each also now acquires a slot
+        # from the bounded profile-pool queues above before launching its
+        # browser, and always releases it in `finally` -- including on a
+        # crash -- so a slot can never leak.
+        def _do_site1():
+            slot = _einvoice_slots.get()
             try:
-                from services.einvoice_bot import EInvoiceBot
+                from services.einvoice_bot import EInvoiceBot, EDGE_PROFILE_DIR
+                profile_dir = os.path.join(EDGE_PROFILE_DIR, f"slot{slot}")
                 EInvoiceBot.cleanup_old_screenshots()
-                bot1 = EInvoiceBot(headless=False)
+                bot1 = EInvoiceBot(headless=False, profile_dir=profile_dir)
                 try:
                     r1 = bot1.search(gstin)
-                    logger.info(f"[gst_runner] site1 raw result: {r1}")
+                    logger.info(f"[gst_runner] site1 (slot{slot}) raw result: {r1}")
                     result["einvoice_status"]     = r1.get("einvoice_status", "")
                     result["einvoice_screenshot"] = r1.get("screenshot", "")
                     if r1.get("error"):
@@ -242,39 +289,57 @@ def _run_bots(history_id: int) -> None:
             except Exception as e:
                 errors.append(f"Site1 exception: {e}")
                 logger.error(f"[gst_runner] site1 crashed: {e}", exc_info=True)
-
-        # Site 2: TaxpayerSearchBot
-        try:
-            from services.taxpayer_search_bot import TaxpayerSearchBot
-            TaxpayerSearchBot.cleanup_old_screenshots()
-            bot2 = TaxpayerSearchBot(headless=False)
-            try:
-                r2 = bot2.search(gstin)
-                logger.info(f"[gst_runner] site2 raw result: {r2}")
-                result["gstin_status"]        = r2.get("gstin_status", "")
-                result["legal_name"]          = r2.get("legal_name", "")
-                result["taxpayer_type"]       = r2.get("taxpayer_type", "")
-                result["gstr3b_last_filed"]   = r2.get("gstr3b_last_filed", "")
-                result["gstr3b_tax_period"]   = r2.get("gstr3b_tax_period", "")
-                result["gstr3b_status"]       = r2.get("gstr3b_status", "")
-                result["gstr1_last_filed"]    = r2.get("gstr1_last_filed", "")
-                result["gstr1_tax_period"]    = r2.get("gstr1_tax_period", "")
-                result["gstr1_status"]        = r2.get("gstr1_status", "")
-                result["taxpayer_screenshot"] = bot2.save_screenshot(gstin)
-                if r2.get("error"):
-                    errors.append(f"Site2: {r2['error']}")
-                    logger.warning(f"[gst_runner] site2 error: {r2['error']}")
-                else:
-                    logger.info(
-                        f"[gst_runner] site2 gstin_status='{result['gstin_status']}' "
-                        f"legal_name='{result['legal_name']}' "
-                        f"taxpayer_type='{result['taxpayer_type']}'"
-                    )
             finally:
-                bot2.quit()
-        except Exception as e:
-            errors.append(f"Site2 exception: {e}")
-            logger.error(f"[gst_runner] site2 crashed: {e}", exc_info=True)
+                _einvoice_slots.put(slot)
+
+        def _do_site2():
+            slot = _taxpayer_slots.get()
+            try:
+                from services.taxpayer_search_bot import TaxpayerSearchBot, EDGE_PROFILE_DIR
+                profile_dir = os.path.join(EDGE_PROFILE_DIR, f"slot{slot}")
+                TaxpayerSearchBot.cleanup_old_screenshots()
+                bot2 = TaxpayerSearchBot(headless=False, profile_dir=profile_dir)
+                try:
+                    r2 = bot2.search(gstin)
+                    logger.info(f"[gst_runner] site2 (slot{slot}) raw result: {r2}")
+                    result["gstin_status"]        = r2.get("gstin_status", "")
+                    result["legal_name"]          = r2.get("legal_name", "")
+                    result["taxpayer_type"]       = r2.get("taxpayer_type", "")
+                    result["gstr3b_last_filed"]   = r2.get("gstr3b_last_filed", "")
+                    result["gstr3b_tax_period"]   = r2.get("gstr3b_tax_period", "")
+                    result["gstr3b_status"]       = r2.get("gstr3b_status", "")
+                    result["gstr1_last_filed"]    = r2.get("gstr1_last_filed", "")
+                    result["gstr1_tax_period"]    = r2.get("gstr1_tax_period", "")
+                    result["gstr1_status"]        = r2.get("gstr1_status", "")
+                    result["taxpayer_screenshot"] = bot2.save_screenshot(gstin)
+                    if r2.get("error"):
+                        errors.append(f"Site2: {r2['error']}")
+                        logger.warning(f"[gst_runner] site2 error: {r2['error']}")
+                    else:
+                        logger.info(
+                            f"[gst_runner] site2 gstin_status='{result['gstin_status']}' "
+                            f"legal_name='{result['legal_name']}' "
+                            f"taxpayer_type='{result['taxpayer_type']}'"
+                        )
+                finally:
+                    bot2.quit()
+            except Exception as e:
+                errors.append(f"Site2 exception: {e}")
+                logger.error(f"[gst_runner] site2 crashed: {e}", exc_info=True)
+            finally:
+                _taxpayer_slots.put(slot)
+
+        threads = [threading.Thread(
+            target=_do_site2, name=f"GST-Site2-{history_id}", daemon=True
+        )]
+        if not site1_reusable:
+            threads.insert(0, threading.Thread(
+                target=_do_site1, name=f"GST-Site1-{history_id}", daemon=True
+            ))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
         if errors:
             result["bot_error"] = " | ".join(errors)
