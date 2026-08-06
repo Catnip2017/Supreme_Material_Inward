@@ -177,7 +177,18 @@
 {% set post_locked = (history is none) or (not history.gate_in) %}
 {% set gate_in_done = history and history.gate_in %}
 {% set po_flow_type = (history.po_flow_type if history else 'truck_with_po') or 'truck_with_po' %}
-{% set show_manual_po_fetch = 'without_po' in po_flow_type %}
+{% set po_fetch_ok = po_data and po_data|length > 0 %}
+{# FIX: this button used to only ever show for without_po flows (where PO
+   fetch is manual by design -- no PO existed at intake). with_po flows
+   auto-enqueue po_fetch right after Gate In (see rf_queue_worker.py), but
+   had no way to retry it from here if that auto-run failed -- the user was
+   stuck re-typing PO lines by hand or using "Add Without PO Match". Now
+   also shown for with_po whenever po_data is still empty (fetch never
+   ran, or ran and failed); it disappears again once po_data is populated,
+   same as before. Reuses the exact same button/JS/route -- no with_po-
+   specific branching needed anywhere else, since /api/run_po_fetch and
+   fetchMigo103PoItems() were already fully generic. #}
+{% set show_manual_po_fetch = ('without_po' in po_flow_type) or (not po_fetch_ok) %}
 {% if not gate_in_done %}
 <div class="gate-banner">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 103.</div>
 {% else %}
@@ -219,13 +230,15 @@
                value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
                >
         {% if show_manual_po_fetch %}
+        {% set fetch_po_label = '📋 Fetch PO Items' if 'without_po' in po_flow_type else '🔄 Retry PO Fetch' %}
         <button type="button" id="fetchPoItemsBtn"
                 onclick="fetchMigo103PoItems()"
+                data-default-label="{{ fetch_po_label }}"
                 style="display:inline-flex;align-items:center;gap:5px;padding:0 14px;height:38px;
                        background:#e67e22;color:#fff;border:none;border-radius:6px;
                        cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;flex-shrink:0;"
                 >
-          📋 Fetch PO Items
+          {{ fetch_po_label }}
         </button>
         {% endif %}
       </div>
@@ -1320,7 +1333,10 @@ function _doSubmitMigo103(historyId) {
 }
 
 {% if show_manual_po_fetch %}
-// ── Without-PO: manual PO fetch from MIGO 103 screen ──────────────────────
+// ── Manual PO fetch from MIGO 103 screen ───────────────────────────────────
+// Without-PO flows: first-time manual fetch (no auto-run exists).
+// With-PO flows: retry button, shown only while po_data is still empty
+// (auto-run after Gate In never ran yet, or ran and failed).
 let _migo103PoFetchJobId  = null;
 let _migo103PoFetchPoller = null;
 
@@ -1370,6 +1386,13 @@ function _pollMigo103PoFetch() {
           _resetFetchPoBtn(false);
           const result = job.result || {};
           const items  = result.po_items || [];
+          // FIX: this used to reference `historyId`, a variable local to
+          // fetchMigo103PoItems() and out of scope here -- reading it threw
+          // a silent ReferenceError inside this fetch().then() callback, so
+          // the table never actually auto-reloaded after a successful
+          // fetch (the status message above still showed fine, masking it).
+          // Re-read the same hidden field instead.
+          const historyId = parseInt(document.getElementById('history_id_migo').value);
           if (items.length > 0) {
             _showMigo103PoStatus('✓ Loaded ' + items.length + ' PO line(s) — refresh the table below.', 'success');
             _reloadPoItemsTable(historyId);
@@ -1390,7 +1413,9 @@ function _resetFetchPoBtn(loading) {
   const btn = document.getElementById('fetchPoItemsBtn');
   if (!btn) return;
   btn.disabled    = loading;
-  btn.textContent = loading ? '⏳ Fetching...' : '📋 Fetch PO Items';
+  // Restores whichever label the server rendered for this flow type
+  // ("Fetch PO Items" vs "Retry PO Fetch") instead of hardcoding one.
+  btn.textContent = loading ? '⏳ Fetching...' : (btn.dataset.defaultLabel || '📋 Fetch PO Items');
 }
 
 function _showMigo103PoStatus(msg, type) {

@@ -97,11 +97,18 @@ class TaxpayerSearchBot:
     ]
 
     # ── Init ──────────────────────────────────────────────────────────────────
-    def __init__(self, headless: bool = True):
+    def __init__(self, headless: bool = True, profile_dir: str = None):
         self._cleanup_old_screenshots()
         ensure_matching_edge_driver(logger)
 
-        os.makedirs(EDGE_PROFILE_DIR, exist_ok=True)
+        # profile_dir lets a caller (gst_runner's slot pool) point this
+        # instance at its own reserved profile folder so multiple
+        # TaxpayerSearchBot instances can run at the same time without
+        # fighting over Chromium's exclusive lock on --user-data-dir. Falls
+        # back to the single shared folder above if not given
+        # (standalone/manual use).
+        profile_dir = profile_dir or EDGE_PROFILE_DIR
+        os.makedirs(profile_dir, exist_ok=True)
 
         opts = Options()
         if headless:
@@ -110,7 +117,7 @@ class TaxpayerSearchBot:
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--window-size=1366,768")
-        opts.add_argument(f"--user-data-dir={EDGE_PROFILE_DIR}")
+        opts.add_argument(f"--user-data-dir={profile_dir}")
         opts.add_experimental_option("excludeSwitches", ["enable-automation"])
         opts.add_experimental_option("useAutomationExtension", False)
 

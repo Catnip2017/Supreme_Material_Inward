@@ -599,6 +599,10 @@ def get_history_search(
         # "in_progress" bucket below, which lumps Gate In/MIGO 103/MIGO 105
         # done states together and has no way to isolate just this one.
         conditions.append("h.gate_in = 1 AND h.migo_103 = 0")
+    elif status == "migo_103_done":
+        conditions.append("h.migo_103 = 1 AND h.migo_105 = 0")
+    elif status == "migo_105_done":
+        conditions.append("h.migo_105 = 1 AND h.miro = 0")
     elif status == "in_progress":
         conditions.append("h.gate_in = 1 AND h.miro = 0")
     elif status == "completed":

@@ -525,11 +525,12 @@
     </div>
  
     {% set ROLE_LABELS = {
-        'compliance': 'Compliance Officer (Extracted Data + GST Approval)',
-        'gate_in':    'Gate Security',
-        'migo_103':   'Stores Officer (MIGO 103)',
-        'migo_105':   'Quality / Release Officer (MIGO 105)',
-        'miro':       'Accounts Payable Officer (MIRO)'
+        'compliance':   'Compliance Officer (Extracted Data + GST Approval)',
+        'gate_in':      'Gate Security',
+        'migo_103':     'Stores Officer (MIGO 103)',
+        'migo_105':     'Quality / Release Officer (MIGO 105)',
+        'miro':         'Accounts Payable Officer (MIRO)',
+        'record_admin': 'Record Admin (delete/revert)'
     } %}
 
     <div class="container">
@@ -689,6 +690,7 @@
                     <label><input type="checkbox" name="create_step" value="migo_103"> Stores Officer<span class="role-desc">MIGO 103</span></label>
                     <label><input type="checkbox" name="create_step" value="migo_105"> Quality / Release Officer<span class="role-desc">MIGO 105</span></label>
                     <label><input type="checkbox" name="create_step" value="miro"> Accounts Payable Officer<span class="role-desc">MIRO</span></label>
+                    <label style="border-top:1px dashed #d9534f;margin-top:6px;padding-top:8px;"><input type="checkbox" name="create_step" value="record_admin"> Record Admin<span class="role-desc" style="color:#d9534f;">Can delete records / reset steps / revert approvals -- powerful, grant carefully</span></label>
                 </div>
             </div>
             <div class="superadmin-edit-toggle" id="create_superadmin_toggle">
@@ -768,6 +770,7 @@
                         <label><input type="checkbox" name="edit_step" value="migo_103"> Stores Officer<span class="role-desc">MIGO 103</span></label>
                         <label><input type="checkbox" name="edit_step" value="migo_105"> Quality / Release Officer<span class="role-desc">MIGO 105</span></label>
                         <label><input type="checkbox" name="edit_step" value="miro"> Accounts Payable Officer<span class="role-desc">MIRO</span></label>
+                        <label style="border-top:1px dashed #d9534f;margin-top:6px;padding-top:8px;"><input type="checkbox" name="edit_step" value="record_admin"> Record Admin<span class="role-desc" style="color:#d9534f;">Can delete records / reset steps / revert approvals -- powerful, grant carefully</span></label>
                     </div>
                 </div>
                 <div class="superadmin-edit-toggle" id="edit_superadmin_toggle">
