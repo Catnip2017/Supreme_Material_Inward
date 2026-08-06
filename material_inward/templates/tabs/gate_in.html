@@ -133,7 +133,7 @@
     <strong>Status:</strong>
     Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
     &nbsp;|&nbsp; MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
-    &nbsp;|&nbsp; MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
     &nbsp;|&nbsp; MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   </div>
   {% endif %}
@@ -333,8 +333,8 @@
       </div>
       <div class="form-group">
         <label>Challan Quantity <span class="req">*</span></label>
-        <input type="text" id="challanQty" class="form-input" maxlength="17"
-              value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(17, True, '', 0) }}"
+        <input type="text" id="challanQty" class="form-input" maxlength="20" inputmode="decimal"
+              value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(20, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanQty">Required</div>
       </div>
@@ -648,6 +648,58 @@ function validateGateIn() {
       this.classList.remove('field-error');
       if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
     }
+  });
+})();
+
+// Challan Quantity: numeric only, max 16 digits before the decimal point
+// and 3 after (client request, 2026-08-07). Bad characters are blocked as
+// the user types (real-time filter on 'input', which also covers paste --
+// unlike 'keypress'), rather than validated after the fact, so it's
+// physically impossible to end up with letters or an over-length value.
+// On blur, a bare integer (or a value typed with fewer than 3 decimal
+// digits) is normalized to exactly 3 decimals -- "100" becomes "100.000",
+// "100.5" becomes "100.500". Client-side only, matching how Truck No and
+// License No are handled in this same tab -- no server-side re-check.
+// Same as those two, this only fires once the user actually interacts with
+// the field, so a pre-filled value (from a saved record, or the invoice's
+// goods quantity) isn't force-reformatted just by loading the page.
+(function() {
+  const el = document.getElementById('challanQty');
+  if (!el) return;
+
+  el.addEventListener('input', function() {
+    let v = this.value;
+    // Strip anything that isn't a digit or a period -- this alone blocks
+    // alphabets, currency symbols, spaces, etc.
+    v = v.replace(/[^0-9.]/g, '');
+    // Only the first period counts as the decimal point; drop any others
+    // (e.g. typing "1.2.3" collapses to "1.23").
+    const firstDot = v.indexOf('.');
+    if (firstDot !== -1) {
+      v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+    }
+    // Cap 16 digits before the decimal, 3 after (16+3, total 20 chars).
+    const parts = v.split('.');
+    parts[0] = parts[0].slice(0, 16);
+    if (parts.length > 1) parts[1] = parts[1].slice(0, 3);
+    this.value = parts.join('.');
+  });
+
+  el.addEventListener('blur', function() {
+    const errEl = document.getElementById('err_challanQty');
+    let v = this.value.trim();
+    if (!v) return;  // required-check on submit handles blank
+    if (!v.includes('.')) {
+      v = v + '.000';
+    } else {
+      let [intPart, decPart] = v.split('.');
+      intPart = intPart || '0';  // guard against a lone "." with nothing before it
+      decPart = (decPart + '000').slice(0, 3);
+      v = intPart + '.' + decPart;
+    }
+    this.value = v;
+    this.classList.remove('field-error');
+    if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
   });
 })();
 

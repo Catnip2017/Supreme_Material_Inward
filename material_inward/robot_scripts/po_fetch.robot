@@ -13,7 +13,7 @@ Library           String
 Library           Collections
 Library    sap_helpers.py
 *** Variables ***
-${PO_NUMBER}    {EMPTY}
+${PO_NUMBER}     ${EMPTY}
 ${ITEM_COMBO}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB1:SAPLMEGUI:6000/cmbDYN_6000-LIST
 # ============================================================
 # CONFIRMED PATHS FROM GUI RECORDING
@@ -44,6 +44,13 @@ ${BTN_OTHER_PO}    wnd[0]/tbar[1]/btn[17]
 ${POPUP_PO_FIELD}  wnd[1]/usr/subSUB0:SAPLMEGUI:0003/ctxtMEPO_SELECT-EBELN
 ${POPUP_CONFIRM}   wnd[1]/tbar[0]/btn[0]
  
+ 
+# Delivery tab and Open Quantity (confirmed from recording)
+${DELIVERY_TAB}      wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB2:SAPLMEGUI:1303/tabsITEM_DETAIL/tabpTABIDT6
+${OPEN_QTY_TABLE}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB2:SAPLMEGUI:1303/tabsITEM_DETAIL/tabpTABIDT6/ssubTABSTRIPCONTROL1SUB:SAPLMEGUI:1320/tblSAPLMEGUITC_1320
+${F_OPENQTY}          txtMEPO1320-OBMNG
+${COL_OPENQTY}        10
+${BTN_NEXT_ITEM_OQ}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB1:SAPLMEGUI:6000/btn%#AUTOTEXT002
  
 *** Test Cases ***
 Execute PO Fetch
@@ -163,13 +170,14 @@ Fetch PO Line Items
         # them arriving blank at the SAP-read step itself) versus getting
         # lost further down the pipeline (rf_runner parsing, DB save, etc).
         Log To Console    Row ${row_idx} READ: material="${material}" short_text="${short_text}" qty="${qty_raw}" net_price="${price_raw}"
+        #qty="${qty_raw}"
  
         &{row_data}=    Create Dictionary
         ...    material=${material}
         ...    short_text=${short_text}
-        ...    qty=${qty_raw}
         ...    net_price=${price_raw}
         ...    uom=${uom_raw}
+        ...    qty=${qty_raw}
  
         Append To List    ${items}    ${row_data}
         ${row_idx}=    Evaluate    ${row_idx} + 1
@@ -218,22 +226,73 @@ Fetch PO Line Items
 # --------------------------------------------------------
  # --------------------------------------------------------
    # --------------------------------------------------------
-    # STEP 2: Read HSN/SAC — set focus on each row's short text
-    # field to activate that item in the detail pane
     # --------------------------------------------------------
+    # STEP 2b: Read Open Quantity — click Delivery tab once,
+    # then press next-item button between reads
+    # --------------------------------------------------------
+    # --------------------------------------------------------
+    # STEP 2b: Read Open Quantity — click Delivery tab once,
+    # then press next-item button between reads
+    # --------------------------------------------------------
+    @{open_qty_list}=    Create List
+ 
+    # Make sure we're back on item 1 before starting this pass
+    Run Keyword And Ignore Error    Set Combo Via Vbs    ${ITEM_COMBO}    1
+    Sleep    1s
+    Run Keyword And Ignore Error    Click Element    ${DELIVERY_TAB}
+    Sleep    1s
+ 
+    FOR    ${i}    IN RANGE    ${total_rows}
+        ${oq_path}=    Set Variable    ${OPEN_QTY_TABLE}/${F_OPENQTY}\[${COL_OPENQTY},0\]
+        ${oq_res}=    Run Keyword And Ignore Error    Get Value    ${oq_path}
+        Log To Console    Item ${i} Open Qty read: ${oq_res}[0] = ${oq_res}[1]
+        IF    '${oq_res}[0]' == 'PASS'
+            ${open_qty}=    Clean SAP Value    ${oq_res}[1]
+        ELSE
+            ${open_qty}=    Set Variable    ${EMPTY}
+        END
+        Append To List    ${open_qty_list}    ${open_qty}
+        Log To Console    Item ${i} Open Quantity: ${open_qty}
+ 
+        IF    ${i} < ${total_rows} - 1
+            Run Keyword And Ignore Error    Click Element    ${BTN_NEXT_ITEM_OQ}
+            Sleep    3s
+        END
+    END
+ 
+    ${oq_count}=    Get Length    ${open_qty_list}
+    WHILE    ${oq_count} < ${total_rows}
+        Append To List    ${open_qty_list}    ${EMPTY}
+        ${oq_count}=    Evaluate    ${oq_count} + 1
+    END
+ 
     @{hsn_list}=    Create List
  
     FOR    ${i}    IN RANGE    ${total_rows}
         ${item_index}=    Evaluate    ${i} + 1
- 
         ${combo_res}=    Run Keyword And Ignore Error    Set Combo Via Vbs    ${ITEM_COMBO}    ${item_index}
         Log To Console    Item ${i} combo: ${combo_res}[0]
         Sleep    1.5s
  
+        Run Keyword And Ignore Error    Click Element    ${INDIA_TAB}
+        Sleep    1s
+ 
         ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
         Log To Console    Item ${i} HSN read: ${hsn_res}[0] = ${hsn_res}[1]
+        IF    '${hsn_res}[0]' == 'PASS'
+            ${hsn}=    Clean SAP Value    ${hsn_res}[1]
+        ELSE
+            ${hsn}=    Set Variable    ${EMPTY}
+        END
+        Append To List    ${hsn_list}    ${hsn}
  
-        ${hsn}=    Clean SAP Value    ${hsn_res}[1]
+        ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
+        Log To Console    Item ${i} HSN read: ${hsn_res}[0] = ${hsn_res}[1]
+        IF    '${hsn_res}[0]' == 'PASS'
+            ${hsn}=    Clean SAP Value    ${hsn_res}[1]
+        ELSE
+            ${hsn}=    Set Variable    ${EMPTY}
+        END
         Append To List    ${hsn_list}    ${hsn}
         Log To Console    Item ${i} HSN/SAC: ${hsn}
     END
@@ -255,12 +314,16 @@ Fetch PO Line Items
     FOR    ${i}    IN RANGE    ${total_rows}
         ${row}=         Get From List    ${items}    ${i}
         ${hsn}=         Get From List    ${hsn_list}    ${i}
+        ${open_qty}=    Get From List    ${open_qty_list}    ${i}
         ${material}=    Get From Dictionary    ${row}    material
         ${short_text}=  Get From Dictionary    ${row}    short_text
         ${qty_str}=     Get From Dictionary    ${row}    qty
         ${price_str}=   Get From Dictionary    ${row}    net_price
         ${uom}=         Get From Dictionary    ${row}    uom
  
+        ...
+ 
+   
         # Remove commas from numbers (SAP formats: 1,234.56)
         ${qty_clean}=    Remove String    ${qty_str}    ,
         ${price_clean}=  Remove String    ${price_str}    ,
@@ -282,19 +345,21 @@ Fetch PO Line Items
         # written into the JSON that RESULT:PO_DATA: carries out of this
         # script -- this is the last point inside the robot where these
         # values are still individual variables, not yet a JSON blob.
-        Log To Console    Item ${item_no} FINAL: material_code="${material}" short_text="${short_text}" uom="${uom}" qty="${qty_str}" rate="${price_str}" amount="${line_amount}" hsn_sac="${hsn}"
+        Log To Console    Item ${item_no} FINAL: material_code="${material}" short_text="${short_text}" uom="${uom}" qty="${qty_str}" rate="${price_str}" amount="${line_amount}" hsn_sac="${hsn}" "open_qty":"${open_qty}"
  
-        ${json}=    Set Variable
-        ...    {"item_no":"${item_no}","material_code":"${material}","short_text":"${short_text}","uom":"${uom}","qty":"${qty_str}","rate":"${price_str}","amount":"${line_amount}","hsn_sac":"${hsn}"}
+          ${json}=    Set Variable
+        ...    {"item_no":"${item_no}","material_code":"${material}","short_text":"${short_text}","uom":"${uom}","rate":"${price_str}","qty":"${qty_str}","amount":"${line_amount}","hsn_sac":"${hsn}","open_qty":"${open_qty}"}
         Append To List    ${json_items}    ${json}
     END
+    #"qty":"${qty_str}",
  
     # Append total row for multi-line POs
     IF    ${total_rows} > 1
         ${total_json}=    Set Variable
-        ...    {"item_no":"TOTAL","material_code":"","short_text":"Total Amount","uom":"","qty":"","rate":"","amount":"${running_total}","hsn_sac":""}
+        ...    {"item_no":"TOTAL","material_code":"","short_text":"Total Amount","uom":"","rate":"","qty":"","amount":"${running_total}","hsn_sac":"","open_qty":""}
         Append To List    ${json_items}    ${total_json}
     END
+    #"qty":"",
  
     ${joined}=    Evaluate    ",".join($json_items)
     RETURN    [${joined}]
@@ -336,3 +401,4 @@ Close SAP Session
     Sleep    2s
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
     Log    SAP session closed and process terminated.    level=INFO
+ 

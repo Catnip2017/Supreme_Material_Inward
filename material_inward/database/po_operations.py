@@ -22,7 +22,8 @@ def save_po_line_items(history_id: int, items: list) -> bool:
 
     Each item dict, as actually emitted by po_fetch.robot's RESULT:PO_DATA:
     JSON (see po_fetch.robot ~line 251), has keys:
-        item_no, material_code, short_text, qty, rate, amount, hsn_sac
+        item_no, material_code, short_text, qty, rate, amount, hsn_sac,
+        uom, open_qty
 
     FIX: this used to read item.get("material", "") / item.get("po_qty", "")
     -- key names that don't exist in the robot's actual output (it emits
@@ -30,13 +31,31 @@ def save_po_line_items(history_id: int, items: list) -> bool:
     for material and quantity regardless of what SAP returned. DB column
     names (material, po_qty) are unchanged -- only the dict keys read FROM
     the robot's JSON are corrected here.
+
+    FIX (2026-08-07): po_fetch.robot was updated to also scrape UOM
+    (emitted as "uom") but this function never read it, and the DB column
+    it belongs in (po_line_items.unit -- already existed, added back in
+    schema_migration_v3.sql, just never wired up) was missing from the
+    INSERT column list. So every fetch silently dropped UOM even though
+    both the robot output and the DB column already existed. Added here;
+    matching read added to get_po_line_items() below. Falls back to
+    item.get("unit") too in case any caller ever emits that key instead.
+
+    FIX (2026-08-07, same day): po_fetch.robot separately gained a second
+    new value, "open_qty" (SAP's outstanding/undelivered quantity for
+    that PO line, read from ME23N's Delivery tab -- see po_fetch.robot's
+    STEP 2b). Unlike UOM, there was no dormant column for this one --
+    schema_migration_v22.sql adds po_line_items.open_qty fresh. View-only
+    on the MIGO 103 tab's PO table (client decision) -- doesn't feed into
+    the Invoice/PO matching or mismatch-highlighting logic at all, just
+    stored and displayed.
     """
     delete_sql = "DELETE FROM po_line_items WHERE history_id = %s"
     insert_sql = """
         INSERT INTO po_line_items (
             history_id, item_no, material, short_text,
-            po_qty, rate, amount, hsn_sac
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            po_qty, rate, amount, hsn_sac, unit, open_qty
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     try:
         with get_connection() as conn:
@@ -52,6 +71,8 @@ def save_po_line_items(history_id: int, items: list) -> bool:
                         item.get("rate", ""),
                         item.get("amount", ""),
                         item.get("hsn_sac", ""),
+                        item.get("uom", "") or item.get("unit", ""),
+                        item.get("open_qty", ""),
                     ))
                 logger.info(f"Saved {len(items)} PO line item(s) for history_id={history_id}")
                 return True
@@ -71,7 +92,7 @@ def get_po_line_items(history_id: int) -> list:
                 cur.execute(
                     """
                      SELECT item_no, material, short_text,
-                    po_qty, rate, amount, hsn_sac, fetched_at
+                    po_qty, rate, amount, hsn_sac, unit, open_qty, fetched_at
                     FROM po_line_items
                     WHERE history_id = %s
                     ORDER BY id ASC
@@ -91,6 +112,10 @@ def get_po_line_items(history_id: int) -> list:
                     # whether fetched_at happens to be a datetime object.
                     r['material_code'] = r.get('material', '')
                     r['qty'] = r.get('po_qty', '')
+                    # unit / open_qty: no re-keying needed -- DB columns are
+                    # already named to match what migo_103.html reads
+                    # (item.get('unit','') / item.get('open_qty','')),
+                    # unlike material_code/qty above.
                     result.append(r)
                 return result
     except Exception as e:

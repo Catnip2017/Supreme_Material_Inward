@@ -237,7 +237,7 @@
   &nbsp;|&nbsp;
   MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
-  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
   MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
 </div>
@@ -472,19 +472,28 @@
                 <th>Rate</th>
                 <th>Amount</th>
                 <th>HSN/SAC</th>
+                <th title="Outstanding/undelivered quantity remaining on this PO line in SAP -- view only, PO side only (no Invoice equivalent, not part of the mismatch check below).">Open Qty</th>
               </tr>
             </thead>
             <tbody id="poItemsBody">
               {# Same data-field / item-desc-row treatment as the Invoice
-                 table above -- see the comment there. UOM is new here: SAP
-                 PO fetch (po_fetch.robot / po_list_fetch.robot) does not
-                 currently scrape a unit-of-measure value at all, so
-                 item.get('unit','') will render blank until that scraping
-                 is added on the robot side -- deliberately out of scope for
-                 this change (robot scripts untouched). The column exists
-                 now so the two tables' structures match, and so it starts
-                 showing real values the moment that data becomes
-                 available, with no further template change needed. #}
+                 table above -- see the comment there. UOM: SAP PO fetch
+                 (po_fetch.robot) now scrapes a real unit-of-measure value
+                 (added 2026-08-07) and database/po_operations.py was wired
+                 up to store/read it, so item.get('unit','') is populated
+                 for any PO fetched since that change -- older, already-
+                 fetched records will still show blank here until
+                 re-fetched.
+                 Open Qty: new column (2026-08-07, client request) -- SAP's
+                 outstanding/undelivered quantity for this line, read from
+                 ME23N's Delivery tab by po_fetch.robot's STEP 2b. View-only,
+                 PO side only -- deliberately NOT added to the Invoice table
+                 (nothing there to compare it against) and NOT part of
+                 MISMATCH_FIELDS below, so this column never gets highlighted
+                 red. Because of that, this table now has one more column
+                 than the Invoice table (9 vs 8) -- colspan on this table's
+                 own short-text row below is 9 to match; the Invoice table's
+                 stays 8. #}
               {% if po_data and po_data|length > 0 %}
                 {% for item in po_data %}
                 <tr data-idx="{{ loop.index0 }}">
@@ -496,9 +505,10 @@
                   <td data-field="rate">{{ item.get('rate','') }}</td>
                   <td data-field="amount">{{ item.get('amount','') }}</td>
                   <td data-field="hsn_sac">{{ item.get('hsn_sac','') }}</td>
+                  <td data-field="open_qty" style="color:#666;">{{ item.get('open_qty','') }}</td>
                 </tr>
                 <tr class="item-desc-row">
-                  <td colspan="8">
+                  <td colspan="9">
                     <div class="short-text-row">
                       <span class="short-text-chip po-chip">Short text</span>
                       <span class="cell-text short-text-value" data-field="short_text" title="{{ item.get('short_text','') }}">{{ item.get('short_text','') }}</span>
@@ -1220,6 +1230,7 @@ function confirmMatches() {
       material_code: poRow?.querySelector('[data-field="material_code"]')?.textContent.trim() || '',
       short_text:    poDescRow?.querySelector('[data-field="short_text"]')?.textContent.trim() || '',
       quantity:      poRow?.querySelector('[data-field="qty"]')?.textContent.trim() || '',
+      unit:          poRow?.querySelector('[data-field="unit"]')?.textContent.trim() || '',
       rate:          poRow?.querySelector('[data-field="rate"]')?.textContent.trim() || '',
       amount:        poRow?.querySelector('[data-field="amount"]')?.textContent.trim() || '',
       hsn_sac:       poRow?.querySelector('[data-field="hsn_sac"]')?.textContent.trim() || '',
@@ -1240,7 +1251,7 @@ function confirmMatches() {
       <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
       <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
       <td>${_esc(inv.hsn_sac || po.hsn_sac)}</td>
-      <td>${_esc(inv.unit)}</td>
+      <td>${_esc(inv.unit || po.unit)}</td>
       <td><input type="text" class="form-input" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
       <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
       <td><input type="text" class="form-input" value="${_esc(inv.rate || po.rate)}" style="width:80px;"></td>

@@ -72,13 +72,23 @@
   &nbsp;|&nbsp;
   MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
-  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
   MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
 </div>
 {% endif %}
 
   <input type="hidden" id="history_id_migo105" value="{{ history_id or '' }}">
+
+  {% if resolved_vendor_name %}
+  <div class="form-row">
+    <div class="form-group">
+      <label>Vendor Name <span style="font-size:11px;color:#888;">(from Gate In — view only)</span></label>
+      <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled
+             style="background:#f5f6f8;color:#555;">
+    </div>
+  </div>
+  {% endif %}
 
   <div class="form-group">
     <label>Material Document Number <span style="font-size:11px;color:#1e5ca8;">(auto-filled from MIGO 103)</span></label>
