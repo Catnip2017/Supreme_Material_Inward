@@ -122,7 +122,7 @@ GROUPED_FOLDER   = os.path.join(WATCH_FOLDER, "grouped")
 OCR_DONE_FOLDER  = os.path.join(os.path.dirname(WATCH_FOLDER), "ocr_done")
 FAILED_FOLDER    = os.path.join(os.path.dirname(WATCH_FOLDER), "failed")
 
-STABLE_SECONDS = 40      # File must be unmodified this long before being touched
+STABLE_SECONDS = 70      # File must be unmodified this long before being touched -- bumped from 40s to 70s (2026-08-05, client request) to give more breathing room between documents being scanned/renamed one at a time; still comfortably above POLL_INTERVAL below, so a stable file is always caught within one extra poll cycle at worst.
 ORPHAN_DAYS    = 60      #Must match DB_RETENTION_DAYS in app.py cleanup
 POLL_INTERVAL  = 30      # Watcher cycle interval
 

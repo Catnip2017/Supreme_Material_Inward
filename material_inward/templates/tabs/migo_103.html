@@ -88,6 +88,41 @@
   width:100%; padding:3px 6px; font-size:12px; min-width:55px; max-width:100px;
 }
 
+/* Mismatch highlighting — applied by _highlightPairMismatches() (see
+   script below) to BOTH sides' cell for any field (other than Short
+   Text, which is deliberately excluded from the comparison) that
+   differs between a paired Invoice row and its PO row. Deliberately
+   higher specificity than .verify-table td / tr:hover td above so it
+   still shows red on hover. */
+.verify-table td.field-mismatch,
+.verify-table input.form-input.field-mismatch {
+  background:#fdecea !important; border-color:#e74c3c;
+  color:#c0392b; font-weight:600;
+  box-shadow:inset 0 0 0 1px #e74c3c;
+}
+
+/* Short Text — moved off the main column grid onto its own full-width
+   line below each item (definition-row style: a label chip on the left,
+   the value filling the rest of the width). Applies to both the Invoice
+   and PO tables identically. */
+.item-desc-row td {
+  white-space:normal; padding:4px 7px 8px 7px; border-bottom:1px solid #f0f0f0;
+}
+.short-text-row { display:flex; align-items:stretch; font-size:12px; }
+.short-text-chip {
+  background:#e8f0fe; color:#1e5ca8; font-weight:600; white-space:nowrap;
+  padding:3px 10px; border-radius:4px 0 0 4px; flex-shrink:0;
+  display:flex; align-items:center;
+}
+.short-text-chip.po-chip { background:#e8f7f0; color:#00796b; }
+.verify-table .short-text-value.cell-text,
+.verify-table .short-text-input.form-input {
+  border:1px solid #e0e0e0; border-left:none; border-radius:0 4px 4px 0;
+  padding:3px 10px; flex:1; min-width:0; max-width:none; width:auto;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.short-text-value.cell-text { display:flex; align-items:center; background:#fafbfb; }
+
 /* Pair circle button */
 .pair-btn {
   width:28px; height:28px; border-radius:50%;
@@ -267,12 +302,35 @@
     </div>
   </div>
 
+  {# Bill of Lading — SAP's field is hard-capped at 16 characters. Client
+     request (2026-08-06): pack it as "<LR No> <Transporter Name>", where
+     Transporter Name is truncated to whatever room is left after the LR
+     No and one separating space, so the full string never exceeds 16.
+     Transporter comes from the LR document first (it's the LR's own
+     transporter), falling back to the E-Way Bill's transporter_name if
+     the LR didn't capture one -- same source data used elsewhere in the
+     app (see gatein_operations.py's transporter fallback), just LR
+     prioritized first here since this field is anchored on the LR No.
+     If migo_data.migo_bill_of_lading is already saved (record reopened
+     after a manual edit), that saved value always wins verbatim -- this
+     computed value is only ever the initial default, same precedence
+     pattern as Delivery Note/Doc Date above. #}
+  {% set _lr_no = ((lr_data.get('lr_number') if lr_data else '') or '')|trim %}
+  {% set _lr_transporter = ((lr_data.get('transporter_name') if lr_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '')|trim %}
+  {% set _bol_default = _lr_no %}
+  {% if _lr_no and _lr_transporter and _lr_no|length < 16 %}
+    {% set _bol_remaining = 16 - _lr_no|length - 1 %}
+    {% if _bol_remaining > 0 %}
+      {% set _bol_default = _lr_no ~ ' ' ~ _lr_transporter[:_bol_remaining] %}
+    {% endif %}
+  {% endif %}
+  {% set _bol_default = _bol_default[:16] %}
   <div class="form-row">
     <div class="form-group">
-      <label>Bill of Lading <span style="font-size:11px;color:#888;">(LR No)</span></label>
+      <label>Bill of Lading <span style="font-size:11px;color:#888;">(LR No + Transporter, max 16 chars)</span></label>
       <input type="text" id="migoBillOfLading" class="form-input" maxlength="16"
-             value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or (lr_data.get('lr_number') if lr_data else '') or '' }}"
-             >
+             value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or _bol_default }}"
+             title="SAP limit is 16 characters: LR No, one space, then as much of the Transporter Name as fits.">
     </div>
     <div class="form-group">
       <label>GR/GI Slip No</label>
@@ -324,7 +382,6 @@
                 <th style="width:40px;">Pair</th>
                 <th>#</th>
                 <th>Mat. Code</th>
-                <th>Short Text</th>
                 <th>Qty</th>
                 <th>UOM</th>
                 <th>Rate</th>
@@ -343,25 +400,46 @@
                  -- it just was never rendered anywhere on this screen. Client
                  complaint about "missing UOM" was about this tab specifically
                  (Extracted Data's own Goods Information table already shows
-                 it) -- see all the index updates below in autoPair()/
-                 confirmMatches()/_collectMigoItems()/addInvoiceRow() that had
-                 to move in lockstep with this new column. #}
+                 it).
+                 Short Text: moved off this column grid onto its own
+                 full-width "item-desc-row" <tr> directly below each item's
+                 data row (definition-row style -- see .short-text-row CSS
+                 above). Every cell in the data row now also carries a
+                 data-field="..." attribute -- autoPair()/confirmMatches()/
+                 addInvoiceRow()/_collectMigoItems() and the DOMContentLoaded
+                 auto-match block all read by that attribute (and by
+                 row.nextElementSibling for short_text) instead of by
+                 positional index now, specifically so this table's columns
+                 can be reordered or extended again in the future (as just
+                 happened here) without needing a matching index-shuffle in
+                 every one of those functions -- the exact "move in lockstep"
+                 fragility the previous version of this comment warned about.
+                 tr[data-idx] deliberately picks out ONLY data rows (never
+                 the item-desc-row siblings, which carry no data-idx) so
+                 row-counting/indexing stays correct with two <tr> per item. #}
               {% set items = invoice_line_items or [] %}
               {% for item in items %}
               <tr data-idx="{{ loop.index0 }}">
                 <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)" ></button></td>
                 <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                <td><input type="text" class="form-input" value="{{ item.get('material_code','') }}" ></td>
-                <td><input type="text" class="form-input" value="{{ item.get('short_text','') }}" title="{{ item.get('short_text','') }}" oninput="this.title=this.value" ></td>
-                <td><input type="text" class="form-input" value="{{ item.get('qty_expected','') }}" ></td>
-                <td><input type="text" class="form-input" value="{{ item.get('unit','') }}" ></td>
-                <td><input type="text" class="form-input" value="{{ item.get('rate','') }}" ></td>
-                <td><input type="text" class="form-input" value="{{ item.get('amount','') }}" ></td>
-                <td><input type="text" class="form-input" value="{{ item.get('hsn_sac','') }}" ></td>
+                <td><input type="text" class="form-input" data-field="material_code" value="{{ item.get('material_code','') }}" ></td>
+                <td><input type="text" class="form-input" data-field="qty" value="{{ item.get('qty_expected','') }}" ></td>
+                <td><input type="text" class="form-input" data-field="unit" value="{{ item.get('unit','') }}" ></td>
+                <td><input type="text" class="form-input" data-field="rate" value="{{ item.get('rate','') }}" ></td>
+                <td><input type="text" class="form-input" data-field="amount" value="{{ item.get('amount','') }}" ></td>
+                <td><input type="text" class="form-input" data-field="hsn_sac" value="{{ item.get('hsn_sac','') }}" ></td>
+              </tr>
+              <tr class="item-desc-row">
+                <td colspan="8">
+                  <div class="short-text-row">
+                    <span class="short-text-chip">Short text</span>
+                    <input type="text" class="form-input short-text-input" data-field="short_text" value="{{ item.get('short_text','') }}" title="{{ item.get('short_text','') }}" oninput="this.title=this.value">
+                  </div>
+                </td>
               </tr>
               {% endfor %}
             </tbody>
-            
+
           </table>
         </div>
       </div>
@@ -376,25 +454,43 @@
                 <th style="width:40px;">Pair</th>
                 <th>#</th>
                 <th>Mat. Code</th>
-                <th>Short Text</th>
                 <th>Qty</th>
+                <th>UOM</th>
                 <th>Rate</th>
                 <th>Amount</th>
                 <th>HSN/SAC</th>
               </tr>
             </thead>
             <tbody id="poItemsBody">
+              {# Same data-field / item-desc-row treatment as the Invoice
+                 table above -- see the comment there. UOM is new here: SAP
+                 PO fetch (po_fetch.robot / po_list_fetch.robot) does not
+                 currently scrape a unit-of-measure value at all, so
+                 item.get('unit','') will render blank until that scraping
+                 is added on the robot side -- deliberately out of scope for
+                 this change (robot scripts untouched). The column exists
+                 now so the two tables' structures match, and so it starts
+                 showing real values the moment that data becomes
+                 available, with no further template change needed. #}
               {% if po_data and po_data|length > 0 %}
                 {% for item in po_data %}
                 <tr data-idx="{{ loop.index0 }}">
                   <td><button type="button" class="pair-btn pair-btn-po" data-pair="" onclick="onPoPairClick(this)" ></button></td>
                   <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                  <td>{{ item.get('material_code','') }}</td>
-                  <td class="cell-text" title="{{ item.get('short_text','') }}">{{ item.get('short_text','') }}</td>
-                  <td>{{ item.get('qty','') }}</td>
-                  <td>{{ item.get('rate','') }}</td>
-                  <td>{{ item.get('amount','') }}</td>
-                  <td>{{ item.get('hsn_sac','') }}</td>
+                  <td data-field="material_code">{{ item.get('material_code','') }}</td>
+                  <td data-field="qty">{{ item.get('qty','') }}</td>
+                  <td data-field="unit">{{ item.get('unit','') }}</td>
+                  <td data-field="rate">{{ item.get('rate','') }}</td>
+                  <td data-field="amount">{{ item.get('amount','') }}</td>
+                  <td data-field="hsn_sac">{{ item.get('hsn_sac','') }}</td>
+                </tr>
+                <tr class="item-desc-row">
+                  <td colspan="8">
+                    <div class="short-text-row">
+                      <span class="short-text-chip po-chip">Short text</span>
+                      <span class="cell-text short-text-value" data-field="short_text" title="{{ item.get('short_text','') }}">{{ item.get('short_text','') }}</span>
+                    </div>
+                  </td>
                 </tr>
                 {% endfor %}
               {% endif %}
@@ -560,6 +656,107 @@ let _selectedPoRow  = null;   // currently selected PO row index
 let _pairCounter    = 1;
 let _pairs          = [];     // [{invIdx, poIdx, pairNum}]
 
+// ============================================================
+// Mismatch highlighting — client request: for a paired Invoice/PO
+// row, any field OTHER than Short Text that doesn't match must be
+// flagged red on BOTH sides (Invoice table's input AND PO table's
+// cell), so the checker sees the mismatch in place without having
+// to cross-reference the two tables manually. Short Text is
+// deliberately excluded — OCR wording and SAP's short text rarely
+// match verbatim and were never meant to be an exact-match field.
+// UOM IS included even though PO's column is currently always blank
+// (po_fetch.robot doesn't scrape it yet) -- teammate is adding that
+// separately, and until then a blank-vs-populated Unit is a real,
+// useful thing to flag anyway (see _fieldsMismatch below).
+// ============================================================
+const MISMATCH_FIELDS = ['material_code', 'qty', 'unit', 'rate', 'amount', 'hsn_sac'];
+
+function _normForCompare(field, raw) {
+  const v = (raw == null ? '' : String(raw)).trim();
+  if (field === 'qty' || field === 'rate' || field === 'amount') {
+    // Numeric fields — compare as numbers so "100" vs "100.00" or
+    // "1,000" vs "1000" aren't flagged as false mismatches.
+    const n = parseFloat(v.replace(/,/g, ''));
+    return isNaN(n) ? v.toLowerCase() : n;
+  }
+  // Text fields (material_code, unit, hsn_sac) — case-insensitive,
+  // since SAP/OCR casing conventions differ (e.g. "Kg" vs "KG").
+  return v.toLowerCase();
+}
+
+function _fieldsMismatch(field, invVal, poVal) {
+  const a = _normForCompare(field, invVal);
+  const b = _normForCompare(field, poVal);
+  if (a === '' && b === '') return false;   // both blank — not a mismatch
+  return a !== b;
+}
+
+// Toggles .field-mismatch on both sides for one paired row. poIdx may
+// be null (confirmSingleInvoiceLine's "Add Without PO Match") -- in
+// that case there's nothing to compare against, so any stale
+// highlight on the invoice side is cleared instead.
+function _highlightPairMismatches(invIdx, poIdx) {
+  const invRow = document.querySelector(`#invoiceItemsBody tr[data-idx="${invIdx}"]`);
+  const poRow  = (poIdx === null || poIdx === undefined || isNaN(poIdx))
+    ? null
+    : document.querySelector(`#poItemsBody tr[data-idx="${poIdx}"]`);
+
+  MISMATCH_FIELDS.forEach(field => {
+    const invEl = invRow ? invRow.querySelector(`[data-field="${field}"]`) : null;
+    if (!invEl) return;
+    const poEl = poRow ? poRow.querySelector(`[data-field="${field}"]`) : null;
+
+    if (!poEl) {
+      invEl.classList.remove('field-mismatch');
+      return;
+    }
+
+    const invVal = ('value' in invEl) ? invEl.value : invEl.textContent;
+    const poVal  = ('value' in poEl)  ? poEl.value  : poEl.textContent;
+    const mismatch = _fieldsMismatch(field, invVal, poVal);
+
+    invEl.classList.toggle('field-mismatch', mismatch);
+    poEl.classList.toggle('field-mismatch', mismatch);
+  });
+}
+
+// Clears any highlight left on a pair's rows (used when a pair is
+// undone, so the red doesn't linger after the rows are no longer
+// considered matched).
+function _clearPairHighlights(invIdx, poIdx) {
+  const invRow = document.querySelector(`#invoiceItemsBody tr[data-idx="${invIdx}"]`);
+  const poRow  = (poIdx === null || poIdx === undefined || isNaN(poIdx))
+    ? null
+    : document.querySelector(`#poItemsBody tr[data-idx="${poIdx}"]`);
+  MISMATCH_FIELDS.forEach(field => {
+    const invEl = invRow ? invRow.querySelector(`[data-field="${field}"]`) : null;
+    const poEl  = poRow  ? poRow.querySelector(`[data-field="${field}"]`)  : null;
+    if (invEl) invEl.classList.remove('field-mismatch');
+    if (poEl)  poEl.classList.remove('field-mismatch');
+  });
+}
+
+// Re-runs the check for whichever pair a given invoice row belongs to
+// -- called live on input, since Invoice fields stay editable after
+// pairing and a correction can turn a mismatch into a match (or vice
+// versa) without the pair being re-formed.
+function _refreshMismatchForInvRow(invIdx) {
+  const pair = _pairs.find(p => p.invIdx === invIdx);
+  if (pair) _highlightPairMismatches(pair.invIdx, pair.poIdx);
+}
+
+// Live re-check on every keystroke in the Invoice table. Delegated on
+// the tbody (not per-input onininput) so it also covers rows added
+// later by addInvoiceRow() with no extra wiring. closest('tr[data-idx]')
+// naturally excludes the Short Text input, which lives in a sibling
+// <tr class="item-desc-row"> with no data-idx.
+document.getElementById('invoiceItemsBody')?.addEventListener('input', (e) => {
+  const row = e.target.closest('tr[data-idx]');
+  if (!row) return;
+  const idx = parseInt(row.getAttribute('data-idx'));
+  if (!isNaN(idx)) _refreshMismatchForInvRow(idx);
+});
+
 function onInvPairClick(btn) {
   const rowIdx = parseInt(btn.closest('tr').getAttribute('data-idx'));
   const existingPair = _pairs.find(p => p.invIdx === rowIdx);
@@ -626,11 +823,14 @@ function _tryFormPair() {
   const poBtn = document.querySelector(`#poItemsBody tr[data-idx="${_selectedPoRow}"] .pair-btn-po`);
   if (poBtn) { poBtn.textContent = pairNum; poBtn.setAttribute('data-pair', pairNum); }
 
+  _highlightPairMismatches(_selectedInvRow, _selectedPoRow);
+
   _selectedInvRow = null;
   _selectedPoRow  = null;
 }
 
 function _removePair(pairNum) {
+  const pair = _pairs.find(p => p.pairNum === pairNum);
   _pairs = _pairs.filter(p => p.pairNum !== pairNum);
 
   document.querySelectorAll('.pair-btn-inv, .pair-btn-po').forEach(b => {
@@ -640,6 +840,7 @@ function _removePair(pairNum) {
       b.classList.remove('paired-inv', 'paired-po');
     }
   });
+  if (pair) _clearPairHighlights(pair.invIdx, pair.poIdx);
   _updateMatchHint();
 }
 
@@ -698,8 +899,8 @@ const AUTO_PAIR_AMT_TOL = {{ config.AUTO_PAIR_AMOUNT_TOLERANCE if config and con
 function autoPair() {
   resetAllMatches();
 
-  const invRows = document.querySelectorAll('#invoiceItemsBody tr');
-  const poRows  = document.querySelectorAll('#poItemsBody tr');
+  const invRows = document.querySelectorAll('#invoiceItemsBody tr[data-idx]');
+  const poRows  = document.querySelectorAll('#poItemsBody tr[data-idx]');
 
   function norm(v) {
     if (!v) return '';
@@ -711,31 +912,30 @@ function autoPair() {
       .toLowerCase();
   }
 
-  // Invoice row inputs, in DOM order: [0]=material_code [1]=short_text
-  // [2]=qty [3]=UOM [4]=rate [5]=amount [6]=hsn_sac -- UOM was inserted
-  // between qty and rate (see the invoiceItemsBody <thead>/<tr> above),
-  // shifting rate/amount/hsn_sac each one index to the right.
+  // Read by data-field attribute, not position -- immune to the table's
+  // columns being reordered or extended (Short Text moved off this row
+  // entirely; see the item-desc-row comment above the table). tr[data-idx]
+  // above already excludes the item-desc-row siblings, so these are always
+  // real data rows.
   const invData = Array.from(invRows).map(r => {
-    const inputs = r.querySelectorAll('input[type="text"]');
     return {
       el:            r.querySelector('.pair-btn-inv'),
-      material_code: norm(inputs[0]?.value),
-      hsn_sac:       norm(inputs[6]?.value),
-      quantity:      norm(inputs[2]?.value),
-      rate:          norm(inputs[4]?.value),
-      amount:        norm(inputs[5]?.value),
+      material_code: norm(r.querySelector('[data-field="material_code"]')?.value),
+      hsn_sac:       norm(r.querySelector('[data-field="hsn_sac"]')?.value),
+      quantity:      norm(r.querySelector('[data-field="qty"]')?.value),
+      rate:          norm(r.querySelector('[data-field="rate"]')?.value),
+      amount:        norm(r.querySelector('[data-field="amount"]')?.value),
     };
   });
 
   const poData = Array.from(poRows).map(r => {
-    const cells = r.querySelectorAll('td');
     return {
       el:            r.querySelector('.pair-btn-po'),
-      material_code: norm(cells[2]?.textContent),
-      hsn_sac:       norm(cells[7]?.textContent),
-      quantity:      norm(cells[4]?.textContent),
-      rate:          norm(cells[5]?.textContent),
-      amount:        norm(cells[6]?.textContent),
+      material_code: norm(r.querySelector('[data-field="material_code"]')?.textContent),
+      hsn_sac:       norm(r.querySelector('[data-field="hsn_sac"]')?.textContent),
+      quantity:      norm(r.querySelector('[data-field="qty"]')?.textContent),
+      rate:          norm(r.querySelector('[data-field="rate"]')?.textContent),
+      amount:        norm(r.querySelector('[data-field="amount"]')?.textContent),
     };
   });
 
@@ -764,6 +964,8 @@ function autoPair() {
         po.el.setAttribute('data-pair', pairNum);
         po.el.textContent = pairNum;
         po.el.classList.add('paired-po');
+
+        _highlightPairMismatches(i, idx);
 
         usedPo.add(idx);
       }
@@ -985,27 +1187,29 @@ function confirmMatches() {
       ? document.querySelector(`#poItemsBody tr[data-idx="${pair.poIdx}"]`)
       : null;
 
-    const invInputs = invRow ? invRow.querySelectorAll('input[type="text"]') : [];
-    const poCells   = poRow  ? poRow.querySelectorAll('td') : [];
+    // Short Text lives on its own item-desc-row <tr>, always the very next
+    // sibling of the data row it belongs to (both the Jinja template and
+    // addInvoiceRow() insert them adjacently, in that order).
+    const invDescRow = invRow ? invRow.nextElementSibling : null;
+    const poDescRow  = poRow  ? poRow.nextElementSibling  : null;
 
-    // Same [0]=material_code..[6]=hsn_sac layout as autoPair() above --
-    // UOM (invInputs[3]) sits between qty and rate.
+    // Read by data-field attribute, not position -- see autoPair() above.
     const inv = {
-      material_code: invInputs[0]?.value || '',
-      short_text:    invInputs[1]?.value || '',
-      quantity:      invInputs[2]?.value || '',
-      unit:          invInputs[3]?.value || '',
-      rate:          invInputs[4]?.value || '',
-      amount:        invInputs[5]?.value || '',
-      hsn_sac:       invInputs[6]?.value || '',
+      material_code: invRow?.querySelector('[data-field="material_code"]')?.value || '',
+      short_text:    invDescRow?.querySelector('[data-field="short_text"]')?.value || '',
+      quantity:      invRow?.querySelector('[data-field="qty"]')?.value || '',
+      unit:          invRow?.querySelector('[data-field="unit"]')?.value || '',
+      rate:          invRow?.querySelector('[data-field="rate"]')?.value || '',
+      amount:        invRow?.querySelector('[data-field="amount"]')?.value || '',
+      hsn_sac:       invRow?.querySelector('[data-field="hsn_sac"]')?.value || '',
     };
     const po = {
-      material_code: poCells[2]?.textContent.trim() || '',
-      short_text:    poCells[3]?.textContent.trim() || '',
-      quantity:      poCells[4]?.textContent.trim() || '',
-      rate:          poCells[5]?.textContent.trim() || '',
-      amount:        poCells[6]?.textContent.trim() || '',
-      hsn_sac:       poCells[7]?.textContent.trim() || '',
+      material_code: poRow?.querySelector('[data-field="material_code"]')?.textContent.trim() || '',
+      short_text:    poDescRow?.querySelector('[data-field="short_text"]')?.textContent.trim() || '',
+      quantity:      poRow?.querySelector('[data-field="qty"]')?.textContent.trim() || '',
+      rate:          poRow?.querySelector('[data-field="rate"]')?.textContent.trim() || '',
+      amount:        poRow?.querySelector('[data-field="amount"]')?.textContent.trim() || '',
+      hsn_sac:       poRow?.querySelector('[data-field="hsn_sac"]')?.textContent.trim() || '',
     };
 
    const tr = document.createElement('tr');
@@ -1058,6 +1262,7 @@ function resetAllMatches() {
     b.textContent = '';
     b.classList.remove('paired-inv', 'paired-po');
   });
+  document.querySelectorAll('.field-mismatch').forEach(el => el.classList.remove('field-mismatch'));
   document.getElementById('matchedBody').innerHTML = '';
   document.getElementById('matchedSection').style.display = 'none';
   _updateMatchHint();
@@ -1065,21 +1270,36 @@ function resetAllMatches() {
 
 function addInvoiceRow() {
   const tbody = document.getElementById('invoiceItemsBody');
-  const idx = tbody.rows.length;
+  // Count data rows only (tr[data-idx]) -- tbody.rows.length would also
+  // count the item-desc-row siblings now, double-counting every item.
+  const idx = tbody.querySelectorAll('tr[data-idx]').length;
   const tr = document.createElement('tr');
   tr.setAttribute('data-idx', idx);
   tr.innerHTML = `
     <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)"></button></td>
     <td style="color:#888;font-size:11px;">${idx + 1}</td>
-    <td><input type="text" class="form-input" placeholder="Mat. Code"></td>
-    <td><input type="text" class="form-input" placeholder="Short Text"></td>
-    <td><input type="text" class="form-input" placeholder="Qty" maxlength="13"></td>
-    <td><input type="text" class="form-input" placeholder="UOM"></td>
-    <td><input type="text" class="form-input" placeholder="Rate"></td>
-    <td><input type="text" class="form-input" placeholder="Amount"></td>
-    <td><input type="text" class="form-input" placeholder="HSN/SAC"></td>
+    <td><input type="text" class="form-input" data-field="material_code" placeholder="Mat. Code"></td>
+    <td><input type="text" class="form-input" data-field="qty" placeholder="Qty" maxlength="13"></td>
+    <td><input type="text" class="form-input" data-field="unit" placeholder="UOM"></td>
+    <td><input type="text" class="form-input" data-field="rate" placeholder="Rate"></td>
+    <td><input type="text" class="form-input" data-field="amount" placeholder="Amount"></td>
+    <td><input type="text" class="form-input" data-field="hsn_sac" placeholder="HSN/SAC"></td>
   `;
   tbody.appendChild(tr);
+
+  // Short Text's own full-width row, immediately after -- see
+  // confirmMatches()'s "invRow.nextElementSibling" comment.
+  const descTr = document.createElement('tr');
+  descTr.className = 'item-desc-row';
+  descTr.innerHTML = `
+    <td colspan="8">
+      <div class="short-text-row">
+        <span class="short-text-chip">Short text</span>
+        <input type="text" class="form-input short-text-input" data-field="short_text" placeholder="Short Text">
+      </div>
+    </td>
+  `;
+  tbody.appendChild(descTr);
 }
 
 function _moveRowUp(btn) {
@@ -1137,8 +1357,8 @@ function _esc(s) {
 //   ones still go through a manual "Confirm Matches" click as a
 //   checkpoint, same as if the user had clicked Auto-Pair themselves.
 document.addEventListener('DOMContentLoaded', function() {
-  const invRows = document.querySelectorAll('#invoiceItemsBody tr');
-  const poRows  = document.querySelectorAll('#poItemsBody tr');
+  const invRows = document.querySelectorAll('#invoiceItemsBody tr[data-idx]');
+  const poRows  = document.querySelectorAll('#poItemsBody tr[data-idx]');
   if (invRows.length === 0 || poRows.length === 0) return;
 
   if (invRows.length === 1 && poRows.length === 1) {
@@ -1153,6 +1373,7 @@ document.addEventListener('DOMContentLoaded', function() {
       poBtn.setAttribute('data-pair', pairNum);
       poBtn.textContent = pairNum;
       poBtn.classList.add('paired-po');
+      _highlightPairMismatches(0, 0);
       _updateMatchHint();
       confirmMatches();
       showToast('✓ Single invoice/PO line auto-matched and ready for posting.', 'success');
@@ -1204,21 +1425,23 @@ function _collectMigoItems() {
     return items;
   }
 
-  // Fallback — no matches; use raw invoice rows. Same [0]=material_code
-  // .. [6]=hsn_sac input layout as autoPair()/confirmMatches() above.
-  document.querySelectorAll('#invoiceItemsBody tr').forEach((row, idx) => {
-    const inputs = row.querySelectorAll('input[type="text"]');
-    if (inputs.length >= 7) {
+  // Fallback — no matches; use raw invoice rows. Read by data-field
+  // attribute, not position -- see autoPair()/confirmMatches() above.
+  // Short Text lives on the following item-desc-row sibling.
+  document.querySelectorAll('#invoiceItemsBody tr[data-idx]').forEach((row, idx) => {
+    const materialEl = row.querySelector('[data-field="material_code"]');
+    const descRow = row.nextElementSibling;
+    if (materialEl) {
       items.push({
         line:          idx + 1,
-        material_code: inputs[0]?.value || '',
-        short_text:    inputs[1]?.value || '',
-        qty_expected:  inputs[2]?.value || '',
-        qty_actual:    inputs[2]?.value || '',
-        unit:          inputs[3]?.value || '',
-        rate:          inputs[4]?.value || '',
-        amount:        inputs[5]?.value || '',
-        hsn_sac:       inputs[6]?.value || '',
+        material_code: materialEl.value || '',
+        short_text:    descRow?.querySelector('[data-field="short_text"]')?.value || '',
+        qty_expected:  row.querySelector('[data-field="qty"]')?.value || '',
+        qty_actual:    row.querySelector('[data-field="qty"]')?.value || '',
+        unit:          row.querySelector('[data-field="unit"]')?.value || '',
+        rate:          row.querySelector('[data-field="rate"]')?.value || '',
+        amount:        row.querySelector('[data-field="amount"]')?.value || '',
+        hsn_sac:       row.querySelector('[data-field="hsn_sac"]')?.value || '',
         batch:         '',
       });
     }
