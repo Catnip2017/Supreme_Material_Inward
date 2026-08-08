@@ -430,7 +430,15 @@
             </div>
             <div class="field-block">
               <div class="field-label">PO Number</div>
-              <input class="editable-input" id="inv_po_number" value="{{ (invoice_data.get('po_number') if invoice_data else '') or '' }}" {% if is_approved %}disabled{% endif %}>
+              {# FIX (2026-08-07): client requested PO Number cannot be more
+                 than 10 characters anywhere it's captured/shown, including
+                 this OCR-review field -- previously uncapped, so an
+                 over-length OCR read would sit here untouched. maxlength
+                 blocks further manual typing past 10; the Jinja truncate
+                 caps whatever OCR already put here on page load (maxlength
+                 alone does NOT trim a pre-filled value attribute, only
+                 future keystrokes). #}
+              <input class="editable-input" id="inv_po_number" maxlength="10" value="{{ ((invoice_data.get('po_number') if invoice_data else '') or '')|truncate(10, True, '', 0) }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_po_number"></div>
             </div>
           </div>
@@ -1513,18 +1521,35 @@ function _checkIrnLength() {
   }
 })();
 
-// PO Number is expected to be 10 digits (client requested visual flag
-// only, never blocks Save/Approve) -- same pattern as _checkIrnLength above.
+// PO Number is expected to be 10 digits, starting with one of a fixed set
+// of two-digit prefixes (client requested visual flag only, never blocks
+// Save/Approve) -- same pattern as _checkIrnLength above.
+// FIX (2026-08-07): added the prefix check alongside the existing length
+// check -- a valid PO number is not just "10 digits", it must start with
+// 41/43/44/45/46/47/49 specifically.
+const PO_VALID_PREFIXES = ['41', '43', '44', '45', '46', '47', '49'];
 function _checkPoNumberLength() {
   const el = document.getElementById('inv_po_number');
   const err = document.getElementById('err_inv_po_number');
   if (!el) return;
   const val = el.value.trim();
-  const short = val.length > 0 && val.length < 10;
-  el.classList.toggle('field-expired', short);
+  let msg = '';
+  if (val) {
+    const badLength = val.length < 10;
+    const prefix = val.slice(0, 2);
+    const badPrefix = !PO_VALID_PREFIXES.includes(prefix);
+    if (badLength && badPrefix) {
+      msg = `PO number is ${val.length} digit(s) and starts with "${prefix}" -- expected 10 digits starting with 41/43/44/45/46/47/49.`;
+    } else if (badLength) {
+      msg = `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.`;
+    } else if (badPrefix) {
+      msg = `PO number starts with "${prefix}" -- expected one of 41/43/44/45/46/47/49.`;
+    }
+  }
+  el.classList.toggle('field-expired', !!msg);
   if (err) {
-    err.textContent = short ? `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.` : '';
-    err.classList.toggle('show', short);
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
   }
 }
 (function () {

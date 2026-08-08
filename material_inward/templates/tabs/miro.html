@@ -3,6 +3,12 @@
 .field-error { border-color:#e74c3c !important; }
 .field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
 .field-error-msg.show { display:block; }
+/* FIX (2026-08-07): PO Number short-value warning -- own class/element,
+   separate from .field-error/err_miroPurchaseOrder (the Required-field
+   check), so it doesn't get wiped out by that check's own clear logic. */
+.field-expired { border-color:#e74c3c !important; background:#fee; }
+.field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
+.field-error-msg-inline.show { display:block; }
 
 .gate-banner {
   background:#fff3cd; border:1px solid #ffc107;
@@ -130,10 +136,14 @@
     <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🔗 PO Reference</h4>
     <div class="form-group">
       <label>Purchase Order <span class="req">*</span></label>
+      {# FIX (2026-08-07): cap at 10 chars -- maxlength alone only blocks
+         future typing, it doesn't trim a pre-filled value attribute.
+         Matches gate_in.html's purchaseOrder field. #}
       <input type="text" id="miroPurchaseOrder" class="form-input" maxlength="10"
-             value="{{ (miro_data.get('miro_purchase_order') if miro_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+             value="{{ ((miro_data.get('miro_purchase_order') if miro_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '')|truncate(10, True, '', 0) }}"
              {% if step_locked %}disabled{% endif %}>
       <div class="field-error-msg" id="err_miroPurchaseOrder">Required</div>
+      <div class="field-error-msg-inline" id="err_miroPurchaseOrder_short"></div>
     </div>
 
     <div id="miroStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
@@ -166,6 +176,47 @@ const STEP_LOCKS_ENABLED_MIRO = {{ 'true' if config.ENABLE_STEP_LOCKS else 'fals
 (function() {
   const el = document.getElementById('miroPostingDate');
   if (el) el.value = new Date().toISOString().split('T')[0];
+})();
+
+// FIX (2026-08-07): PO Number is expected to be 10 digits (client
+// requested visual flag only, never blocks Post) -- same pattern as
+// extracted_data.html's _checkPoNumberLength(). Own class/element, not
+// field-error/err_miroPurchaseOrder (those belong to the Required-field
+// check in validateMiro() below).
+// FIX (2026-08-07): added the prefix check alongside the existing length
+// check -- a valid PO number is not just "10 digits", it must start with
+// 41/43/44/45/46/47/49 specifically.
+const PO_VALID_PREFIXES = ['41', '43', '44', '45', '46', '47', '49'];
+function _checkMiroPoNumberShort() {
+  const el = document.getElementById('miroPurchaseOrder');
+  const err = document.getElementById('err_miroPurchaseOrder_short');
+  if (!el) return;
+  const val = el.value.trim();
+  let msg = '';
+  if (val) {
+    const badLength = val.length < 10;
+    const prefix = val.slice(0, 2);
+    const badPrefix = !PO_VALID_PREFIXES.includes(prefix);
+    if (badLength && badPrefix) {
+      msg = `PO number is ${val.length} digit(s) and starts with "${prefix}" -- expected 10 digits starting with 41/43/44/45/46/47/49.`;
+    } else if (badLength) {
+      msg = `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.`;
+    } else if (badPrefix) {
+      msg = `PO number starts with "${prefix}" -- expected one of 41/43/44/45/46/47/49.`;
+    }
+  }
+  el.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+(function () {
+  const el = document.getElementById('miroPurchaseOrder');
+  if (el) {
+    el.addEventListener('input', _checkMiroPoNumberShort);
+    _checkMiroPoNumberShort();
+  }
 })();
 
 function validateMiro() {

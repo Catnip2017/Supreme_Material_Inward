@@ -580,14 +580,26 @@ def get_history_search(
         params.extend([like, like, like, like, like, like, like])
 
     if status == "pending":
-        conditions.append("h.gate_in = 0")
+        # FIX (2026-08-07): this used to be just "h.gate_in = 0", which
+        # doesn't actually match what the status CASE below (or the badge
+        # it drives) calls "Pending" -- a record with gate_in=0 but
+        # approval_status='approved' is labeled 'Data Approved' or 'GST
+        # Approved' by that CASE, never 'Pending'. So picking "Pending" in
+        # the dropdown was pulling in every Data Approved / GST Approved
+        # record too (anything not yet gated in), most of which visibly
+        # show a different badge than "Pending" right there in the same
+        # row -- which is what made the filter look broken/not working.
+        # Narrowed to match the CASE's actual ELSE 'Pending' condition
+        # exactly: gate_in=0 AND not yet data-approved (gst_check doesn't
+        # need checking separately here -- the CASE only ever reaches
+        # 'GST Approved' when approval_status is ALSO 'approved', so
+        # excluding approval_status='approved' already excludes both).
+        conditions.append("h.gate_in = 0 AND COALESCE(h.approval_status, '') != 'approved'")
     # v20: two new granular buckets slotted into the existing "pending"
     # bucket (Extracted Data approval and GST check both happen before
     # Gate In -- see the status CASE below for the exact same conditions
-    # used for the badge). "pending" above is left as its original broad
-    # gate_in=0 definition rather than narrowed, so it keeps matching
-    # anything not yet gated in same as before; these are additive,
-    # more specific filters a user can pick instead.
+    # used for the badge). These are additive, more specific filters a
+    # user can pick instead of the broader (now correctly-scoped) Pending.
     elif status == "data_approved":
         conditions.append("h.approval_status = 'approved' AND COALESCE(h.gst_check, 0) = 0")
     elif status == "gst_approved":

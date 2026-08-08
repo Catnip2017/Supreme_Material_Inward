@@ -355,10 +355,37 @@ depending on template. Map whichever labels appear to these fields:
   whichever block is actually labeled as the shipping/consignee party,
   not the billing party, even when the two blocks show identical details.
 
+DOCUMENT VARIANT -- Delivery Challan (issued under Rule 55 / Section 31 of
+the CGST Act, 2017, typically for job-work/repair movements -- look for
+the title "DELIVERY CHALLAN" and/or a "Type of Sale: JOB WORK" line). This
+layout has no separate "Invoice No." field and no "Seller"/"Supplier"/
+"From" label, so the Header block mapping above won't find anything to
+match -- use these overrides instead whenever this layout is detected:
+- "invoice_number": use the value labeled "GST Challan Sr. No." (NOT
+  "Outbound Delivery Number" and NOT "Ref No." -- those are different
+  fields that also appear on this layout).
+- "po_number": use the value labeled "Ref No." (NOT "Customer PO No.",
+  which this layout typically leaves blank even though a real PO
+  reference exists under "Ref No." instead).
+- "seller_name": the company name printed in the letterhead at the very
+  top of the document (e.g. "SUPREME PETROCHEM LTD").
+- "seller_gstin": the value labeled "GST NO." in the header box on the
+  right side of the page, near the letterhead.
+- "seller_address": use the address under "Unit from where goods
+  supplied" specifically -- NOT the "Principle Place of Business" address,
+  which is a different, registered-office address that also appears on
+  this layout but is not the correct seller address to extract.
+- "company_pan": if a "PAN NO." value is printed in the footer/registered-
+  office block, use that.
+- "buyer_name"/"buyer_address"/"buyer_gstin" and "ship_to_name"/
+  "ship_to_address" are unaffected -- still read from "Name & Address of
+  Buyer/Recipient (billed to)" and "Name & Address of Consignee (Shipped
+  to)" exactly as on a standard invoice.
+
 Important field notes:
 - "invoice_number": Use the value labeled "Invoice No", "Invoice Number", "Bill No", or similar. On a dense/landscape layout this label often sits in a small top-right box next to Invoice Date/Due Date/Internal Ref No -- read the whole box, not just the first line, since it can wrap across two lines. FALLBACK ONLY: if there is no usable/legible Invoice Number field anywhere on the document, but there IS an "Outbound Delivery No", "Delivery No", or "ODN" label, use that value instead. Never use the Outbound Delivery Number when a proper Invoice Number is present and readable -- it is strictly a fallback for when the real Invoice Number cannot be found, not a preference.
 - "invoice_date": Use the FIRST date that appears at the top of the invoice — typically labeled "Date", "Invoice Date", or "Dated". Do not use delivery date, dispatch date, or due date. On a landscape layout it commonly sits in the same small header box as Invoice Number, immediately below or beside it -- read that whole box carefully rather than picking the first date-like text seen anywhere on the page (which is often a due date or removal/preparation date printed elsewhere).
-- "po_number": A numeric purchase order number typically starting with 4 or 6 followed by 9 digits (e.g. 4500012345 or 6300001343). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No", "Customer PO Ref". If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
+- "po_number": A numeric purchase order number, always 10 digits, starting with one of these two-digit prefixes: 41, 43, 44, 45, 46, 47, or 49 (e.g. 4500012345, 4100098765). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No", "Customer PO Ref". If what you've read is not 10 digits, or doesn't start with one of those prefixes, re-examine that region of the image for a misread digit before returning it -- these are the only valid PO number prefixes. If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
 - "buyer_address"/"seller_address"/"ship_to_address": these almost always span MULTIPLE LINES (street, village/area, city, state, PIN code, country) -- read every line belonging to that address block and join them into ONE combined string separated by ", " (comma and space), e.g. "VILLAGE: AMDOSHI / WANGANI, WAI-ROAD, TALUKA-ROHA, RAIGAD, MAHARASHTRA 402106", not just the first word or first line. Do NOT join with an actual line break -- comma-and-space only, per the SINGLE LINE rule above. On a landscape layout, address blocks are often squeezed into a narrow column and wrap across 3-4 short lines -- make sure you have captured the full block down to the PIN code before moving on, rather than stopping after the first line.
 - "buyer_gstin"/"seller_gstin": always exactly 15 characters (2-digit state code, 10-character PAN, 1-digit entity code, the letter "Z", 1 checksum character) -- if what you've read is shorter or longer than 15 characters, re-examine that region of the image for a missed or extra character before returning it.
 - "company_pan": always exactly 10 characters, format 5 letters + 4 digits + 1 letter (e.g. AAACE1713F) -- note that this PAN is also embedded inside the Seller GSTIN as characters 3-12, so if the two are visible together you can cross-check one against the other.
@@ -473,7 +500,7 @@ Extract these fields from the E-way Bill:
 
 Important notes:
 - "generated_date": Use the FIRST date shown on the document, labeled "Generated Date" or "Date".
-- "po_number": Look for purchase order number — may appear as "PO No", "Purchase Order", or near the invoice reference. Typically 10 digits starting with 4 or 6. Return empty string if not found.
+- "po_number": Look for purchase order number — may appear as "PO No", "Purchase Order", or near the invoice reference. Always 10 digits, starting with one of these two-digit prefixes: 41, 43, 44, 45, 46, 47, or 49. If what you've read doesn't match, re-examine that region for a misread digit before returning it. Return empty string if not found.
 
 {
   "ewaybill_number": "",

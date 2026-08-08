@@ -48,6 +48,14 @@
 .field-error { border-color:#e74c3c !important; }
 .field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
 .field-error-msg.show { display:block; }
+/* FIX (2026-08-07): PO Number short-value warning -- separate from
+   .field-error/.field-error-msg above (those are wired to the Required-
+   field submit check, which clears them on every input/change; reusing
+   them here would make this warning disappear the instant it appeared).
+   Same red visual language as extracted_data.html's .field-expired. */
+.field-expired { border-color:#e74c3c !important; background:#fee; }
+.field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
+.field-error-msg-inline.show { display:block; }
 .form-group { margin-bottom:18px; }
 
 .gate-banner {
@@ -274,19 +282,32 @@
       </div>
     </div>
 
+    {# FIX (2026-08-07): both radio groups below (deliveryType here, poAvail
+       further down) used to have their "checked" option hardcoded in the
+       HTML (truck / with_po) with no connection to what was actually saved
+       for this record -- so reopening ANY already-submitted record always
+       showed "Truck" + "With PO" selected regardless of the real saved
+       po_flow_type. That's what made a legitimately-submitted "Without PO"
+       record look, on screen, like someone had bypassed a required field --
+       see the Gate In investigation this session. history.po_flow_type
+       (e.g. "hand_without_po") is the source of truth; split it into its
+       two halves here so each radio group can check the option that
+       actually matches. Falls back to the column's own DB default
+       ('truck_with_po') for a brand-new/unsaved record, same as before. #}
+    {% set _pft = ((history.po_flow_type if history else '') or 'truck_with_po') %}
     <!-- ── Delivery Type ─ moved below Driver Name/No. of Persons per request;
          same radios/ids/onchange handler as before, position only changed. -->
     <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
       <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">🚦 Delivery Type</div>
       <div class="delivery-type-group">
         <label class="delivery-radio-option">
-          <input type="radio" name="deliveryType" value="truck" checked onchange="onDeliveryTypeChange()"> 🚚 Truck
+          <input type="radio" name="deliveryType" value="truck" {% if _pft.startswith('truck_') %}checked{% endif %} onchange="onDeliveryTypeChange()" {% if gate_in_locked %}disabled{% endif %}> 🚚 Truck
         </label>
         <label class="delivery-radio-option">
-          <input type="radio" name="deliveryType" value="hand" onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
+          <input type="radio" name="deliveryType" value="hand" {% if _pft.startswith('hand_') %}checked{% endif %} onchange="onDeliveryTypeChange()" {% if gate_in_locked %}disabled{% endif %}> 🤝 Hand Delivery
         </label>
         <label class="delivery-radio-option">
-          <input type="radio" name="deliveryType" value="courier" onchange="onDeliveryTypeChange()"> 📦 Courier
+          <input type="radio" name="deliveryType" value="courier" {% if _pft.startswith('courier_') %}checked{% endif %} onchange="onDeliveryTypeChange()" {% if gate_in_locked %}disabled{% endif %}> 📦 Courier
         </label>
       </div>
     </div>
@@ -373,6 +394,7 @@
         </div>
         <div class="po-fetch-status" id="poFetchStatus"></div>
         <div class="field-error-msg" id="err_purchaseOrder">Required</div>
+        <div class="field-error-msg-inline" id="err_purchaseOrder_short"></div>
       </div>
     </div>
 
@@ -382,10 +404,10 @@
       <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">📋 Purchase Order Available?</div>
       <div class="po-avail-group">
         <label class="delivery-radio-option">
-          <input type="radio" name="poAvail" value="with_po" checked onchange="onPoAvailChange()"> With PO
+          <input type="radio" name="poAvail" value="with_po" {% if _pft.endswith('_with_po') %}checked{% endif %} onchange="onPoAvailChange()" {% if gate_in_locked %}disabled{% endif %}> With PO
         </label>
         <label class="delivery-radio-option">
-          <input type="radio" name="poAvail" value="without_po" onchange="onPoAvailChange()"> Without PO
+          <input type="radio" name="poAvail" value="without_po" {% if _pft.endswith('_without_po') %}checked{% endif %} onchange="onPoAvailChange()" {% if gate_in_locked %}disabled{% endif %}> Without PO
         </label>
       </div>
     </div>
@@ -457,11 +479,18 @@ const STEP_LOCKS_ENABLED_GATEIN = {{ 'true' if config.ENABLE_STEP_LOCKS else 'fa
     const now = new Date();
     timeEl.value = now.toTimeString().slice(0, 5);
   }
-  // Apply initial show/hide state to match whichever poAvail radio is
-  // checked by default. Note: the poAvail/deliveryType radios don't
-  // currently get re-checked from a previously-saved po_flow_type on
-  // reload (pre-existing gap, separate from this fix) -- so reopening a
-  // without_po record will still show "With PO" selected by default here.
+  // FIX (2026-08-07): both radios' "checked" attribute now correctly
+  // reflects history.po_flow_type (see the _pft Jinja block above the
+  // Delivery Type section), instead of always defaulting to Truck/With PO
+  // regardless of what was actually saved. But onchange handlers only fire
+  // on a user CLICK, not from the server-rendered checked attribute alone
+  // -- so both apply-current-state functions still need calling once here
+  // on load, otherwise the correct radio would show selected while the
+  // wrong field section (Truck vs Hand/Courier) stayed visible, or the PO
+  // Number field's required/hidden state stayed wrong. onDeliveryTypeChange
+  // added here (was previously only onPoAvailChange -- deliveryType had the
+  // exact same "always looks like Truck" gap, just not the one asked about).
+  onDeliveryTypeChange();
   onPoAvailChange();
 })();
 
@@ -651,6 +680,49 @@ function validateGateIn() {
   });
 })();
 
+// FIX (2026-08-07): PO Number is expected to be 10 digits (client
+// requested visual flag only, never blocks Submit) -- same pattern as
+// extracted_data.html's _checkPoNumberLength(). Deliberately its own
+// class (.field-expired) and element (err_purchaseOrder_short), NOT
+// field-error/err_purchaseOrder -- those belong to the Required-field
+// check above, which clears itself on every input/change event, so
+// reusing it here would make this warning vanish the instant it appeared.
+// FIX (2026-08-07): added the prefix check alongside the existing length
+// check -- a valid PO number is not just "10 digits", it must start with
+// 41/43/44/45/46/47/49 specifically.
+const PO_VALID_PREFIXES = ['41', '43', '44', '45', '46', '47', '49'];
+function _checkPoNumberShort() {
+  const el = document.getElementById('purchaseOrder');
+  const err = document.getElementById('err_purchaseOrder_short');
+  if (!el) return;
+  const val = el.value.trim();
+  let msg = '';
+  if (val) {
+    const badLength = val.length < 10;
+    const prefix = val.slice(0, 2);
+    const badPrefix = !PO_VALID_PREFIXES.includes(prefix);
+    if (badLength && badPrefix) {
+      msg = `PO number is ${val.length} digit(s) and starts with "${prefix}" -- expected 10 digits starting with 41/43/44/45/46/47/49.`;
+    } else if (badLength) {
+      msg = `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.`;
+    } else if (badPrefix) {
+      msg = `PO number starts with "${prefix}" -- expected one of 41/43/44/45/46/47/49.`;
+    }
+  }
+  el.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+(function () {
+  const el = document.getElementById('purchaseOrder');
+  if (el) {
+    el.addEventListener('input', _checkPoNumberShort);
+    _checkPoNumberShort();
+  }
+})();
+
 // Challan Quantity: numeric only, max 16 digits before the decimal point
 // and 3 after (client request, 2026-08-07). Bad characters are blocked as
 // the user types (real-time filter on 'input', which also covers paste --
@@ -823,6 +895,9 @@ function clearGateInForm() {
   closePoDropdown();
   const dd = document.getElementById('driverDropdown');
   if (dd) dd.classList.remove('show');
+  // FIX (2026-08-07): value above is set directly (no 'input' event), so
+  // the short-PO-number highlight won't clear on its own -- rerun it here.
+  if (typeof _checkPoNumberShort === 'function') _checkPoNumberShort();
 }
 
 // ============================================================
@@ -1106,6 +1181,9 @@ function selectPo(poNumber) {
   document.getElementById('err_purchaseOrder').classList.remove('show');
   closePoDropdown();
   _showPoStatus(`✓ PO ${poNumber} selected`, 'success');
+  // FIX (2026-08-07): value above is set directly (no 'input' event) --
+  // rerun the short-PO-number highlight so it reflects the fetched value.
+  if (typeof _checkPoNumberShort === 'function') _checkPoNumberShort();
 }
 
 function closePoDropdown() {

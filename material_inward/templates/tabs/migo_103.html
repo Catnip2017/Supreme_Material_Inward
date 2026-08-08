@@ -3,6 +3,12 @@
 .field-error { border-color:#e74c3c !important; }
 .field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
 .field-error-msg.show { display:block; }
+/* FIX (2026-08-07): PO Number short-value warning -- own class/element,
+   separate from .field-error/err_migoPoNumber (the Required-field check),
+   so it doesn't get wiped out by that check's own clear-on-validate logic. */
+.field-expired { border-color:#e74c3c !important; background:#fee; }
+.field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
+.field-error-msg-inline.show { display:block; }
 
 .gate-banner {
   background:#fff3cd; border:1px solid #ffc107;
@@ -262,7 +268,12 @@
                   that guard-confirmed value now, so a Compliance mistake
                   the guard already caught and fixed at Gate In shows up
                   correctly here instead of the stale OCR figure. #}
-               value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+               {# FIX (2026-08-07): cap at 10 chars -- maxlength alone only
+                  blocks future typing, it doesn't trim a pre-filled value
+                  attribute, so an over-length upstream value would have
+                  rendered here untouched. Matches gate_in.html's purchaseOrder
+                  field, which already does this. #}
+               value="{{ ((gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '')|truncate(10, True, '', 0) }}"
                >
         {% if show_manual_po_fetch %}
         {% set fetch_po_label = '📋 Fetch PO Items' if 'without_po' in po_flow_type else '🔄 Retry PO Fetch' %}
@@ -278,6 +289,7 @@
         {% endif %}
       </div>
       <div class="field-error-msg" id="err_migoPoNumber">Required</div>
+      <div class="field-error-msg-inline" id="err_migoPoNumber_short"></div>
     </div>
     <div class="form-group">
       <label>Document Date <span class="req">*</span></label>
@@ -1472,6 +1484,47 @@ function _collectMigoItems() {
   });
   return items;
 }
+
+// FIX (2026-08-07): PO Number is expected to be 10 digits (client
+// requested visual flag only, never blocks Post) -- same pattern as
+// extracted_data.html's _checkPoNumberLength() / gate_in.html's
+// _checkPoNumberShort(). Own class/element, not field-error/err_migoPoNumber
+// (those belong to the Required-field check in validateMigo103() below).
+// FIX (2026-08-07): added the prefix check alongside the existing length
+// check -- a valid PO number is not just "10 digits", it must start with
+// 41/43/44/45/46/47/49 specifically.
+const PO_VALID_PREFIXES = ['41', '43', '44', '45', '46', '47', '49'];
+function _checkMigoPoNumberShort() {
+  const el = document.getElementById('migoPoNumber');
+  const err = document.getElementById('err_migoPoNumber_short');
+  if (!el) return;
+  const val = el.value.trim();
+  let msg = '';
+  if (val) {
+    const badLength = val.length < 10;
+    const prefix = val.slice(0, 2);
+    const badPrefix = !PO_VALID_PREFIXES.includes(prefix);
+    if (badLength && badPrefix) {
+      msg = `PO number is ${val.length} digit(s) and starts with "${prefix}" -- expected 10 digits starting with 41/43/44/45/46/47/49.`;
+    } else if (badLength) {
+      msg = `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.`;
+    } else if (badPrefix) {
+      msg = `PO number starts with "${prefix}" -- expected one of 41/43/44/45/46/47/49.`;
+    }
+  }
+  el.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+(function () {
+  const el = document.getElementById('migoPoNumber');
+  if (el) {
+    el.addEventListener('input', _checkMigoPoNumberShort);
+    _checkMigoPoNumberShort();
+  }
+})();
 
 function validateMigo103() {
   let valid = true;
