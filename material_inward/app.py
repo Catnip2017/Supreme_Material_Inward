@@ -78,7 +78,7 @@ from database.admin_operations import (
     find_records_for_admin, get_admin_action_log,
     delete_history_record, reset_gate_in_step,
     reset_migo_103_step, reset_migo_105_step, reset_miro_step,
-    revert_extracted_data_approval, revert_gst_approval
+    revert_extracted_data_approval, revert_gst_approval, revert_approval
 )
 from services.extract import process_document
 from services.rf_queue_worker import start_worker
@@ -1039,6 +1039,25 @@ def api_admin_revert_extracted_data_approval(history_id):
 @api_login_required
 def api_admin_revert_gst_approval(history_id):
     return _record_admin_action(revert_gst_approval, history_id)
+
+
+@app.route("/api/admin/records/<int:history_id>/revert_approval", methods=["POST"])
+@api_login_required
+def api_admin_revert_approval(history_id):
+    # FIX (2026-08-11): combined Extracted Data + GST approval revert into
+    # one action -- see admin_operations.revert_approval's docstring.
+    return _record_admin_action(revert_approval, history_id)
+
+
+@app.route("/api/admin/records/action_log")
+@api_login_required
+def api_admin_action_log():
+    # FIX (2026-08-11): lets admin_records.html refresh the "Recent actions"
+    # table in place after a bulk apply instead of doing a full
+    # window.location.reload() -- see admin_records.html's runBulkActions().
+    if not _has_role("record_admin"):
+        return jsonify({"success": False, "error": "Permission denied."}), 403
+    return jsonify({"success": True, "actions": get_admin_action_log(limit=50)})
 
 
 # ============================================================

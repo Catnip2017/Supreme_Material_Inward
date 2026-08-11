@@ -375,6 +375,16 @@ function loadHistory(page) {
         search, status, date_from: dateFrom, date_to: dateTo, page: currentPage
     });
 
+    // FIX (2026-08-11): reflect the current filters/page into the URL query
+    // string (replaceState -- doesn't spam browser history with one entry
+    // per keystroke/filter change) so that leaving this page (e.g. to view
+    // a record) and coming back -- or just hitting refresh -- restores
+    // exactly what was filtered, instead of always resetting to the
+    // unfiltered default. Paired with _restoreFiltersFromUrl() below, which
+    // reads this back out on page load.
+    const newUrl = window.location.pathname + '?' + params.toString();
+    window.history.replaceState(null, '', newUrl);
+
     const tbody = document.getElementById('historyTableBody');
     tbody.innerHTML = '<tr class="loading-row"><td colspan="9">⏳ Loading...</td></tr>';
 
@@ -557,7 +567,27 @@ document.addEventListener("click", function(e) {
     }
 });
 
+// FIX (2026-08-11): restore filters/page from the URL (written by
+// loadHistory()'s replaceState call) before the initial load, instead of
+// always starting from the blank/default state. See loadHistory()'s own
+// comment for why this exists.
+function _restoreFiltersFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const search   = params.get('search');
+    const status   = params.get('status');
+    const dateFrom = params.get('date_from');
+    const dateTo   = params.get('date_to');
+    const page     = parseInt(params.get('page'), 10);
+
+    if (search)   document.getElementById('searchInput').value = search;
+    if (status)   document.getElementById('statusFilter').value = status;
+    if (dateFrom) document.getElementById('dateFrom').value = dateFrom;
+    if (dateTo)   document.getElementById('dateTo').value = dateTo;
+    if (page && page > 0) currentPage = page;
+}
+
 // Load on page open
+_restoreFiltersFromUrl();
 loadHistory();
 
 // ── v17: Pending PO Updates panel ───────────────────────────────────────
@@ -589,7 +619,7 @@ function loadPendingPoUpdates() {
                 const btnLabel = isFailed ? 'Retry' : 'Update PO';
                 const btnColor = isFailed ? 'linear-gradient(135deg,#e74c3c,#c0392b)' : 'linear-gradient(135deg,#f39c12,#e67e22)';
                 return `
-                <div style="display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:14px;">
+                <div style="display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:14px;" data-history-id="${it.history_id}">
                     <div style="flex:1;">
                         <strong>${_escHtml(it.invoice_number || ('h' + it.history_id))}</strong>
                         &nbsp;—&nbsp; GIN ${_escHtml(it.gate_in_number)} needs PO ${_escHtml(it.po_number)}
@@ -598,6 +628,9 @@ function loadPendingPoUpdates() {
                             Requested by ${_escHtml(it.requested_by || 'unknown')} at ${_escHtml(it.requested_at || '')}
                             ${isFailed && it.error_message ? `<br>Error: ${_escHtml(it.error_message)}` : ''}
                         </div>
+                        <!-- FIX (2026-08-11): in-row status instead of alert()/confirm()
+                             popups -- see runPendingPoUpdate()/_pollPendingPoJob() below. -->
+                        <div class="pending-po-status" style="display:none;font-size:12px;margin-top:4px;padding:4px 8px;border-radius:4px;"></div>
                     </div>
                     <button onclick="runPendingPoUpdate(${it.history_id}, this)"
                         style="padding:8px 16px;background:${btnColor};color:white;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">
@@ -610,47 +643,66 @@ function loadPendingPoUpdates() {
         .catch(() => {});
 }
 
+// FIX (2026-08-11): replaces alert() popups with an in-row status message
+// (the .pending-po-status div added next to each item above) -- users
+// asked not to be interrupted by native browser popups for this flow.
+function _showPendingPoRowStatus(historyId, msg, type) {
+    const row = document.querySelector(`#pendingPoList [data-history-id="${historyId}"]`);
+    const el  = row ? row.querySelector('.pending-po-status') : null;
+    if (!el) return;
+    const colors = { info: '#e8f0fe:#1e5ca8', error: '#fee2e2:#b91c1c', success: '#d1fae5:#065f46' };
+    const [bg, color] = (colors[type] || colors.info).split(':');
+    el.style.background = bg;
+    el.style.color      = color;
+    el.style.display    = 'block';
+    el.textContent      = msg;
+}
+
 function runPendingPoUpdate(historyId, btn) {
     btn.disabled = true;
     btn.textContent = 'Running…';
+    _showPendingPoRowStatus(historyId, '⏳ Running PO update in SAP…', 'info');
     fetch(`/api/pending_po_updates/${historyId}/run`, { method: 'POST' })
         .then(r => r.json())
         .then(data => {
             if (!data.success) {
-                alert('Failed to start: ' + (data.error || 'unknown error'));
+                _showPendingPoRowStatus(historyId, '❌ Failed to start: ' + (data.error || 'unknown error'), 'error');
                 btn.disabled = false;
                 btn.textContent = 'Update PO';
                 return;
             }
-            _pollPendingPoJob(data.job_id, btn);
+            _pollPendingPoJob(data.job_id, historyId, btn);
         })
         .catch(() => {
-            alert('Network error starting PO update.');
+            _showPendingPoRowStatus(historyId, '❌ Network error starting PO update.', 'error');
             btn.disabled = false;
             btn.textContent = 'Update PO';
         });
 }
 
-function _pollPendingPoJob(jobId, btn) {
+function _pollPendingPoJob(jobId, historyId, btn) {
     fetch(`/api/queue_status/${jobId}`)
         .then(r => r.json())
         .then(data => {
             const status = data.job && data.job.status;   // pending | running | done | failed
             if (status === 'pending' || status === 'running') {
-                setTimeout(() => _pollPendingPoJob(jobId, btn), 3000);
+                setTimeout(() => _pollPendingPoJob(jobId, historyId, btn), 3000);
                 return;
             }
-            // Terminal (done or failed either way) -- refresh the panel so
-            // a resolved item disappears / a still-pending one shows fresh state.
-            loadPendingPoUpdates();
             if (status === 'failed') {
-                const errMsg = (data.job.result && data.job.result.error) || data.job.error_message || 'unknown error';
-                alert('PO update did not succeed: ' + errMsg);
+                const errMsg = (data.job.result && data.job.result.error) || data.job.error_message || 'Update did not succeed.';
+                _showPendingPoRowStatus(historyId, '❌ ' + errMsg, 'error');
+                if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+                return;
             }
+            _showPendingPoRowStatus(historyId, '✓ PO update complete.', 'success');
+            // Terminal success -- refresh the panel shortly after so the
+            // resolved item disappears from the list (short delay so the
+            // success message is actually visible first).
+            setTimeout(loadPendingPoUpdates, 1500);
         })
         .catch(() => {
-            btn.disabled = false;
-            btn.textContent = 'Update PO';
+            if (btn) { btn.disabled = false; btn.textContent = 'Update PO'; }
         });
 }
 

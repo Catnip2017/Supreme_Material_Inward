@@ -87,6 +87,55 @@
         }
         .toast.success { background:#00875a; }
         .toast.error { background:#c0392b; }
+
+        /* FIX (2026-08-11): multi-select bulk revert -- checkboxes replace
+           the old one-click-per-action buttons, a sticky bar collects
+           selections across searches for MULTIPLE history_ids at once, and
+           an in-page modal replaces the native confirm() popup. See
+           runBulkActions()/openBulkConfirm() below. */
+        .action-checks { display:flex; flex-wrap:wrap; gap:14px; }
+        .check-label {
+            display:flex; align-items:center; gap:6px; font-size:13px; color:#444;
+            cursor:pointer; user-select:none;
+        }
+        .check-label input { width:16px; height:16px; cursor:pointer; }
+        .check-label.disabled { opacity:0.5; cursor:not-allowed; }
+        .danger-zone { border-top:1px dashed #f1b0b7; padding-top:12px; margin-top:4px; }
+        .danger-zone .check-label { color:#c0392b; font-weight:600; }
+
+        .bulk-bar {
+            position:sticky; bottom:16px; margin-top:20px; z-index:50;
+            background:#1e2a3a; color:white; border-radius:12px; padding:14px 20px;
+            display:none; align-items:center; justify-content:space-between; gap:16px;
+            box-shadow:0 6px 20px rgba(0,0,0,0.25);
+        }
+        .bulk-bar .bulk-summary { font-size:14px; }
+        .bulk-bar .bulk-buttons { display:flex; gap:10px; }
+        .bulk-bar button {
+            padding:9px 18px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer;
+        }
+        .bulk-bar .apply-btn { background:#f39c12; color:white; }
+        .bulk-bar .clear-btn { background:transparent; color:#cfd8e3; border:1px solid #445269; }
+
+        .modal-overlay {
+            display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45);
+            z-index:200; align-items:center; justify-content:center;
+        }
+        .modal-box {
+            background:white; border-radius:12px; padding:24px; max-width:520px; width:90%;
+            max-height:80vh; overflow-y:auto;
+        }
+        .modal-box h3 { margin-bottom:14px; color:#333; }
+        .modal-box ul { list-style:none; margin-bottom:18px; }
+        .modal-box li {
+            padding:8px 10px; border-bottom:1px solid #f0f0f0; font-size:13px; color:#444;
+        }
+        .modal-box li.danger { color:#c0392b; font-weight:600; }
+        .modal-actions { display:flex; gap:10px; justify-content:flex-end; }
+        .modal-actions button { padding:9px 18px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer; }
+        .modal-actions .confirm-btn { background:#c0392b; color:white; }
+        .modal-actions .cancel-btn { background:#f0f0f0; color:#444; }
+        .modal-actions button:disabled { opacity:0.5; cursor:not-allowed; }
     </style>
 </head>
 <body>
@@ -117,6 +166,18 @@
 
         <div id="resultsContainer"></div>
 
+        <!-- FIX (2026-08-11): sticky summary bar for everything currently
+             checked across ALL searches so far (selections persist in
+             _bulkSelections, not just what's visible after the last
+             search) -- click Apply to review + confirm in one batch. -->
+        <div class="bulk-bar" id="bulkBar">
+            <div class="bulk-summary" id="bulkSummary"></div>
+            <div class="bulk-buttons">
+                <button class="clear-btn" onclick="clearBulkSelections()">Clear</button>
+                <button class="apply-btn" onclick="openBulkConfirm()">Apply Selected</button>
+            </div>
+        </div>
+
         <div class="log-card">
             <h3>Recent actions</h3>
             <table class="log-table" id="logTable">
@@ -140,6 +201,20 @@
         </div>
     </div>
 
+    <!-- FIX (2026-08-11): in-page confirmation replacing the native
+         confirm() popup for both Delete Record and Pending PO Update --
+         users asked not to be interrupted by browser-native dialogs. -->
+    <div class="modal-overlay" id="bulkConfirmOverlay">
+        <div class="modal-box">
+            <h3><i class="fas fa-triangle-exclamation" style="color:#e67e22;"></i> Confirm actions</h3>
+            <ul id="bulkConfirmList"></ul>
+            <div class="modal-actions">
+                <button class="cancel-btn" onclick="closeBulkConfirm()">Cancel</button>
+                <button class="confirm-btn" id="bulkConfirmBtn" onclick="runBulkActions()">Confirm & Apply</button>
+            </div>
+        </div>
+    </div>
+
     <div class="toast" id="toast"></div>
 
     <script>
@@ -157,6 +232,7 @@
         const q = document.getElementById('searchInput').value.trim();
         const container = document.getElementById('resultsContainer');
         if (!q) { container.innerHTML = ''; return; }
+        _lastSearchQuery = q;
         container.innerHTML = '<div class="empty-state">Searching...</div>';
         try {
             const res = await fetch('/api/admin/records/search?q=' + encodeURIComponent(q));
@@ -169,6 +245,98 @@
         } catch (e) {
             container.innerHTML = '<div class="empty-state">Search failed -- check connection.</div>';
         }
+    }
+
+    function pill(label, done) {
+        return `<span class="status-pill ${done ? 'done' : 'pending'}">${label}: ${done ? 'Done' : 'Pending'}</span>`;
+    }
+
+    // FIX (2026-08-11): multi-select bulk revert rewrite.
+    // _bulkSelections: historyId -> Map(action -> humanLabel). A plain DOM
+    // query at "Apply" time isn't enough because searching again replaces
+    // resultsContainer's innerHTML (wiping any checkboxes from the PREVIOUS
+    // search) -- but the whole point of this rewrite is picking steps
+    // across MULTIPLE history_ids found via separate searches, so
+    // selections have to live here, independent of what's currently
+    // rendered, and get restored onto checkboxes if that record's card is
+    // re-rendered (see renderResults() below).
+    let _bulkSelections = new Map();
+    let _lastSearchQuery = '';
+
+    const STEP_ACTIONS = [
+        { action: 'reset_gate_in',   label: 'Reset Gate In' },
+        { action: 'reset_migo_103',  label: 'Reset MIGO 103' },
+        { action: 'reset_migo_105',  label: 'Reset MIGO 105' },
+        { action: 'reset_miro',      label: 'Reset MIRO' },
+        { action: 'revert_approval', label: 'Revert Approval (Extracted Data + GST)' },
+    ];
+
+    function isSelected(historyId, action) {
+        return !!(_bulkSelections.get(historyId) && _bulkSelections.get(historyId).has(action));
+    }
+
+    function toggleSelection(historyId, action, label, checked) {
+        if (!_bulkSelections.has(historyId)) _bulkSelections.set(historyId, new Map());
+        const rec = _bulkSelections.get(historyId);
+        if (checked) {
+            // Delete is exclusive with every step action for the same
+            // record -- deleting wipes the record entirely, so reverting a
+            // specific step on it at the same time is meaningless. Checking
+            // one clears the other side for this historyId.
+            if (action === 'delete') {
+                rec.clear();
+            } else {
+                rec.delete('delete');
+            }
+            rec.set(action, label);
+        } else {
+            rec.delete(action);
+            if (rec.size === 0) _bulkSelections.delete(historyId);
+        }
+        _syncCardCheckboxes(historyId);
+        _updateBulkBar();
+    }
+
+    // Re-applies current selection state onto whichever checkboxes for this
+    // historyId are actually in the DOM right now (a card may or may not be
+    // rendered depending on the last search) -- also handles the
+    // delete-disables-steps / steps-disable-delete visual state.
+    function _syncCardCheckboxes(historyId) {
+        const card = document.getElementById('card-' + historyId);
+        if (!card) return;
+        const deleteChecked = isSelected(historyId, 'delete');
+        card.querySelectorAll('.step-check').forEach(cb => {
+            cb.checked = isSelected(historyId, cb.dataset.action);
+            cb.disabled = !CAN_EDIT || deleteChecked;
+            cb.closest('.check-label').classList.toggle('disabled', cb.disabled);
+        });
+        const delCb = card.querySelector('.delete-check');
+        if (delCb) {
+            delCb.checked = deleteChecked;
+            const anyStepChecked = STEP_ACTIONS.some(s => isSelected(historyId, s.action));
+            delCb.disabled = !CAN_EDIT || anyStepChecked;
+            delCb.closest('.check-label').classList.toggle('disabled', delCb.disabled);
+        }
+    }
+
+    function _updateBulkBar() {
+        const bar = document.getElementById('bulkBar');
+        let total = 0;
+        _bulkSelections.forEach(rec => { total += rec.size; });
+        if (total === 0) {
+            bar.style.display = 'none';
+            return;
+        }
+        bar.style.display = 'flex';
+        document.getElementById('bulkSummary').textContent =
+            `${total} action(s) selected across ${_bulkSelections.size} record(s)`;
+    }
+
+    function clearBulkSelections() {
+        const ids = Array.from(_bulkSelections.keys());
+        _bulkSelections.clear();
+        ids.forEach(_syncCardCheckboxes);
+        _updateBulkBar();
     }
 
     function pill(label, done) {
@@ -199,55 +367,124 @@
                 </div>
 
                 <div class="action-group">
-                    <div class="action-group-title">Reset step</div>
-                    <div class="action-buttons">
-                        <button class="action-btn" ${!CAN_EDIT ? 'disabled' : ''} onclick="doAction(${r.id}, 'reset_gate_in', 'reset Gate In')">Reset Gate In</button>
-                        <button class="action-btn" ${!CAN_EDIT ? 'disabled' : ''} onclick="doAction(${r.id}, 'reset_migo_103', 'reset MIGO 103')">Reset MIGO 103</button>
-                        <button class="action-btn" ${!CAN_EDIT ? 'disabled' : ''} onclick="doAction(${r.id}, 'reset_migo_105', 'reset MIGO 105')">Reset MIGO 105</button>
-                        <button class="action-btn" ${!CAN_EDIT ? 'disabled' : ''} onclick="doAction(${r.id}, 'reset_miro', 'reset MIRO')">Reset MIRO</button>
+                    <div class="action-group-title">Select steps to revert for #${r.id}</div>
+                    <div class="action-checks">
+                        ${STEP_ACTIONS.map(s => `
+                            <label class="check-label">
+                                <input type="checkbox" class="step-check" data-action="${s.action}"
+                                    ${!CAN_EDIT ? 'disabled' : ''}
+                                    onchange="toggleSelection(${r.id}, '${s.action}', '${s.label} (#${r.id})', this.checked)">
+                                ${s.label}
+                            </label>
+                        `).join('')}
                     </div>
                 </div>
 
-                <div class="action-group">
-                    <div class="action-group-title">Revert approval</div>
-                    <div class="action-buttons">
-                        <button class="action-btn" ${!CAN_EDIT ? 'disabled' : ''} onclick="doAction(${r.id}, 'revert_extracted_data_approval', 'revert the Extracted Data approval')">Revert Extracted Data Approval</button>
-                        <button class="action-btn" ${!CAN_EDIT ? 'disabled' : ''} onclick="doAction(${r.id}, 'revert_gst_approval', 'revert the GST approval')">Revert GST Approval</button>
-                    </div>
-                </div>
-
-                <div class="action-group">
-                    <div class="action-group-title">Danger zone</div>
-                    <div class="action-buttons">
-                        <button class="action-btn danger" ${!CAN_EDIT ? 'disabled' : ''} onclick="doAction(${r.id}, 'delete', 'PERMANENTLY DELETE record #' + ${r.id} + ' and everything linked to it')">Delete Record</button>
-                    </div>
+                <div class="action-group danger-zone">
+                    <label class="check-label">
+                        <input type="checkbox" class="delete-check"
+                            ${!CAN_EDIT ? 'disabled' : ''}
+                            onchange="toggleSelection(${r.id}, 'delete', 'PERMANENTLY DELETE record #${r.id}', this.checked)">
+                        Delete this record entirely (removes everything linked to it)
+                    </label>
                 </div>
             </div>
         `).join('');
+        // Restore any selections made on this record from a previous
+        // search/render before this one.
+        records.forEach(r => _syncCardCheckboxes(r.id));
     }
 
-    async function doAction(historyId, endpoint, confirmLabel) {
-        if (!confirm(`Are you sure you want to ${confirmLabel}? This cannot be undone.`)) return;
+    function openBulkConfirm() {
+        let total = 0;
+        const items = [];
+        _bulkSelections.forEach((rec) => {
+            rec.forEach(label => { items.push(label); total++; });
+        });
+        if (total === 0) return;
+        const list = document.getElementById('bulkConfirmList');
+        list.innerHTML = items.map(label =>
+            `<li class="${label.startsWith('PERMANENTLY DELETE') ? 'danger' : ''}">${label}</li>`
+        ).join('');
+        document.getElementById('bulkConfirmOverlay').style.display = 'flex';
+    }
+
+    function closeBulkConfirm() {
+        document.getElementById('bulkConfirmOverlay').style.display = 'none';
+    }
+
+    async function runBulkActions() {
+        const btn = document.getElementById('bulkConfirmBtn');
+        btn.disabled = true;
+        const originalText = btn.textContent;
+
+        // Flatten to a plain list of {historyId, action, label} -- applied
+        // sequentially (not Promise.all) so a batch of many records doesn't
+        // fire a burst of concurrent SAP-adjacent DB transactions at once,
+        // and so per-item progress can be shown.
+        const queue = [];
+        _bulkSelections.forEach((rec, historyId) => {
+            rec.forEach((label, action) => queue.push({ historyId, action, label }));
+        });
+
+        let succeeded = 0, failed = 0;
+        for (let i = 0; i < queue.length; i++) {
+            const item = queue[i];
+            btn.textContent = `Applying ${i + 1}/${queue.length}…`;
+            try {
+                const res = await fetch(`/api/admin/records/${item.historyId}/${item.action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: true })
+                });
+                const data = await res.json();
+                if (data.success) succeeded++; else failed++;
+            } catch (e) {
+                failed++;
+            }
+        }
+
+        btn.disabled = false;
+        btn.textContent = originalText;
+        closeBulkConfirm();
+        _bulkSelections.clear();
+        _updateBulkBar();
+
+        showToast(
+            failed === 0
+                ? `Done — ${succeeded} action(s) applied.`
+                : `${succeeded} succeeded, ${failed} failed — check Recent Actions below.`,
+            failed > 0
+        );
+
+        // In-place refresh -- no page reload. Re-run the last search (picks
+        // up updated pills / removes deleted cards) and refresh the action
+        // log table from the new read-only endpoint.
+        if (_lastSearchQuery) await doSearch();
+        await refreshActionLog();
+    }
+
+    async function refreshActionLog() {
         try {
-            const res = await fetch(`/api/admin/records/${historyId}/${endpoint}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ confirm: true })
-            });
+            const res = await fetch('/api/admin/records/action_log');
             const data = await res.json();
-            if (!data.success) {
-                showToast(data.error || 'Action failed', true);
+            if (!data.success) return;
+            const tbody = document.getElementById('logTableBody');
+            if (!data.actions.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No actions logged yet.</td></tr>';
                 return;
             }
-            showToast('Done.', false);
-            if (endpoint === 'delete') {
-                document.getElementById('card-' + historyId).remove();
-            } else {
-                doSearch();
-            }
-            setTimeout(() => location.reload(), 1200); // refresh the action log too
+            tbody.innerHTML = data.actions.map(a => `
+                <tr>
+                    <td>${a.performed_at || ''}</td>
+                    <td>${a.history_id}</td>
+                    <td class="action-cell">${a.action}</td>
+                    <td>${a.performed_by || ''}</td>
+                    <td>${a.details || ''}</td>
+                </tr>
+            `).join('');
         } catch (e) {
-            showToast('Request failed -- check connection.', true);
+            // Best-effort -- the log table just stays as it was.
         }
     }
     </script>
