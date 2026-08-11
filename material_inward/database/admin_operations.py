@@ -283,6 +283,47 @@ def revert_extracted_data_approval(history_id: int, performed_by: str) -> bool:
         return False
 
 
+def revert_approval(history_id: int, performed_by: str) -> bool:
+    """
+    FIX (2026-08-11): combines revert_extracted_data_approval +
+    revert_gst_approval into one action/one log entry -- client feedback
+    was that these are conceptually "one approval" from the compliance
+    side (both gates block Gate In together, see app.py._check_step_allowed),
+    even though they're two separate DB fields (history.approval_status and
+    history.gst_check/gst_approval). Does both UPDATEs in a single
+    transaction so a failure partway through can't leave one reverted and
+    the other not. The two individual functions below (revert_
+    extracted_data_approval/revert_gst_approval) are left in place
+    unchanged -- still reachable/used independently by anything that
+    doesn't go through the new combined route.
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE history
+                       SET approval_status = 'pending', approval_by = NULL,
+                           approval_at = NULL, hold_reason = NULL,
+                           gst_check = 0, gst_check_done_at = NULL,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = %s""",
+                    (history_id,)
+                )
+                cur.execute(
+                    """UPDATE gst_approval
+                       SET approval_status = 'pending', approval_by = NULL,
+                           approval_at = NULL, hold_reason = NULL
+                       WHERE history_id = %s""",
+                    (history_id,)
+                )
+        log_admin_action(history_id, "revert_approval", performed_by,
+                          details="Extracted Data + GST approval both reverted")
+        return True
+    except Exception as e:
+        logger.error(f"revert_approval failed for history_id={history_id}: {e}")
+        return False
+
+
 def revert_gst_approval(history_id: int, performed_by: str) -> bool:
     # Two places -- history.gst_check (the flag other queries/badges read)
     # and the separate gst_approval table row (its own approval_status/

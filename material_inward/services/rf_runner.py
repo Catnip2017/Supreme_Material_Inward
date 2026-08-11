@@ -187,8 +187,24 @@ def _run_rf_script(
         "--nostatusrc",
     ]
     for key, value in variables.items():
-        safe_value = str(value).replace(":", "\\:")
-        cmd += ["--variable", f"{key}:{safe_value}"]
+        # FIX: this used to escape every ":" in the value as "\:", on the
+        # assumption robot's `--variable NAME:VALUE` CLI syntax needed it to
+        # avoid an embedded colon being mistaken for another name:value
+        # split. Verified empirically (robot 7.x) that this is false --
+        # `--variable` only ever splits on the FIRST colon after the name,
+        # so "MATERIAL:SIZE:-10" already correctly yields value "SIZE:-10"
+        # with no escaping at all, and it isn't stripped back out afterward
+        # either -- the literal backslash stayed in ${MATERIAL} and got
+        # typed straight into SAP. That's a real, confirmed production bug:
+        # "PLAIN PAPER LABELS IN ROLL FORM SIZE:-10" is exactly 40 chars
+        # (Gate In's own SAP-length cap on the Material field), but with
+        # this escaping applied it became "...SIZE\:-10" -- 41 chars -- and
+        # SAP rejected it. The escaping was pure downside: unnecessary for
+        # robot's parser and actively capable of pushing an
+        # already-correctly-truncated value back over its SAP field limit
+        # for any value containing a colon. Removed outright rather than
+        # reworked, since nothing here needs it.
+        cmd += ["--variable", f"{key}:{value}"]
     cmd.append(script_path)
 
     logger.info(f"Running RF: {script_name} | Variables: {list(variables.keys())}")
@@ -231,10 +247,45 @@ def _run_rf_script(
             logger.error(msg)
             return {"success": False, "output": combined, "error": msg, "output_dir": output_dir}
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as timeout_exc:
         msg = f"RF script '{script_name}' timed out after {timeout_seconds}s"
         logger.error(msg)
-        return {"success": False, "error": msg, "output": ""}
+        # FIX (2026-08-11): this used to return "output": "" unconditionally
+        # -- but Python's subprocess.run() (with capture_output=True) still
+        # attaches whatever stdout/stderr WAS captured before the kill onto
+        # the TimeoutExpired exception itself (timeout_exc.stdout/.stderr).
+        # Confirmed real-world case: a zgatein_update run whose SAP work
+        # genuinely finished and printed RESULT:GATEIN_UPDATE_STATUS:SUCCESS
+        # to stdout, but then ran long in its own teardown/cleanup (SAP GUI
+        # slowness) past the 180s timeout -- Python killed it before the
+        # subprocess could exit normally, and the caller's early
+        # `if not result["success"]` check threw the whole thing away
+        # without ever looking at output, discarding the already-earned
+        # success marker and reporting a false failure to the frontend even
+        # though the robot's own log clearly showed success. Capturing this
+        # here lets callers that check `output` before giving up on
+        # `success` (see execute_update_gatein_po_sap) recover the real
+        # outcome instead of just going by the exit-level timeout.
+        timeout_stdout = getattr(timeout_exc, "stdout", None) or ""
+        timeout_stderr = getattr(timeout_exc, "stderr", None) or ""
+        timeout_combined = (timeout_stdout or "") + "\n" + (timeout_stderr or "")
+        # FIX: real production bug -- when subprocess.run(timeout=...) fires,
+        # Python kills the immediate `python -m robot` child process, but
+        # saplogon.exe (launched by the robot script's own `Start Process`
+        # keyword) is a grandchild, not attached via a Windows Job Object, so
+        # it survives as an orphan. The robot script's own [Teardown] Close
+        # SAP Session -- which does the real taskkill -- never runs either,
+        # because the whole process was hard-killed from outside before it
+        # could get there. Net effect: SAP is left open after a timeout, with
+        # nothing left to close it, until someone kills it by hand. Seen
+        # concretely with po_fetch.robot on POs with many line items (its
+        # per-item HSN + Open Quantity loops each cost several seconds, and
+        # its old 120s timeout could not cover a large enough item count) --
+        # but this same orphaning risk applies to a timeout on ANY script, so
+        # the cleanup belongs here centrally rather than only in
+        # execute_po_fetch_sap.
+        _force_kill_sap()
+        return {"success": False, "error": msg, "output": timeout_combined, "output_dir": output_dir}
     except Exception as e:
         msg = f"Unexpected error running '{script_name}': {e}"
         logger.error(msg, exc_info=True)
@@ -387,9 +438,29 @@ def execute_gate_in_sap(data: dict) -> dict:
 
     
     if not gin:
+        # FIX: same class of misleading message fixed in execute_migo_103_sap
+        # -- "posted but not captured" implies SAP posting happened when a
+        # genuine script crash (never reached the point of posting) is
+        # lumped in with the rarer case where Post really was clicked but
+        # the GIN just didn't parse from the status bar. Distinguish via RF's
+        # own pass/fail summary so a hard crash says plainly "not done, try
+        # again" instead of implying an ambiguous partial success.
+        if not _rf_test_actually_passed(result["output"]):
+            return {
+                "success": False,
+                "error": (
+                    "Gate In not done — the automation script errored out "
+                    "before completing (see the RF log for the exact step "
+                    "and error). No Gate In was posted in SAP. Try again."
+                ),
+                "gate_in_number": None
+            }
         return {
             "success": False,
-            "error": "Gate In posted but Gate In Number not captured from SAP status bar.",
+            "error": (
+                "Gate In ran but no Gate In Number was captured from the "
+                "SAP status bar. Check SAP manually before retrying."
+            ),
             "gate_in_number": None
         }
 
@@ -482,6 +553,16 @@ def execute_migo_103_sap(data: dict) -> dict:
         return {"success": False, "error": result["error"], "material_doc_number": None}
 
     mat_doc = _extract_marked_value(result["output"], "MATERIAL_DOC_NUMBER")
+
+    # FIX (2026-08-10): capture SAP's own status-bar text (see migo_103.robot's
+    # Capture Final SAP Status, which now emits this unconditionally in
+    # teardown) and append it to whichever failure message gets returned
+    # below, so the user sees exactly what SAP showed (e.g. "Purchase order
+    # 4100035670 not yet released") instead of only a generic canned string.
+    # Empty/None if the marker wasn't found or SAP's status bar was blank.
+    sap_status = _extract_marked_value(result["output"], "SAP_STATUS_MSG")
+    sap_status_suffix = f' SAP showed: "{sap_status}"' if sap_status else ""
+
     if not mat_doc:
         # FIX: don't say "posted" when the script actually errored out
         # before ever reaching Post -- see _rf_test_actually_passed's
@@ -495,15 +576,20 @@ def execute_migo_103_sap(data: dict) -> dict:
             return {
                 "success": False,
                 "error": (
-                    "MIGO 103 FAILED — the automation script errored out "
+                    "MIGO 103 not done — the automation script errored out "
                     "before completing (see the RF log for the exact step "
-                    "and error). No SAP document was created."
+                    "and error). No SAP document was created. Try again."
+                    + sap_status_suffix
                 ),
                 "material_doc_number": None
             }
         return {
             "success": False,
-            "error": "MIGO 103 posted but Material Document Number not captured.",
+            "error": (
+                "MIGO 103 ran but no Material Document Number was captured "
+                "from the SAP status bar. Check SAP manually before retrying."
+                + sap_status_suffix
+            ),
             "material_doc_number": None
         }
 
@@ -533,6 +619,7 @@ def execute_migo_103_sap(data: dict) -> dict:
                 "document number could be read from the SAP status bar. "
                 "Check SAP manually (TCODE: MIGO / MB03) before retrying -- "
                 "retrying without checking risks creating a duplicate GR."
+                + sap_status_suffix
             ),
             "material_doc_number": None
         }
@@ -592,9 +679,25 @@ def execute_migo_105_sap(data: dict) -> dict:
         return {"success": False, "error": result["error"]}
 
     miro_doc = _extract_marked_value(result["output"], "MIRO_DOC_NUMBER")
-    
+
     # ── FIX: MIGO 105 does generate a doc — missing means it didn't post ──
     if not miro_doc:
+        # Same crashed-vs-ambiguous distinction as execute_gate_in_sap /
+        # execute_migo_103_sap above -- a genuine script crash shouldn't be
+        # worded as if something might have posted.
+        if not _rf_test_actually_passed(result["output"]):
+            logger.error(
+                "MIGO 105 script errored out before completing. "
+                f"Check robot log: {result.get('output_dir')}"
+            )
+            return {
+                "success": False,
+                "error": (
+                    "MIGO 105 not done — the automation script errored out "
+                    "before completing (see the RF log for the exact step "
+                    "and error). No SAP document was created. Try again."
+                )
+            }
         logger.error(
             "MIGO 105 robot completed but no document number captured. "
             f"Check robot log: {result.get('output_dir')}"
@@ -603,7 +706,7 @@ def execute_migo_105_sap(data: dict) -> dict:
             "success": False,
             "error": (
                 "MIGO 105 ran but did not capture a document number from SAP. "
-                "Check SAP manually and robot logs."
+                "Check SAP manually before retrying."
             )
         }
 
@@ -652,16 +755,31 @@ def execute_miro_sap(data: dict) -> dict:
 
     # ── FIX: treat missing FI_DOC_NUMBER as failure ──────────────────
     if not fi_doc:
+        # Same crashed-vs-ambiguous distinction as the other three bots
+        # above -- a genuine script crash shouldn't be worded as if
+        # something might have posted.
+        if not _rf_test_actually_passed(result["output"]):
+            logger.error(
+                "MIRO script errored out before completing. "
+                f"Check robot log: {result.get('output_dir')}"
+            )
+            return {
+                "success": False,
+                "error": (
+                    "MIRO not done — the automation script errored out "
+                    "before completing (see the RF log for the exact step "
+                    "and error). No SAP document was created. Try again."
+                )
+            }
         logger.error(
             f"MIRO robot completed but FI_DOC_NUMBER not found in output. "
-            f"SAP may not have posted. Check robot logs at: {result.get('output_dir')}"
+            f"Check robot logs at: {result.get('output_dir')}"
         )
         return {
             "success": False,
             "error": (
-                "MIRO robot ran but did not capture a document number from SAP. "
-                "The document may not have been posted. "
-                "Check SAP manually and the robot log for details."
+                "MIRO ran but did not capture a document number from SAP. "
+                "Check SAP manually before retrying."
             )
         }
     # ─────────────────────────────────────────────────────────────────
@@ -684,7 +802,31 @@ def execute_po_fetch_sap(data: dict) -> dict:
     # credential_cache.py) intentionally never reaches this bot. See the
     # SAP_USERNAME/SAP_PASSWORD comment block in .env for the full picture.
     variables = {"PO_NUMBER": po_number}
-    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=120)
+    # FIX: was 120s -- too tight for a PO with many line items. Fetch PO
+    # Line Items runs TWO separate per-item loops (Open Quantity: ~3s/item
+    # for the next-item click+read; HSN/SAC: ~2.5s/item for the combo
+    # select+India-tab read), on top of login/navigation overhead -- a PO
+    # with 20+ lines (seen concretely on the "41xxxxxxxx" PO series, which
+    # runs notably more items than most) could exceed 120s well before
+    # finishing, hard-killing the whole run via subprocess timeout. That
+    # skips the script's own Close SAP Session teardown entirely (RF never
+    # gets a chance to run it) and previously left SAP orphaned open with
+    # nothing left to close it -- see the _force_kill_sap() cleanup now
+    # added to _run_rf_script's own TimeoutExpired handler as a backstop,
+    # but raising this to a realistic ceiling is the actual fix: no
+    # legitimate PO should need anywhere near 600s.
+    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=600)
+    # FIX: real root cause of "bot finished, looped through everything, but
+    # SAP was still open at the end" -- po_fetch.robot's own Close SAP
+    # Session only killed saplogon.exe, never saplgpad.exe/sapgui.exe (fixed
+    # directly in that file now, to match every other script's pattern).
+    # This is a Python-side backstop on top of that fix, not a replacement
+    # for it: mirrors the existing _force_kill_sap() already called before
+    # po_fetch runs (see the top of _run_rf_script) with a matching one
+    # after, regardless of success/failure -- every other bot does its own
+    # fresh login at the start of its own run, so nothing downstream expects
+    # a SAP session to still be alive right after po_fetch finishes.
+    _force_kill_sap()
     if not result["success"]:
         return {"success": False, "error": result["error"], "po_items": []}
 
@@ -774,21 +916,56 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
     }
 
     result = _run_rf_script(
-        "zgatein_update.robot", variables, timeout_seconds=180,
+        # FIX (2026-08-11): bumped 180s -> 300s (matches migo_103's timeout)
+        # -- 180s was tight for a full SAP login + navigation + grid update +
+        # teardown under normal SAP GUI slowness, and a run that finished
+        # its real work but overran teardown was being reported as a hard
+        # failure purely from the outer timeout (see the FIX note on
+        # subprocess.TimeoutExpired in _run_rf_script above).
+        "zgatein_update.robot", variables, timeout_seconds=300,
         extra_env=_sap_credential_env(data)
     )
-    if not result["success"]:
-        return {"success": False, "error": result["error"]}
 
-    status_val = _extract_marked_value(result["output"], "GATEIN_UPDATE_STATUS")
+    # FIX (2026-08-11): check the success marker BEFORE giving up on
+    # result["success"] -- confirmed production case: the robot's own log
+    # showed RESULT:GATEIN_UPDATE_STATUS:SUCCESS (the SAP update genuinely
+    # went through), but the outer subprocess hit its timeout during
+    # teardown/cleanup afterward, so result["success"] was False and this
+    # used to short-circuit straight to a failure response without ever
+    # looking at what the robot actually accomplished. Now the marker is
+    # checked first, using whatever output was captured (full output on a
+    # normal failure, partial output on a timeout -- see _run_rf_script) --
+    # only falls through to a failure if no success marker is present
+    # either way.
+    status_val = _extract_marked_value(result.get("output") or "", "GATEIN_UPDATE_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
+
+    if not result["success"]:
+        # FIX (2026-08-11): this used to pass result["error"] straight
+        # through, which for a timeout/exit-code failure is a raw technical
+        # string containing the server's internal log file path (see
+        # _run_rf_script's "RF script failed (exit code N). Logs: <path>" /
+        # "timed out after Ns" messages) -- shown as-is in the History
+        # page's Pending PO Updates panel and in an alert(). Replaced with a
+        # clean, non-technical message; the raw detail is still in the
+        # server log (logger.error already captured it) for anyone who
+        # needs to dig in.
+        return {
+            "success": False,
+            "error": (
+                "PO update did not complete — the SAP automation didn't "
+                "finish in time or hit an error. You can retry from the "
+                "Pending PO Updates panel; if it keeps failing, check SAP "
+                "manually (TCODE: zgatein_update) before retrying again."
+            )
+        }
 
     return {
         "success": False,
         "error": (
-            "zgatein_update robot ran but did not confirm success. "
-            f"Check robot log: {result.get('output_dir')}"
+            "PO update ran but SAP did not confirm success. Check SAP "
+            "manually (TCODE: zgatein_update) before retrying."
         )
     }
 

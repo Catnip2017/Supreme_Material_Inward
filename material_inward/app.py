@@ -78,7 +78,7 @@ from database.admin_operations import (
     find_records_for_admin, get_admin_action_log,
     delete_history_record, reset_gate_in_step,
     reset_migo_103_step, reset_migo_105_step, reset_miro_step,
-    revert_extracted_data_approval, revert_gst_approval
+    revert_extracted_data_approval, revert_gst_approval, revert_approval
 )
 from services.extract import process_document
 from services.rf_queue_worker import start_worker
@@ -1041,6 +1041,25 @@ def api_admin_revert_gst_approval(history_id):
     return _record_admin_action(revert_gst_approval, history_id)
 
 
+@app.route("/api/admin/records/<int:history_id>/revert_approval", methods=["POST"])
+@api_login_required
+def api_admin_revert_approval(history_id):
+    # FIX (2026-08-11): combined Extracted Data + GST approval revert into
+    # one action -- see admin_operations.revert_approval's docstring.
+    return _record_admin_action(revert_approval, history_id)
+
+
+@app.route("/api/admin/records/action_log")
+@api_login_required
+def api_admin_action_log():
+    # FIX (2026-08-11): lets admin_records.html refresh the "Recent actions"
+    # table in place after a bulk apply instead of doing a full
+    # window.location.reload() -- see admin_records.html's runBulkActions().
+    if not _has_role("record_admin"):
+        return jsonify({"success": False, "error": "Permission denied."}), 403
+    return jsonify({"success": True, "actions": get_admin_action_log(limit=50)})
+
+
 # ============================================================
 # QUEUE STATUS POLLING
 # ============================================================
@@ -1350,10 +1369,37 @@ def api_rerun_ocr(history_id):
         doc_type = _detect_doc_type(filename)
         if not doc_type:
             continue
+
+        # FIX (2026-08-10): this used to run OCR directly against file_path
+        # (inside failed_path -- folder_watcher's own separate failed/ tree,
+        # e.g. G:\Material_inward\failed\<group>_<timestamp>\) and save
+        # extracted["filename"] = filename without ever copying the PDF into
+        # config.UPLOAD_FOLDER. view_document/download_document/
+        # get_document_thumbnail (this file) all locate files via
+        # _find_file(), which only searches UPLOAD_FOLDER/
+        # UPLOAD_PROCESSED_FOLDER/UPLOAD_FAILED_FOLDER (config.UPLOAD_FOLDER's
+        # own subtree) -- never folder_watcher's WATCH_FOLDER/FAILED_FOLDER
+        # tree. So a re-run's OCR data saved to the DB fine (filename was
+        # non-empty), but the file itself was never findable -- the
+        # Documents tab card rendered (filename check passed) with a broken
+        # preview and a 404 on View/Download. Mirrors the exact
+        # copy-then-process pattern folder_watcher.py's _process_batch()
+        # already uses for the normal auto-intake path (same
+        # f"h{history_id}_{filename}" naming) so a re-run's file ends up
+        # discoverable the same way a first-pass file is.
+        safe_name = f"h{history_id}_{filename}"
+        upload_dest = os.path.join(config.UPLOAD_FOLDER, safe_name)
         try:
-            extracted = process_document(doc_type, file_path, filename)
+            os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+            shutil.copy2(file_path, upload_dest)
+        except Exception as copy_err:
+            logger.error(f"Re-run OCR: failed to copy {filename} into UPLOAD_FOLDER: {copy_err}")
+            continue
+
+        try:
+            extracted = process_document(doc_type, upload_dest, safe_name)
             if extracted:
-                extracted["filename"] = filename
+                extracted["filename"] = safe_name
                 if doc_type == "invoice":
                     save_invoice_to_db(history_id, extracted)
                     invoice_succeeded = True
@@ -1897,7 +1943,10 @@ def vendor_lookup():
     if not query:
         return jsonify({"success": False, "error": "name required"}), 400
     try:
-        candidates = search_suppliers(query, limit=10)
+        # FIX: this override was hardcoding 10 regardless of
+        # search_suppliers' own default -- raised alongside that default,
+        # see the comment above search_suppliers() for why.
+        candidates = search_suppliers(query, limit=100)
         return jsonify({"success": True, "candidates": candidates, "count": len(candidates)})
     except Exception as e:
         logger.error(f"vendor_lookup error name={query}: {e}", exc_info=True)
@@ -2372,6 +2421,95 @@ def api_dms_upload_retry(history_id):
     job_id = enqueue_rf_job(history_id, "dms_upload", {"history_id": history_id})
     if not job_id:
         return jsonify({"success": False, "error": "A DMS upload is already queued or running for this record."}), 409
+    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+
+
+@app.route("/api/dms/sync_link/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_dms_sync_link(history_id):
+    """
+    FIX: closes a real contradiction seen on the Documents tab -- a record
+    can have history.dms_status == 'uploaded' (the upload robot posted
+    successfully) while dms_document_links has no row for it yet, because
+    the link-import step (services/dms_links_import.py) runs as its own
+    pass right after the upload and can miss a row (unmatched filename,
+    a transient error, etc. -- see that module's own imported/unmatched/
+    errors counters). Previously the Documents tab had no way to tell
+    these two states apart: it showed "not yet uploaded" + a Retry Upload
+    button purely because dms_document_link was missing, but clicking that
+    button hit this exact route's sibling above, which correctly refuses
+    because dms_status really does already say 'uploaded' -- so the user
+    saw "not uploaded, click here" immediately followed by "already
+    uploaded" on the same click. Re-uploading was never the right fix for
+    this state anyway (the file's already in Contentverse; doing it again
+    risks a duplicate) -- the actual fix is re-running the link import,
+    which is safe to repeat any time (upsert keyed on filename, see that
+    module's own docstring) and doesn't touch SAP, Contentverse, or the
+    upload robot at all, just re-reads the links Excel file.
+    """
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    from services.dms_links_import import run_dms_links_import
+    try:
+        summary = run_dms_links_import()
+    except Exception as e:
+        logger.error(f"DMS link sync failed for history_id={history_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": f"Link sync failed: {e}"}), 500
+
+    link = get_dms_document_link(history_id)
+    if link:
+        return jsonify({"success": True, "document_link": link, "summary": summary})
+    return jsonify({
+        "success": False,
+        "error": (
+            "Link sync ran but this record's document still wasn't found in "
+            "the DMS links file. It may not have been exported by Contentverse "
+            "yet, or the filename didn't match — check with DMS/IT if this "
+            "persists."
+        ),
+        "summary": summary
+    }), 404
+
+
+@app.route("/api/dms/regen_link/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_dms_regen_link(history_id):
+    """
+    Runs dms_upload.robot's "Generate Link For Single Document" test case
+    for this one record -- the next step after Sync Link (above) has
+    already run and genuinely found nothing, meaning the link-generation
+    step itself never wrote a row for this file the first time (not just
+    that the DB import hadn't caught up). Read-only from Contentverse's
+    side: it doesn't re-upload, re-index, or move anything, it just
+    re-fetches a share link for a document that's already there.
+
+    Queued through the normal RF job queue (same robot_lock the batch
+    upload uses, via services/dms_upload_runner.py's run_dms_link_regen)
+    so it can't collide with SAP jobs or a batch upload running at the
+    same time.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    doc_path = history.get("consolidated_doc_path") or ""
+    if not doc_path:
+        return jsonify({
+            "success": False,
+            "error": "No consolidated document on file for this record — nothing to regenerate a link for."
+        }), 400
+
+    target_file_name = os.path.splitext(os.path.basename(doc_path))[0]
+
+    job_id = enqueue_rf_job(history_id, "dms_link_regen", {"target_file_name": target_file_name})
+    if not job_id:
+        return jsonify({"success": False, "error": "A link regeneration is already queued or running for this record."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
 
