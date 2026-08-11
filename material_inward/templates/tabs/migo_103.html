@@ -3,12 +3,6 @@
 .field-error { border-color:#e74c3c !important; }
 .field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
 .field-error-msg.show { display:block; }
-/* FIX (2026-08-07): PO Number short-value warning -- own class/element,
-   separate from .field-error/err_migoPoNumber (the Required-field check),
-   so it doesn't get wiped out by that check's own clear-on-validate logic. */
-.field-expired { border-color:#e74c3c !important; background:#fee; }
-.field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
-.field-error-msg-inline.show { display:block; }
 
 .gate-banner {
   background:#fff3cd; border:1px solid #ffc107;
@@ -220,16 +214,19 @@
 {% set po_flow_type = (history.po_flow_type if history else 'truck_with_po') or 'truck_with_po' %}
 {% set po_fetch_ok = po_data and po_data|length > 0 %}
 {# FIX: this button used to only ever show for without_po flows (where PO
-   fetch is manual by design -- no PO existed at intake). with_po flows
-   auto-enqueue po_fetch right after Gate In (see rf_queue_worker.py), but
-   had no way to retry it from here if that auto-run failed -- the user was
-   stuck re-typing PO lines by hand or using "Add Without PO Match". Now
-   also shown for with_po whenever po_data is still empty (fetch never
-   ran, or ran and failed); it disappears again once po_data is populated,
-   same as before. Reuses the exact same button/JS/route -- no with_po-
-   specific branching needed anywhere else, since /api/run_po_fetch and
+   fetch is manual by design -- no PO existed at intake), then was widened
+   to also show for with_po whenever po_data was still empty -- but that
+   meant it disappeared again the moment a fetch succeeded, even on older
+   already-fetched entries. Client feedback: users need to be able to
+   retry the fetch even after it succeeded, in case they spot missing
+   rows (e.g. a PO line SAP shows but this app didn't scrape, or fields
+   added in a later po_fetch.robot version -- see the "older records will
+   still show blank" note on the PO table's unit column above). So the
+   button is now unconditional -- always shown regardless of po_fetch_ok.
+   Reuses the exact same button/JS/route -- no with_po-specific branching
+   needed anywhere else, since /api/run_po_fetch and
    fetchMigo103PoItems() were already fully generic. #}
-{% set show_manual_po_fetch = ('without_po' in po_flow_type) or (not po_fetch_ok) %}
+{% set show_manual_po_fetch = True %}
 {% if not gate_in_done %}
 <div class="gate-banner">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 103.</div>
 {% else %}
@@ -268,12 +265,7 @@
                   that guard-confirmed value now, so a Compliance mistake
                   the guard already caught and fixed at Gate In shows up
                   correctly here instead of the stale OCR figure. #}
-               {# FIX (2026-08-07): cap at 10 chars -- maxlength alone only
-                  blocks future typing, it doesn't trim a pre-filled value
-                  attribute, so an over-length upstream value would have
-                  rendered here untouched. Matches gate_in.html's purchaseOrder
-                  field, which already does this. #}
-               value="{{ ((gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '')|truncate(10, True, '', 0) }}"
+               value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
                >
         {% if show_manual_po_fetch %}
         {% set fetch_po_label = '📋 Fetch PO Items' if 'without_po' in po_flow_type else '🔄 Retry PO Fetch' %}
@@ -289,7 +281,6 @@
         {% endif %}
       </div>
       <div class="field-error-msg" id="err_migoPoNumber">Required</div>
-      <div class="field-error-msg-inline" id="err_migoPoNumber_short"></div>
     </div>
     <div class="form-group">
       <label>Document Date <span class="req">*</span></label>
@@ -1485,47 +1476,6 @@ function _collectMigoItems() {
   return items;
 }
 
-// FIX (2026-08-07): PO Number is expected to be 10 digits (client
-// requested visual flag only, never blocks Post) -- same pattern as
-// extracted_data.html's _checkPoNumberLength() / gate_in.html's
-// _checkPoNumberShort(). Own class/element, not field-error/err_migoPoNumber
-// (those belong to the Required-field check in validateMigo103() below).
-// FIX (2026-08-07): added the prefix check alongside the existing length
-// check -- a valid PO number is not just "10 digits", it must start with
-// 41/43/44/45/46/47/49 specifically.
-const PO_VALID_PREFIXES = ['41', '43', '44', '45', '46', '47', '49'];
-function _checkMigoPoNumberShort() {
-  const el = document.getElementById('migoPoNumber');
-  const err = document.getElementById('err_migoPoNumber_short');
-  if (!el) return;
-  const val = el.value.trim();
-  let msg = '';
-  if (val) {
-    const badLength = val.length < 10;
-    const prefix = val.slice(0, 2);
-    const badPrefix = !PO_VALID_PREFIXES.includes(prefix);
-    if (badLength && badPrefix) {
-      msg = `PO number is ${val.length} digit(s) and starts with "${prefix}" -- expected 10 digits starting with 41/43/44/45/46/47/49.`;
-    } else if (badLength) {
-      msg = `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.`;
-    } else if (badPrefix) {
-      msg = `PO number starts with "${prefix}" -- expected one of 41/43/44/45/46/47/49.`;
-    }
-  }
-  el.classList.toggle('field-expired', !!msg);
-  if (err) {
-    err.textContent = msg;
-    err.classList.toggle('show', !!msg);
-  }
-}
-(function () {
-  const el = document.getElementById('migoPoNumber');
-  if (el) {
-    el.addEventListener('input', _checkMigoPoNumberShort);
-    _checkMigoPoNumberShort();
-  }
-})();
-
 function validateMigo103() {
   let valid = true;
   const fields = [
@@ -1681,8 +1631,20 @@ function _pollMigo103PoFetch() {
           // Re-read the same hidden field instead.
           const historyId = parseInt(document.getElementById('history_id_migo').value);
           if (items.length > 0) {
-            _showMigo103PoStatus('✓ Loaded ' + items.length + ' PO line(s) — refresh the table below.', 'success');
-            _reloadPoItemsTable(historyId);
+            // FIX (2026-08-10): this used to call _reloadPoItemsTable(historyId),
+            // which fetched a '/api/po_items/<id>' endpoint that doesn't exist
+            // anywhere in app.py and then called window.reloadTab('migo_103'),
+            // a function that doesn't exist anywhere either. Both calls failed
+            // silently (swallowed by an empty .catch), so the retry job would
+            // complete and save_po_line_items() would correctly update the DB,
+            // but the on-screen PO Items table never picked it up -- only a
+            // manual full page refresh showed the new data. Replaced with the
+            // same reload pattern gate_in.html/migo_105.html/miro.html already
+            // use successfully: reloadToFreshData() (main.js) does a real
+            // sessionStorage + window.location.reload(), which re-renders this
+            // tab server-side from the now-updated DB.
+            _showMigo103PoStatus('✓ Loaded ' + items.length + ' PO line(s) — reloading...', 'success');
+            reloadToFreshData('migo103', 1200);
           } else {
             _showMigo103PoStatus('⚠ PO fetched but no open line items found.', 'info');
           }
@@ -1722,20 +1684,11 @@ function _showMigo103PoStatus(msg, type) {
   el.textContent      = msg;
 }
 
-function _reloadPoItemsTable(historyId) {
-  fetch('/api/po_items/' + historyId)
-    .then(r => r.json())
-    .then(data => {
-      if (data.success && data.items && data.items.length > 0) {
-        // Trigger the existing page reload so the PO items table refreshes
-        // The migo_103 tab uses the po_data variable rendered server-side,
-        // so a tab reload is the cleanest approach.
-        if (typeof window.reloadTab === 'function') {
-          window.reloadTab('migo_103');
-        }
-      }
-    })
-    .catch(function() {});
-}
+// FIX (2026-08-10): _reloadPoItemsTable() removed -- it called a
+// '/api/po_items/<id>' endpoint that was never defined in app.py and a
+// 'window.reloadTab' function that was never defined anywhere, so it
+// always silently no-opped (see the comment at its former call site
+// above). Replaced by a direct reloadToFreshData('migo103', ...) call,
+// the same working pattern gate_in.html/migo_105.html/miro.html use.
 {% endif %}
 </script>

@@ -86,6 +86,10 @@ def consolidate_documents(
     Returns:
         Absolute path of the merged PDF, or None on failure.
     """
+    # DMS_STAGING_FOLDER is always set now (derived from APP_ROOT in
+    # config.py, follows IS_PRODUCTION) -- getattr fallback kept only as a
+    # defensive no-op in case this is ever called against a stale config
+    # module.
     staging_folder = getattr(config, "DMS_STAGING_FOLDER",
                              r"C:\material_inward\dms_staging")
     os.makedirs(staging_folder, exist_ok=True)

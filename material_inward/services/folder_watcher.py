@@ -122,7 +122,7 @@ GROUPED_FOLDER   = os.path.join(WATCH_FOLDER, "grouped")
 OCR_DONE_FOLDER  = os.path.join(os.path.dirname(WATCH_FOLDER), "ocr_done")
 FAILED_FOLDER    = os.path.join(os.path.dirname(WATCH_FOLDER), "failed")
 
-STABLE_SECONDS = 90      # File must be unmodified this long before being touched -- bumped from 40s to 70s (2026-08-05, client request), then 70s to 90s (2026-08-07, client request) for still more breathing room between documents being scanned/renamed one at a time; still comfortably above POLL_INTERVAL below, so a stable file is always caught within one extra poll cycle at worst.
+STABLE_SECONDS = 100     # File must be unmodified this long before being touched -- bumped from 40s to 70s (2026-08-05, client request), then 70s to 100s (2026-08-10, client request) -- users were still missing the 3-file window: the 3rd file (often LR) sometimes lands more than 70s after the first two, so GROUP_GRACE_SECONDS (same value, aliased below) treated the group as final/partial and processed it before the LR arrived -- see folder_watcher's "OCR returned no data"/partial-group log lines for 5042700104 on 2026-08-10 as a concrete example. Still comfortably above POLL_INTERVAL below, so a stable file is always caught within one extra poll cycle at worst.
 ORPHAN_DAYS    = 60      #Must match DB_RETENTION_DAYS in app.py cleanup
 POLL_INTERVAL  = 30      # Watcher cycle interval
 

@@ -275,7 +275,7 @@
         </div>
         <div class="filter-group">
             <label>Status</label>
-            <select class="filter-select" id="statusFilter" onchange="loadHistory()">
+            <select class="filter-select" id="statusFilter" onchange="loadHistory(1)">
                 <option value="">All Status</option>
                 <option value="pending">Pending</option>
                 <option value="data_approved">Data Approved</option>
@@ -290,8 +290,8 @@
         <div class="filter-group">
             <label>Date &amp; Time Range</label>
             <div class="filter-date-row">
-                <input type="datetime-local" class="filter-input" id="dateFrom" onchange="loadHistory()">
-                <input type="datetime-local" class="filter-input" id="dateTo" onchange="loadHistory()">
+                <input type="datetime-local" class="filter-input" id="dateFrom" onchange="loadHistory(1)">
+                <input type="datetime-local" class="filter-input" id="dateTo" onchange="loadHistory(1)">
             </div>
         </div>
         <div class="filter-group">
@@ -329,6 +329,15 @@
 let currentPage = 1;
 let searchTimer = null;
 
+// FIX (2026-08-10): statusFilter/dateFrom/dateTo's onchange handlers used to
+// call plain loadHistory() -- unlike debounceSearch() below, which always
+// resets currentPage to 1 first. So applying a status or date filter while
+// sitting on page 2+ of the unfiltered list kept requesting that same page
+// number against the new, smaller filtered result set -- if the filtered
+// set didn't have that many pages, the API correctly returned zero rows for
+// a page that no longer exists, which just looked like "the date filter
+// doesn't work" (table goes empty) even though matching records existed on
+// page 1. Now passes 1 explicitly, same as debounceSearch()/clearFilters().
 function debounceSearch() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { currentPage = 1; loadHistory(); }, 300);

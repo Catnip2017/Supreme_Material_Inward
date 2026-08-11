@@ -329,7 +329,8 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             company_pan, payment_terms, amount_in_words,
             total_taxable_amount, cgst_rate, cgst_amount,
             sgst_rate, sgst_amount, igst_rate, igst_amount,
-            total_tax_amount, total_amount, grand_total, hsn_details, irn
+            total_tax_amount, total_amount, grand_total, hsn_details, irn,
+            outbound_delivery_number
         ) VALUES (
             %s, %s, %s, %s, %s,
             %s, %s, %s,
@@ -339,7 +340,8 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             %s, %s, %s,
             %s, %s, %s,
             %s, %s, %s, %s,
-            %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s,
+            %s
         )
         ON CONFLICT (id) DO UPDATE SET
             -- FIX: saveExtractedInvoice()'s payload (templates/tabs/
@@ -383,6 +385,7 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
             grand_total = EXCLUDED.grand_total,
             hsn_details = EXCLUDED.hsn_details,
             irn = EXCLUDED.irn,
+            outbound_delivery_number = EXCLUDED.outbound_delivery_number,
             updated_at = CURRENT_TIMESTAMP
     """
     values = (
@@ -396,7 +399,8 @@ def save_invoice_to_db(history_id: int, data: dict) -> bool:
         data.get("total_taxable_amount"), data.get("cgst_rate"), data.get("cgst_amount"),
         data.get("sgst_rate"), data.get("sgst_amount"), data.get("igst_rate"), data.get("igst_amount"),
         data.get("total_tax_amount"), data.get("total_amount"), data.get("grand_total"), hsn,
-        data.get("irn")
+        data.get("irn"),
+        data.get("outbound_delivery_number")
     )
     # "irn" is now a regular Invoice-tab field like any other -- editable on
     # Extracted Data > Invoice, included in this row's INSERT and its
@@ -580,26 +584,19 @@ def get_history_search(
         params.extend([like, like, like, like, like, like, like])
 
     if status == "pending":
-        # FIX (2026-08-07): this used to be just "h.gate_in = 0", which
-        # doesn't actually match what the status CASE below (or the badge
-        # it drives) calls "Pending" -- a record with gate_in=0 but
-        # approval_status='approved' is labeled 'Data Approved' or 'GST
-        # Approved' by that CASE, never 'Pending'. So picking "Pending" in
-        # the dropdown was pulling in every Data Approved / GST Approved
-        # record too (anything not yet gated in), most of which visibly
-        # show a different badge than "Pending" right there in the same
-        # row -- which is what made the filter look broken/not working.
-        # Narrowed to match the CASE's actual ELSE 'Pending' condition
-        # exactly: gate_in=0 AND not yet data-approved (gst_check doesn't
-        # need checking separately here -- the CASE only ever reaches
-        # 'GST Approved' when approval_status is ALSO 'approved', so
-        # excluding approval_status='approved' already excludes both).
-        conditions.append("h.gate_in = 0 AND COALESCE(h.approval_status, '') != 'approved'")
-    # v20: two new granular buckets slotted into the existing "pending"
-    # bucket (Extracted Data approval and GST check both happen before
-    # Gate In -- see the status CASE below for the exact same conditions
-    # used for the badge). These are additive, more specific filters a
-    # user can pick instead of the broader (now correctly-scoped) Pending.
+        # FIX: was just "h.gate_in = 0" -- left broad on purpose back when
+        # data_approved/gst_approved were added (see the v20 note this
+        # replaces), but that means it overlapped with those two: a record
+        # that's already Data Approved or GST Approved (just not yet gated
+        # in) still matched "Pending" too, so picking that filter showed
+        # other statuses mixed in. The status badge's CASE below already
+        # defines "Pending" narrowly as none-of-the-above (its ELSE
+        # branch) -- this now matches that exact definition instead of a
+        # broader one, so the filter and the badge agree.
+        conditions.append(
+            "h.gate_in = 0 AND COALESCE(h.approval_status, '') != 'approved' "
+            "AND COALESCE(h.gst_check, 0) = 0"
+        )
     elif status == "data_approved":
         conditions.append("h.approval_status = 'approved' AND COALESCE(h.gst_check, 0) = 0")
     elif status == "gst_approved":

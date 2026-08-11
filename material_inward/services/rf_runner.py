@@ -187,18 +187,8 @@ def _run_rf_script(
         "--nostatusrc",
     ]
     for key, value in variables.items():
-        # FIX (2026-08-07): removed .replace(":", "\\:") colon-escaping.
-        # Robot Framework's --variable NAME:VALUE only splits on the FIRST
-        # colon, so a colon anywhere inside the value is already safe as-is
-        # -- no escaping needed. The old escaping was based on a wrong
-        # assumption and was actively corrupting data: RF does NOT unescape
-        # "\:" back to ":", so the literal backslash survived all the way
-        # into SAP (confirmed live: a Material value containing "SIZE:-10"
-        # was typed into SAP as "SIZE\:-10"). This affected every field, in
-        # every robot script, any time its value contained a colon --
-        # verified against robotframework==7.0.1 (the pinned production
-        # version) with multi-colon, leading-colon, and HH:MM-style values.
-        cmd += ["--variable", f"{key}:{value}"]
+        safe_value = str(value).replace(":", "\\:")
+        cmd += ["--variable", f"{key}:{safe_value}"]
     cmd.append(script_path)
 
     logger.info(f"Running RF: {script_name} | Variables: {list(variables.keys())}")
@@ -694,7 +684,7 @@ def execute_po_fetch_sap(data: dict) -> dict:
     # credential_cache.py) intentionally never reaches this bot. See the
     # SAP_USERNAME/SAP_PASSWORD comment block in .env for the full picture.
     variables = {"PO_NUMBER": po_number}
-    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=120)
+    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=600)
     if not result["success"]:
         return {"success": False, "error": result["error"], "po_items": []}
 

@@ -189,13 +189,16 @@ To create plant users: log in as Admin → User Management → Add User → sele
 
 ## Phase Rollout
 
-Control which workflow tabs are visible via `ENABLED_STEPS` in `.env`:
+Control which workflow tabs are visible via `ENABLED_STEPS` in `.env`. The
+code checks each step individually using the granular names `migo_103` /
+`migo_105` (not a plain `migo`) — use the exact names below or the MIGO
+tabs will silently stay disabled:
 
 | Phase | Setting | Visible Tabs |
 |-------|---------|--------------|
 | Phase 1 | `ENABLED_STEPS=gate_in` | Gate In only |
-| Phase 2 | `ENABLED_STEPS=gate_in,migo` | Gate In + MIGO |
-| Full | `ENABLED_STEPS=gate_in,migo,miro,gst` | All tabs |
+| Phase 2 | `ENABLED_STEPS=gate_in,migo_103,migo_105` | Gate In + MIGO |
+| Full | `ENABLED_STEPS=gate_in,migo_103,migo_105,miro,gst` | All tabs |
 
 Restart the app after changing this value.
 

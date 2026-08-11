@@ -62,11 +62,13 @@ if not exist ".env" (
         echo.
         echo ============================================================
         echo  ACTION REQUIRED: Open .env in a text editor and fill in:
+        echo  - IS_PRODUCTION (true/false) and PROD_APP_ROOT / DEV_APP_ROOT
+        echo    -- required, config.py builds paths from these
         echo  - DB_PASSWORD
         echo  - FLASK_SECRET_KEY (run: python -c "import secrets; print(secrets.token_hex(32))")
         echo  - JWT_SECRET_KEY   (run same command again)
         echo  - SAP_PASSWORD
-        echo  - EMAIL_PASSWORD / IMAP_PASSWORD
+        echo  - PROD_EMAIL_PASSWORD / PROD_IMAP_PASSWORD (and DEV_ equivalents if used)
         echo  - WATSONX_API_KEY and WATSONX_PROJECT_ID
         echo  - ALLOWED_ORIGIN (production URL)
         echo ============================================================
@@ -123,7 +125,13 @@ for /f "tokens=1,* delims==" %%a in (.env) do (
     if "%%a"=="DB_NAME"     set DB_NAME=%%b
     if "%%a"=="DB_HOST"     set DB_HOST=%%b
     if "%%a"=="DB_PORT"     set DB_PORT=%%b
+    if "%%a"=="SERVER_PORT" set APP_SERVER_PORT=%%b
 )
+:: FIX: the completion banner below used to hardcode "5000" regardless of
+:: what SERVER_PORT was actually set to in .env -- wrong for any install
+:: that (like this one) runs on a different port. Falls back to 5000 only
+:: if .env doesn't set SERVER_PORT at all.
+if "%APP_SERVER_PORT%"=="" set APP_SERVER_PORT=5000
 
 :: Create user and database
 psql -U postgres -h localhost -c "CREATE USER %DB_USER% WITH PASSWORD '%DB_PASSWORD%';" 2>nul
@@ -186,7 +194,7 @@ echo ============================================================
 echo  SETUP COMPLETE
 echo ============================================================
 echo.
-echo  Application URL:    http://localhost:5000
+echo  Application URL:    http://localhost:%APP_SERVER_PORT%
 echo  Default Admin:      admin@catnip.com
 echo  Default Password:   Admin@123
 echo.

@@ -18,7 +18,16 @@ import sys
 import os
 from openpyxl import Workbook, load_workbook
 
-DEFAULT_EXCEL_PATH = r"C:\material_inward\dms_staging\document_links.xlsx"
+# Make the project root importable regardless of cwd (this script is run
+# as a standalone subprocess by dms_upload.robot via `Run Process`), so the
+# fallback below can reuse config.py's own IS_PRODUCTION-aware path instead
+# of a second hardcoded literal that could drift out of sync with it.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from config.config import config
+    DEFAULT_EXCEL_PATH = config.DMS_LINKS_EXCEL_PATH
+except Exception:
+    DEFAULT_EXCEL_PATH = r"C:\material_inward\dms_staging\document_links.xlsx"
 
 
 def main():

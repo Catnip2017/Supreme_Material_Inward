@@ -11,9 +11,9 @@ Library           Process
 Library           OperatingSystem
 Library           String
 Library           Collections
-Library    sap_helpers.py
+Library           sap_helpers.py
 *** Variables ***
-${PO_NUMBER}     ${EMPTY}
+${PO_NUMBER}      ${EMPTY}
 ${ITEM_COMBO}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB1:SAPLMEGUI:6000/cmbDYN_6000-LIST
 # ============================================================
 # CONFIRMED PATHS FROM GUI RECORDING
@@ -51,6 +51,13 @@ ${OPEN_QTY_TABLE}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/
 ${F_OPENQTY}          txtMEPO1320-OBMNG
 ${COL_OPENQTY}        10
 ${BTN_NEXT_ITEM_OQ}    wnd[0]/usr/subSUB0:SAPLMEGUI:0015/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB1:SAPLMEGUI:6000/btn%#AUTOTEXT002
+# India tab presence-check path (captured AFTER Delivery/open-qty tab visit —
+# screen number differs from the pre-open-qty INDIA_TAB path: 0019 vs 0015)
+${INDIA_TAB_CHECK}    wnd[0]/usr/subSUB0:SAPLMEGUI:0019/subSUB3:SAPLMEVIEWS:1100/subSUB2:SAPLMEVIEWS:1200/subSUB1:SAPLMEGUI:1301/subSUB2:SAPLMEGUI:1303/tabsITEM_DETAIL/tabpTABIDT13
+# Item number column — used to detect blank rows (Material can be
+# empty for service/non-stock lines, but Itm is always populated)
+${F_ITEM}      txtMEPO1211-EBELP
+${COL_ITEM}    1
  
 *** Test Cases ***
 Execute PO Fetch
@@ -99,14 +106,24 @@ Initialize SAP And Login
     Sleep    3s
     ${multi}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
     IF    ${multi}
-        Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
-        Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
-        Sleep    2s
+       Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
+       Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
+       Sleep    2s
     END
  
-    Sleep    5s
+    #Sleep    5s
     Dismiss Any Popup
     Maximize Window    0
+ 
+Dump Screen Elements
+    [Documentation]    Diagnostic only — logs the technical IDs of all elements
+    ...    on the current SAP screen so we can find the correct paths for
+    ...    this PO/document type. Run this once against PO 4700000699 with
+    ...    the Conditions/Delivery tab open, then remove or comment out.
+    ${session_info}=    Evaluate
+    ...    __import__('subprocess').run(['echo'], shell=True)
+    ${dump}=    Run Keyword And Ignore Error    Get Session Info
+    Log To Console    SESSION INFO: ${dump}
  
  
 Fetch PO Line Items
@@ -128,49 +145,76 @@ Fetch PO Line Items
     # --------------------------------------------------------
     @{items}=    Create List
     ${row_idx}=    Set Variable    0
+    ${scroll_pos}=    Set Variable    0
+    ${visible_rows}=    Set Variable    5
  
     WHILE    True
-        # Build full element paths as strings first — avoids RF interpreting [col,row] as list index
-        ${mat_path}=    Set Variable    ${TABLE}/${F_MATERIAL}\[${COL_MATERIAL},${row_idx}\]
-        ${txt_path}=    Set Variable    ${TABLE}/${F_SHORTTEXT}\[${COL_SHORTTEXT},${row_idx}\]
-        ${qty_path}=    Set Variable    ${TABLE}/${F_QUANTITY}\[${COL_QUANTITY},${row_idx}\]
-        ${price_path}=  Set Variable    ${TABLE}/${F_NETPRICE}\[${COL_NETPRICE},${row_idx}\]
-        ${uom_path}=    Set Variable    ${TABLE}/${F_UOM}\[${COL_UOM},${row_idx}\]
+        ${row_in_view}=    Evaluate    ${row_idx} - ${scroll_pos}
+        IF    ${row_in_view} >= ${visible_rows}
+            ${scroll_pos}=    Set Variable    ${row_idx}
+            ${scroll_res}=    Run Keyword And Ignore Error    Scroll Table Via Vbs    ${TABLE}    ${scroll_pos}
+            Log To Console    Scroll to row ${scroll_pos}: ${scroll_res}[0]
+            Sleep    0.5s
+        END
+        ${grid_row}=    Evaluate    ${row_idx} - ${scroll_pos}
  
-        # Try to read material — FAIL means no more rows
+        ${item_path}=   Set Variable    ${TABLE}/${F_ITEM}\[${COL_ITEM},${grid_row}\]
+        ${mat_path}=    Set Variable    ${TABLE}/${F_MATERIAL}\[${COL_MATERIAL},${grid_row}\]
+        ${txt_path}=    Set Variable    ${TABLE}/${F_SHORTTEXT}\[${COL_SHORTTEXT},${grid_row}\]
+        ${qty_path}=    Set Variable    ${TABLE}/${F_QUANTITY}\[${COL_QUANTITY},${grid_row}\]
+        ${price_path}=  Set Variable    ${TABLE}/${F_NETPRICE}\[${COL_NETPRICE},${grid_row}\]
+        ${uom_path}=    Set Variable    ${TABLE}/${F_UOM}\[${COL_UOM},${grid_row}\]
+ 
+        # Use the Itm column to decide whether this row is real — Material
+        # can be blank for service/non-stock lines (e.g. AMC/ARC POs), but
+        # Itm is always populated when the row exists.
+        ${item_res}=    Run Keyword And Ignore Error    Get Value    ${item_path}
+ 
+        IF    '${item_res}[0]' == 'FAIL'    BREAK
+ 
+        ${item_no_raw}=    Clean SAP Value    ${item_res}[1]
+ 
+        IF    '${item_no_raw}' == ''
+            Log To Console    Row ${row_idx} is blank (Itm empty) — end of items, stopping scan
+            BREAK
+        END
+ 
         ${mat_res}=    Run Keyword And Ignore Error    Get Value    ${mat_path}
- 
-        IF    '${mat_res}[0]' == 'FAIL'    BREAK
- 
-        ${material}=    Clean SAP Value    ${mat_res}[1]
- 
-        # Skip blank rows
-        IF    '${material}' == ''
-            ${row_idx}=    Evaluate    ${row_idx} + 1
-            IF    ${row_idx} > 100    BREAK
-            CONTINUE
+        IF    '${mat_res}[0]' == 'PASS'
+            ${material}=    Clean SAP Value    ${mat_res}[1]
+        ELSE
+            ${material}=    Set Variable    None
         END
  
         ${txt_res}=      Run Keyword And Ignore Error    Get Value    ${txt_path}
-        ${short_text}=   Clean SAP Value    ${txt_res}[1]
+        IF    '${txt_res}[0]' == 'PASS'
+            ${short_text}=    Clean SAP Value    ${txt_res}[1]
+        ELSE
+            ${short_text}=    Set Variable    None
+        END
  
         ${qty_res}=      Run Keyword And Ignore Error    Get Value    ${qty_path}
-        ${qty_raw}=      Clean SAP Value    ${qty_res}[1]
+        IF    '${qty_res}[0]' == 'PASS'
+            ${qty_raw}=    Clean SAP Value    ${qty_res}[1]
+        ELSE
+            ${qty_raw}=    Set Variable    None
+        END
  
         ${price_res}=    Run Keyword And Ignore Error    Get Value    ${price_path}
-        ${price_raw}=    Clean SAP Value    ${price_res}[1]
+        IF    '${price_res}[0]' == 'PASS'
+            ${price_raw}=    Clean SAP Value    ${price_res}[1]
+        ELSE
+            ${price_raw}=    Set Variable    None
+        END
  
         ${uom_res}=      Run Keyword And Ignore Error    Get Value    ${uom_path}
-        ${uom_raw}=      Clean SAP Value    ${uom_res}[1]
+        IF    '${uom_res}[0]' == 'PASS'
+            ${uom_raw}=    Clean SAP Value    ${uom_res}[1]
+        ELSE
+            ${uom_raw}=    Set Variable    None
+        END
  
- 
-        # Diagnostic: log every value read for this row, per field, before
-        # it goes anywhere else -- makes it obvious in the console/log
-        # whether SAP actually returned something for material/qty (vs.
-        # them arriving blank at the SAP-read step itself) versus getting
-        # lost further down the pipeline (rf_runner parsing, DB save, etc).
         Log To Console    Row ${row_idx} READ: material="${material}" short_text="${short_text}" qty="${qty_raw}" net_price="${price_raw}"
-        #qty="${qty_raw}"
  
         &{row_data}=    Create Dictionary
         ...    material=${material}
@@ -192,68 +236,54 @@ Fetch PO Line Items
     END
  
     # --------------------------------------------------------
-    # STEP 2: Read HSN/SAC from India tab per item
-    # Click India tab once, then use down arrow for each next item
+    # Check India tab AFTER grid items are read. If absent,
+    # store table/item data only — no HSN/open-qty extraction.
     # --------------------------------------------------------
-    Run Keyword And Ignore Error    Click Element    ${INDIA_TAB}
-    Sleep    2s
+   
  
-    # @{hsn_list}=    Create List
- 
-    #     FOR    ${i}    IN RANGE    ${total_rows}
- 
-    #         # Always ensure India tab is active before reading
-    #         Run Keyword And Ignore Error    Click Element    ${INDIA_TAB}
-    #         Sleep    0.5s
- 
-    #         ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
-    #         ${hsn}=        Clean SAP Value    ${hsn_res}[1]
- 
-    #         Append To List    ${hsn_list}    ${hsn}
-    #         Log To Console    Item ${i} HSN/SAC: ${hsn}
- 
-    #        IF    ${i} < ${total_rows} - 1
-    #         ${next_row}=    Evaluate    ${i} + 1
-    #         ${row_path}=    Set Variable    ${TABLE}/rows[${next_row}]
-    #         Run Keyword And Ignore Error    Click Element    ${row_path}
-    #         Sleep    1s
-    #     END
- 
-    #     END
- 
-# --------------------------------------------------------
-# --------------------------------------------------------
-# --------------------------------------------------------
- # --------------------------------------------------------
-   # --------------------------------------------------------
     # --------------------------------------------------------
-    # STEP 2b: Read Open Quantity — click Delivery tab once,
-    # then press next-item button between reads
-    # --------------------------------------------------------
-    # --------------------------------------------------------
-    # STEP 2b: Read Open Quantity — click Delivery tab once,
+    # STEP 2: Read Open Quantity — click Delivery tab once,
     # then press next-item button between reads
     # --------------------------------------------------------
     @{open_qty_list}=    Create List
  
-    # Make sure we're back on item 1 before starting this pass
     Run Keyword And Ignore Error    Set Combo Via Vbs    ${ITEM_COMBO}    1
     Sleep    1s
     Run Keyword And Ignore Error    Click Element    ${DELIVERY_TAB}
     Sleep    1s
- 
+
+    # FIX (2026-08-10): backstop for STEP 1's item-count bug (see
+    # sap_helpers.py's scroll_table_via_vbs comment for the root cause).
+    # If total_rows is ever wrong again for any other reason, or SAP's GUI
+    # session degrades mid-loop, 3 consecutive failed Open Qty reads now
+    # stops this loop instead of blindly grinding through every remaining
+    # (possibly dozens of) iteration at 3s each against a dead/confused
+    # session. Confirmed from a real run's log (PO 4100035702): once Get
+    # Value starts failing here, it does not recover on its own -- it
+    # degrades further (element-not-found, then RPC server unavailable).
+    # Any items not reached are already backfilled with "" by the padding
+    # WHILE loop right after this FOR loop, so an early BREAK is safe.
+    ${consec_fail}=    Set Variable    0
+
     FOR    ${i}    IN RANGE    ${total_rows}
         ${oq_path}=    Set Variable    ${OPEN_QTY_TABLE}/${F_OPENQTY}\[${COL_OPENQTY},0\]
         ${oq_res}=    Run Keyword And Ignore Error    Get Value    ${oq_path}
         Log To Console    Item ${i} Open Qty read: ${oq_res}[0] = ${oq_res}[1]
         IF    '${oq_res}[0]' == 'PASS'
             ${open_qty}=    Clean SAP Value    ${oq_res}[1]
+            ${consec_fail}=    Set Variable    0
         ELSE
-            ${open_qty}=    Set Variable    ${EMPTY}
+            ${open_qty}=    Set Variable    None
+            ${consec_fail}=    Evaluate    ${consec_fail} + 1
         END
         Append To List    ${open_qty_list}    ${open_qty}
         Log To Console    Item ${i} Open Quantity: ${open_qty}
- 
+
+        IF    ${consec_fail} >= 3
+            Log To Console    3 consecutive Open Qty read failures at item ${i} -- stopping early (SAP session likely past last real item or degraded)
+            BREAK
+        END
+
         IF    ${i} < ${total_rows} - 1
             Run Keyword And Ignore Error    Click Element    ${BTN_NEXT_ITEM_OQ}
             Sleep    3s
@@ -266,6 +296,12 @@ Fetch PO Line Items
         ${oq_count}=    Evaluate    ${oq_count} + 1
     END
  
+   # --------------------------------------------------------
+    # STEP 3: Read HSN/SAC per item — check India tab presence
+    # for EACH item individually (some items on a PO may have it,
+    # others may not). If present -> click it and read HSN. If not
+    # present -> store "" for that item's hsn_sac and continue.
+    # --------------------------------------------------------
     @{hsn_list}=    Create List
  
     FOR    ${i}    IN RANGE    ${total_rows}
@@ -274,25 +310,24 @@ Fetch PO Line Items
         Log To Console    Item ${i} combo: ${combo_res}[0]
         Sleep    1.5s
  
-        Run Keyword And Ignore Error    Click Element    ${INDIA_TAB}
-        Sleep    1s
+        ${india_present}=    Run Keyword And Return Status    Element Should Be Present    ${INDIA_TAB}
  
-        ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
-        Log To Console    Item ${i} HSN read: ${hsn_res}[0] = ${hsn_res}[1]
-        IF    '${hsn_res}[0]' == 'PASS'
-            ${hsn}=    Clean SAP Value    ${hsn_res}[1]
+        IF    ${india_present}
+            Run Keyword And Ignore Error    Click Element    ${INDIA_TAB}
+            Sleep    1s
+ 
+            ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
+            Log To Console    Item ${i} HSN read: ${hsn_res}[0] = ${hsn_res}[1]
+            IF    '${hsn_res}[0]' == 'PASS'
+                ${hsn}=    Clean SAP Value    ${hsn_res}[1]
+            ELSE
+                ${hsn}=    Set Variable    ${EMPTY}
+            END
         ELSE
+            Log To Console    Item ${i} India tab NOT present — storing "" for hsn_sac
             ${hsn}=    Set Variable    ${EMPTY}
         END
-        Append To List    ${hsn_list}    ${hsn}
  
-        ${hsn_res}=    Run Keyword And Ignore Error    Get Value    ${HSN_FIELD}
-        Log To Console    Item ${i} HSN read: ${hsn_res}[0] = ${hsn_res}[1]
-        IF    '${hsn_res}[0]' == 'PASS'
-            ${hsn}=    Clean SAP Value    ${hsn_res}[1]
-        ELSE
-            ${hsn}=    Set Variable    ${EMPTY}
-        END
         Append To List    ${hsn_list}    ${hsn}
         Log To Console    Item ${i} HSN/SAC: ${hsn}
     END
@@ -302,8 +337,9 @@ Fetch PO Line Items
         Append To List    ${hsn_list}    ${EMPTY}
         ${hsn_count}=    Evaluate    ${hsn_count} + 1
     END
+ 
     # --------------------------------------------------------
-    # STEP 3: Calculate amounts and build JSON output
+    # STEP 5: Calculate amounts and build JSON output
     # Single row  → amount = net_price as-is
     # Multiple rows → amount per row = qty × net_price
     #                 append TOTAL row at end
@@ -321,18 +357,18 @@ Fetch PO Line Items
         ${price_str}=   Get From Dictionary    ${row}    net_price
         ${uom}=         Get From Dictionary    ${row}    uom
  
-        ...
- 
-   
-        # Remove commas from numbers (SAP formats: 1,234.56)
         ${qty_clean}=    Remove String    ${qty_str}    ,
         ${price_clean}=  Remove String    ${price_str}    ,
+        IF    '${qty_clean}' == 'None'
+            ${qty_clean}=    Set Variable    0
+        END
+        IF    '${price_clean}' == 'None'
+            ${price_clean}=    Set Variable    0
+        END
  
         IF    ${total_rows} == 1
-            # Single line — amount is net price as-is
             ${line_amount}=    Set Variable    ${price_str}
         ELSE
-            # Multiple lines — line amount = qty × net_price
             ${line_amount}=    Evaluate
             ...    str(round(float('${qty_clean}' or '0') * float('${price_clean}' or '0'), 2))
             ${running_total}=    Evaluate
@@ -341,29 +377,21 @@ Fetch PO Line Items
  
         ${item_no}=    Evaluate    str(($i + 1) * 10)
  
-        # Diagnostic: log the final per-item values right before they're
-        # written into the JSON that RESULT:PO_DATA: carries out of this
-        # script -- this is the last point inside the robot where these
-        # values are still individual variables, not yet a JSON blob.
-        Log To Console    Item ${item_no} FINAL: material_code="${material}" short_text="${short_text}" uom="${uom}" qty="${qty_str}" rate="${price_str}" amount="${line_amount}" hsn_sac="${hsn}" "open_qty":"${open_qty}"
+        Log To Console    Item ${item_no} FINAL: material_code="${material}" short_text="${short_text}" uom="${uom}" qty="${qty_str}" rate="${price_str}" amount="${line_amount}" hsn_sac="${hsn}" open_qty="${open_qty}"
  
-          ${json}=    Set Variable
+        ${json}=    Set Variable
         ...    {"item_no":"${item_no}","material_code":"${material}","short_text":"${short_text}","uom":"${uom}","rate":"${price_str}","qty":"${qty_str}","amount":"${line_amount}","hsn_sac":"${hsn}","open_qty":"${open_qty}"}
         Append To List    ${json_items}    ${json}
     END
-    #"qty":"${qty_str}",
  
-    # Append total row for multi-line POs
     IF    ${total_rows} > 1
         ${total_json}=    Set Variable
         ...    {"item_no":"TOTAL","material_code":"","short_text":"Total Amount","uom":"","rate":"","qty":"","amount":"${running_total}","hsn_sac":"","open_qty":""}
         Append To List    ${json_items}    ${total_json}
     END
-    #"qty":"",
  
     ${joined}=    Evaluate    ",".join($json_items)
     RETURN    [${joined}]
- 
  
 Clean SAP Value
     [Arguments]    ${raw}
@@ -371,7 +399,7 @@ Clean SAP Value
     ${val}=    Strip String    ${val}
     ${val}=    Replace String    ${val}    "    '
     ${val}=    Replace String    ${val}    \\    /
-    IF    '${val}' == 'None' or '${val}' == 'null'
+    IF    $val == 'None' or $val == 'null'
         RETURN    ${EMPTY}
     END
     RETURN    ${val}
@@ -393,12 +421,26 @@ Dismiss Any Popup
 Close SAP Session
     # Log    PO fetch finished. Session kept open.
     # RETURN
- 
+
     Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
     Run Keyword And Ignore Error    Send VKey     wnd[0]    0
     Sleep    2s
+    # FIX: this only ever killed saplogon.exe (twice, redundantly) -- never
+    # saplgpad.exe or sapgui.exe, which is what's actually running/showing
+    # the SAP GUI window once a session is logged in. Every other script in
+    # this codebase (gate_in.robot's Close SAP On Error, migo103_link.robot,
+    # migo_103.robot, etc.) kills all three on close/error; this one was
+    # simply out of sync with that pattern. That's the real, confirmed cause
+    # of "the bot finished, looped through everything, but SAP was still
+    # open at the end" -- /nex + saplogon.exe alone can leave the actual GUI
+    # window/process sitting there untouched. Matches the 3-process pattern
+    # used everywhere else now.
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
+    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
+    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
     Sleep    2s
     Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
+    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe    /T
+    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe    /T
     Log    SAP session closed and process terminated.    level=INFO
  

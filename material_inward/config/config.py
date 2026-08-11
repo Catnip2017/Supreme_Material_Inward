@@ -31,6 +31,25 @@ class Config:
     PORT: int = int(os.getenv("SERVER_PORT", 5000))
     ALLOWED_ORIGIN: str = os.getenv("ALLOWED_ORIGIN", "http://localhost:5000")
 
+    # --- Environment switch: production vs development install location ---
+    # IS_PRODUCTION=true  -> use PROD_APP_ROOT below
+    # IS_PRODUCTION=false -> use DEV_APP_ROOT below
+    # Every environment-dependent folder this app writes to (robot scripts,
+    # robot output logs, DMS staging, GST screenshot/edge-profile folders)
+    # is derived from APP_ROOT below and keeps the SAME internal folder
+    # layout in both prod and dev -- only the root changes. This is the
+    # single switch that makes a dev install a full replica of prod.
+    # Deliberately NOT included in this switch (left as single values,
+    # unaffected by IS_PRODUCTION): DB_*, SAP_*, AD_* (by explicit
+    # instruction -- changed by hand for now), and services/robot_lock.py's
+    # lock file path (shared with the separate Password Reset app -- prod
+    # and dev run on different servers so there's no collision risk either
+    # way, and moving it would require hand-editing that other app too).
+    IS_PRODUCTION: bool = os.getenv("IS_PRODUCTION", "true").lower() == "true"
+    _PROD_APP_ROOT: str = os.getenv("PROD_APP_ROOT", r"C:\material_inward")
+    _DEV_APP_ROOT: str = os.getenv("DEV_APP_ROOT", r"C:\material_inward")
+    APP_ROOT: str = _PROD_APP_ROOT if IS_PRODUCTION else _DEV_APP_ROOT
+
     # --- JWT ---
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-this-in-production")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
@@ -63,17 +82,21 @@ class Config:
     AD_SERVER: str = os.getenv("AD_SERVER", "192.168.203.117")
     AD_DOMAIN: str = os.getenv("AD_DOMAIN", "spl.com")
 
-    # --- Email SMTP (outgoing) ---
-    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.office365.com")
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT", 587))
-    EMAIL_SENDER: str = os.getenv("EMAIL_SENDER", "")
-    EMAIL_PASSWORD: str = os.getenv("EMAIL_PASSWORD", "")
+    # --- Email SMTP (outgoing) + IMAP (mail poller) — prod/dev pair ---
+    # Mailbox isn't in active use yet (INTAKE_METHOD=folder), but follows
+    # the same IS_PRODUCTION switch as everything else so it's ready
+    # whenever intake switches to "mail". DEV_* values are blank until you
+    # provide a dev mailbox -- fill them in .env when ready.
+    _MAIL_PREFIX: str = "PROD_" if IS_PRODUCTION else "DEV_"
+    SMTP_SERVER: str = os.getenv(_MAIL_PREFIX + "SMTP_SERVER", "smtp.office365.com")
+    SMTP_PORT: int = int(os.getenv(_MAIL_PREFIX + "SMTP_PORT", 587))
+    EMAIL_SENDER: str = os.getenv(_MAIL_PREFIX + "EMAIL_SENDER", "")
+    EMAIL_PASSWORD: str = os.getenv(_MAIL_PREFIX + "EMAIL_PASSWORD", "")
 
-    # --- Email IMAP (mail poller) ---
-    IMAP_SERVER: str = os.getenv("IMAP_SERVER", "outlook.office365.com")
-    IMAP_PORT: int = int(os.getenv("IMAP_PORT", 993))
-    IMAP_USERNAME: str = os.getenv("IMAP_USERNAME", "")
-    IMAP_PASSWORD: str = os.getenv("IMAP_PASSWORD", "")
+    IMAP_SERVER: str = os.getenv(_MAIL_PREFIX + "IMAP_SERVER", "outlook.office365.com")
+    IMAP_PORT: int = int(os.getenv(_MAIL_PREFIX + "IMAP_PORT", 993))
+    IMAP_USERNAME: str = os.getenv(_MAIL_PREFIX + "IMAP_USERNAME", "")
+    IMAP_PASSWORD: str = os.getenv(_MAIL_PREFIX + "IMAP_PASSWORD", "")
     IMAP_POLL_FOLDER: str = os.getenv("IMAP_POLL_FOLDER", "INBOX")
 
     # --- Step-specific Email Recipients (no fallback) ---
@@ -90,21 +113,32 @@ class Config:
     WATSONX_MODEL_ID: str   = os.getenv("WATSONX_MODEL_ID", "meta-llama/llama-4-maverick-17b-128e-instruct-fp8")
 
     # --- Robot Framework ---
-    RF_SCRIPTS_PATH: str = os.getenv("RF_SCRIPTS_PATH", r"C:\material_inward\robot_scripts")
-    RF_OUTPUT_PATH: str  = os.getenv("RF_OUTPUT_PATH", r"C:\material_inward\logs\rf_output")
+    # Derived from APP_ROOT (see IS_PRODUCTION switch above) -- no longer a
+    # standalone .env override, so it can never silently drift out of sync
+    # with which environment is actually active.
+    RF_SCRIPTS_PATH: str = os.path.join(APP_ROOT, "robot_scripts")
+    RF_OUTPUT_PATH: str  = os.path.join(APP_ROOT, "logs", "rf_output")
 
     # --- File Handling ---
     UPLOAD_FOLDER: str           = os.getenv("UPLOAD_FOLDER", "uploads")
-    DMS_STAGING_FOLDER: str      = os.getenv("DMS_STAGING_FOLDER", r"C:\material_inward\dms_staging")
+    DMS_STAGING_FOLDER: str      = os.path.join(APP_ROOT, "dms_staging")
     # v16: where dms_upload.robot's document-link step (Send To > Generate
     # Document link) writes {filename, Contentverse URL} rows, and where
-    # services/dms_links_import.py reads them from afterward. Kept
-    # app-relative by default (next to robot_scripts/) instead of a
-    # personal Downloads folder.
-    DMS_LINKS_EXCEL_PATH: str    = os.getenv("DMS_LINKS_EXCEL_PATH", r"C:\material_inward\dms_staging\document_links.xlsx")
+    # services/dms_links_import.py reads them from afterward. Derived from
+    # APP_ROOT like DMS_STAGING_FOLDER above -- dms_upload.robot itself now
+    # reads this straight from config.config too (see its Load Environment
+    # Variables keyword), instead of a separate raw .env lookup, so there's
+    # exactly one place this path is computed.
+    DMS_LINKS_EXCEL_PATH: str    = os.path.join(APP_ROOT, "dms_staging", "document_links.xlsx")
     UPLOAD_PROCESSED_FOLDER: str = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "processed")
     UPLOAD_FAILED_FOLDER: str    = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "failed")
     MAX_FILE_SIZE_BYTES: int     = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
+
+    # --- GST bots (services/einvoice_bot.py, services/taxpayer_search_bot.py) ---
+    # Screenshot + persistent-Edge-profile roots, also derived from
+    # APP_ROOT. Each bot appends its own subfolder ("einvoice" / "taxpayer").
+    GST_SCREENSHOTS_ROOT: str   = os.path.join(APP_ROOT, "gst_screenshots")
+    GST_EDGE_PROFILE_ROOT: str  = os.path.join(APP_ROOT, "gst_edge_profile")
 
     # --- Document keyword detection ---
     # Filenames arrive as INVOICENO_<KEYWORD>.pdf (any case) -- e.g.
@@ -149,3 +183,23 @@ class Config:
 
 
 config = Config()
+
+# --- Auto-create environment-dependent folders ---
+# So a freshly pointed DEV_APP_ROOT (or a PROD_APP_ROOT that hasn't been
+# fully unpacked yet) doesn't need every subfolder hand-built before first
+# run. Non-fatal if a folder can't be created (e.g. the drive isn't
+# reachable yet) -- individual callers still os.makedirs() before writing,
+# this is just a best-effort head start at import time.
+for _dir in (
+    config.RF_OUTPUT_PATH,
+    config.DMS_STAGING_FOLDER,
+    os.path.join(config.GST_SCREENSHOTS_ROOT, "einvoice"),
+    os.path.join(config.GST_SCREENSHOTS_ROOT, "taxpayer"),
+    os.path.join(config.GST_EDGE_PROFILE_ROOT, "einvoice"),
+    os.path.join(config.GST_EDGE_PROFILE_ROOT, "taxpayer"),
+    os.path.join(config.APP_ROOT, "logs"),
+):
+    try:
+        os.makedirs(_dir, exist_ok=True)
+    except Exception:
+        pass

@@ -18,8 +18,17 @@ logger = get_logger(__name__)
 # this). Tune if real vendor names are producing too many/few candidates.
 MIN_SIMILARITY = 0.25
 
+# FIX: was 10 -- a vendor with several plants/departments under the same or
+# similar name (e.g. multiple Supreme Petrochem locations) genuinely has
+# more than 10 rows in supplier_master, and the old cap silently truncated
+# the list before the user could even see the one they needed, with no
+# indication anything was cut off. 100 is a generous ceiling for "show
+# every real match for one vendor family" while still bounding a
+# pathologically broad 3-character query (the frontend's own typeahead
+# minimum) from returning the entire table.
 
-def search_suppliers(query: str, limit: int = 10) -> list:
+
+def search_suppliers(query: str, limit: int = 100) -> list:
     """
     Search supplier_master two ways at once, merged into one ranked list:
       1. Fuzzy name match (trigram similarity, requires pg_trgm -- see

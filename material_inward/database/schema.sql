@@ -94,6 +94,10 @@ CREATE TABLE IF NOT EXISTS invoice_data (
     grand_total             TEXT,
     hsn_details             JSONB,
     irn                     TEXT,
+    -- v23: Delivery Challan / Tax Invoice (Stock Transfer) documents print
+    -- an "Outbound Delivery Number" not present on a normal purchase
+    -- invoice -- captured as its own field, shown on the Invoice tab.
+    outbound_delivery_number TEXT,
     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

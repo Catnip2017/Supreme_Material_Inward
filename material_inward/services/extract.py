@@ -19,6 +19,7 @@ import json
 import base64
 import os
 import re
+import time
 from typing import Optional
 
 from config.config import config
@@ -38,10 +39,27 @@ except ImportError:
 # Cached model instance — initialized once, reused for all calls
 _model_instance = None
 
+# FIX (2026-08-10): retry transient WatsonX network/DNS failures instead of
+# giving up after a single attempt. Confirmed in production: record 200's
+# OCR (UT422_INV.pdf) failed outright with "[Errno 11002] getaddrinfo
+# failed" trying to resolve ml.cloud.ibm.com -- a momentary DNS blip (a
+# manual ping to the same host seconds later resolved fine, 0% packet
+# loss). Previously a single bad lookup permanently failed that document's
+# OCR with no built-in retry -- OCR retries are manual-only (the Extracted
+# Data tab's retry button, keyed off history.ocr_retry_count), so the
+# failure just sat there marked 'failed' until a human happened to notice.
+# Used by both _get_model() (connection setup) and process_document()'s
+# model.chat() call (the actual OCR request) -- either one can hit the
+# same class of transient failure.
+_WATSONX_RETRY_ATTEMPTS = 3
+_WATSONX_RETRY_DELAY_SECONDS = 3
+
 
 def _get_model() -> Optional[object]:
     """
     Return cached WatsonX model. Initialize once on first call.
+    Retries up to _WATSONX_RETRY_ATTEMPTS times on failure -- see the FIX
+    note above _WATSONX_RETRY_ATTEMPTS for why.
     """
     global _model_instance
     if _model_instance is not None:
@@ -52,22 +70,36 @@ def _get_model() -> Optional[object]:
     if not config.WATSONX_API_KEY or not config.WATSONX_PROJECT_ID:
         logger.error("WatsonX credentials not configured in .env")
         return None
-    try:
-        credentials = Credentials(
-            url=config.WATSONX_URL,
-            api_key=config.WATSONX_API_KEY
-        )
-        _model_instance = ModelInference(
-            model_id=config.WATSONX_MODEL_ID,
-            credentials=credentials,
-            project_id=config.WATSONX_PROJECT_ID,
-            params={"max_tokens": 4000}
-        )
-        logger.info(f"WatsonX model initialized: {config.WATSONX_MODEL_ID}")
-        return _model_instance
-    except Exception as e:
-        logger.error(f"Failed to initialize WatsonX model: {e}")
-        return None
+
+    for attempt in range(1, _WATSONX_RETRY_ATTEMPTS + 1):
+        try:
+            credentials = Credentials(
+                url=config.WATSONX_URL,
+                api_key=config.WATSONX_API_KEY
+            )
+            _model_instance = ModelInference(
+                model_id=config.WATSONX_MODEL_ID,
+                credentials=credentials,
+                project_id=config.WATSONX_PROJECT_ID,
+                params={"max_tokens": 4000}
+            )
+            logger.info(f"WatsonX model initialized: {config.WATSONX_MODEL_ID}")
+            return _model_instance
+        except Exception as e:
+            if attempt < _WATSONX_RETRY_ATTEMPTS:
+                logger.warning(
+                    f"WatsonX model init failed (attempt {attempt}/"
+                    f"{_WATSONX_RETRY_ATTEMPTS}): {e} -- retrying in "
+                    f"{_WATSONX_RETRY_DELAY_SECONDS}s (likely transient "
+                    "DNS/network)."
+                )
+                time.sleep(_WATSONX_RETRY_DELAY_SECONDS)
+            else:
+                logger.error(
+                    f"Failed to initialize WatsonX model after "
+                    f"{_WATSONX_RETRY_ATTEMPTS} attempts: {e}"
+                )
+    return None
 
 
 def _encode_pages_to_base64(file_path: str, max_pages: int = 10) -> list:
@@ -299,6 +331,50 @@ def _clean_irn(raw: str) -> str:
     return re.sub(r'\s+', '', cleaned)
 
 
+def _apply_stock_transfer_routing(extracted: dict) -> dict:
+    """
+    Client-requested routing rule (2026-08): this stock-transfer document
+    family's Delivery Challan and Tax Invoice documents (goods moving
+    between the company's own plants, no real GSTIN-to-GSTIN sale) label
+    their invoice/PO-equivalent fields differently from a normal
+    third-party purchase invoice, but ONLY when "Type of Sale" says
+    STOCK TRANSFER:
+      - Delivery Challan + Stock Transfer: invoice_number <- "GST Challan
+        Sr. No.", po_number <- "Ref No."
+      - Tax Invoice + Stock Transfer: invoice_number <- "GST Invoice Sr.
+        No.", po_number <- "Sales Order / STO No."
+
+    document_title / type_of_sale / gst_invoice_sr_no / gst_challan_sr_no /
+    sales_order_sto_no / ref_no are internal-only fields -- never rendered
+    on the Extracted Data tab -- used purely to decide this routing. If
+    Type of Sale isn't Stock Transfer (the normal case), extracted is
+    returned untouched and the regular invoice_number/po_number extraction
+    above stands as-is.
+    """
+    type_of_sale = (extracted.get("type_of_sale") or "").upper()
+    if "STOCK TRANSFER" not in type_of_sale:
+        return extracted
+
+    title = (extracted.get("document_title") or "").upper()
+    is_challan = "DELIVERY CHALLAN" in title or bool(extracted.get("gst_challan_sr_no"))
+    is_tax_invoice = "TAX INVOICE" in title or bool(extracted.get("gst_invoice_sr_no"))
+
+    if is_challan and not is_tax_invoice:
+        if extracted.get("gst_challan_sr_no"):
+            extracted["invoice_number"] = extracted["gst_challan_sr_no"]
+        if extracted.get("ref_no"):
+            extracted["po_number"] = extracted["ref_no"]
+        logger.info("Stock Transfer routing applied: Delivery Challan (invoice_number <- GST Challan Sr. No., po_number <- Ref No.)")
+    elif is_tax_invoice:
+        if extracted.get("gst_invoice_sr_no"):
+            extracted["invoice_number"] = extracted["gst_invoice_sr_no"]
+        if extracted.get("sales_order_sto_no"):
+            extracted["po_number"] = extracted["sales_order_sto_no"]
+        logger.info("Stock Transfer routing applied: Tax Invoice (invoice_number <- GST Invoice Sr. No., po_number <- Sales Order/STO No.)")
+
+    return extracted
+
+
 def _build_prompt(doc_type: str) -> str:
     """
     Build extraction prompt. Keys use lowercase_underscore to match DB columns.
@@ -355,37 +431,10 @@ depending on template. Map whichever labels appear to these fields:
   whichever block is actually labeled as the shipping/consignee party,
   not the billing party, even when the two blocks show identical details.
 
-DOCUMENT VARIANT -- Delivery Challan (issued under Rule 55 / Section 31 of
-the CGST Act, 2017, typically for job-work/repair movements -- look for
-the title "DELIVERY CHALLAN" and/or a "Type of Sale: JOB WORK" line). This
-layout has no separate "Invoice No." field and no "Seller"/"Supplier"/
-"From" label, so the Header block mapping above won't find anything to
-match -- use these overrides instead whenever this layout is detected:
-- "invoice_number": use the value labeled "GST Challan Sr. No." (NOT
-  "Outbound Delivery Number" and NOT "Ref No." -- those are different
-  fields that also appear on this layout).
-- "po_number": use the value labeled "Ref No." (NOT "Customer PO No.",
-  which this layout typically leaves blank even though a real PO
-  reference exists under "Ref No." instead).
-- "seller_name": the company name printed in the letterhead at the very
-  top of the document (e.g. "SUPREME PETROCHEM LTD").
-- "seller_gstin": the value labeled "GST NO." in the header box on the
-  right side of the page, near the letterhead.
-- "seller_address": use the address under "Unit from where goods
-  supplied" specifically -- NOT the "Principle Place of Business" address,
-  which is a different, registered-office address that also appears on
-  this layout but is not the correct seller address to extract.
-- "company_pan": if a "PAN NO." value is printed in the footer/registered-
-  office block, use that.
-- "buyer_name"/"buyer_address"/"buyer_gstin" and "ship_to_name"/
-  "ship_to_address" are unaffected -- still read from "Name & Address of
-  Buyer/Recipient (billed to)" and "Name & Address of Consignee (Shipped
-  to)" exactly as on a standard invoice.
-
 Important field notes:
 - "invoice_number": Use the value labeled "Invoice No", "Invoice Number", "Bill No", or similar. On a dense/landscape layout this label often sits in a small top-right box next to Invoice Date/Due Date/Internal Ref No -- read the whole box, not just the first line, since it can wrap across two lines. FALLBACK ONLY: if there is no usable/legible Invoice Number field anywhere on the document, but there IS an "Outbound Delivery No", "Delivery No", or "ODN" label, use that value instead. Never use the Outbound Delivery Number when a proper Invoice Number is present and readable -- it is strictly a fallback for when the real Invoice Number cannot be found, not a preference.
 - "invoice_date": Use the FIRST date that appears at the top of the invoice — typically labeled "Date", "Invoice Date", or "Dated". Do not use delivery date, dispatch date, or due date. On a landscape layout it commonly sits in the same small header box as Invoice Number, immediately below or beside it -- read that whole box carefully rather than picking the first date-like text seen anywhere on the page (which is often a due date or removal/preparation date printed elsewhere).
-- "po_number": A numeric purchase order number, always 10 digits, starting with one of these two-digit prefixes: 41, 43, 44, 45, 46, 47, or 49 (e.g. 4500012345, 4100098765). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No", "Customer PO Ref". If what you've read is not 10 digits, or doesn't start with one of those prefixes, re-examine that region of the image for a misread digit before returning it -- these are the only valid PO number prefixes. If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
+- "po_number": A numeric purchase order number typically starting with 4 or 6 followed by 9 digits (e.g. 4500012345 or 6300001343). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No", "Customer PO Ref". If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
 - "buyer_address"/"seller_address"/"ship_to_address": these almost always span MULTIPLE LINES (street, village/area, city, state, PIN code, country) -- read every line belonging to that address block and join them into ONE combined string separated by ", " (comma and space), e.g. "VILLAGE: AMDOSHI / WANGANI, WAI-ROAD, TALUKA-ROHA, RAIGAD, MAHARASHTRA 402106", not just the first word or first line. Do NOT join with an actual line break -- comma-and-space only, per the SINGLE LINE rule above. On a landscape layout, address blocks are often squeezed into a narrow column and wrap across 3-4 short lines -- make sure you have captured the full block down to the PIN code before moving on, rather than stopping after the first line.
 - "buyer_gstin"/"seller_gstin": always exactly 15 characters (2-digit state code, 10-character PAN, 1-digit entity code, the letter "Z", 1 checksum character) -- if what you've read is shorter or longer than 15 characters, re-examine that region of the image for a missed or extra character before returning it.
 - "company_pan": always exactly 10 characters, format 5 letters + 4 digits + 1 letter (e.g. AAACE1713F) -- note that this PAN is also embedded inside the Seller GSTIN as characters 3-12, so if the two are visible together you can cross-check one against the other.
@@ -412,6 +461,34 @@ Important field notes:
   page, not just the header. Do not confuse it with "Ack No" — that is a shorter,
   separate acknowledgement number, not the IRN. Return empty string if no line
   labeled IRN is found.
+- "document_title": The literal document-type heading printed at the very top of
+  the page (e.g. "TAX INVOICE", "DELIVERY CHALLAN", "BILL OF SUPPLY"). Return it
+  exactly as printed. This is used only for internal routing logic below and is
+  never shown to the reviewer -- still extract it accurately.
+- "type_of_sale": Look for a label "Type of Sale" (seen on some stock-transfer
+  style documents, in the header info block on the right side, e.g.
+  "Type of Sale : STOCK TRANSFER - FOR" or "STOCK TRANSFER"). Return the value
+  exactly as printed. Most documents do not have this label at all -- return
+  empty string if it's not present rather than guessing.
+- "gst_invoice_sr_no": Only appears on documents titled "TAX INVOICE" from this
+  stock-transfer document family -- look for a label "GST Invoice Sr. No." (top
+  right header block, near Date / Sales Order info). Return empty string if not
+  present.
+- "gst_challan_sr_no": Only appears on documents titled "DELIVERY CHALLAN" from
+  this stock-transfer document family -- look for a label "GST Challan Sr. No."
+  (top right header block, near Date / Ref No info). Return empty string if not
+  present.
+- "sales_order_sto_no": Look for a label "Sales Order / STO No" or
+  "Sales Order/STO No:" (top right header block). Return empty string if not
+  present.
+- "ref_no": Look for a label "Ref No." (top right header block, distinct from
+  "Customer PO No."). Return empty string if not present.
+- "outbound_delivery_number": Look for a label "Outbound Delivery Number" or
+  "Outbound Delivery No" (commonly near the bottom-left, next to Lot Number /
+  Vehicle Number). Extract this into its own field whenever it's visible,
+  regardless of whether a proper Invoice Number was also found -- this is
+  separate from invoice_number's FALLBACK rule above, not a replacement for it.
+  Return empty string if not present.
 
 Line-item table columns can appear in varying order and density. Read each
 row left to right and match each value to its column header exactly as
@@ -450,6 +527,13 @@ Correct any field that fails these checks before returning the JSON.
   "invoice_date": "",
   "po_number": "",
   "irn": "",
+  "document_title": "",
+  "type_of_sale": "",
+  "gst_invoice_sr_no": "",
+  "gst_challan_sr_no": "",
+  "sales_order_sto_no": "",
+  "ref_no": "",
+  "outbound_delivery_number": "",
   "buyer_name": "",
   "buyer_address": "",
   "buyer_gstin": "",
@@ -500,7 +584,7 @@ Extract these fields from the E-way Bill:
 
 Important notes:
 - "generated_date": Use the FIRST date shown on the document, labeled "Generated Date" or "Date".
-- "po_number": Look for purchase order number — may appear as "PO No", "Purchase Order", or near the invoice reference. Always 10 digits, starting with one of these two-digit prefixes: 41, 43, 44, 45, 46, 47, or 49. If what you've read doesn't match, re-examine that region for a misread digit before returning it. Return empty string if not found.
+- "po_number": Look for purchase order number — may appear as "PO No", "Purchase Order", or near the invoice reference. Typically 10 digits starting with 4 or 6. Return empty string if not found.
 
 {
   "ewaybill_number": "",
@@ -678,7 +762,29 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
 
     try:
         messages = _build_messages(pages_b64, prompt)
-        response = model.chat(messages=messages)
+
+        # Retry the actual OCR request too, not just model init above --
+        # same transient-DNS/network class of failure could just as easily
+        # hit here mid-document instead of at startup.
+        response = None
+        last_err = None
+        for attempt in range(1, _WATSONX_RETRY_ATTEMPTS + 1):
+            try:
+                response = model.chat(messages=messages)
+                break
+            except Exception as chat_err:
+                last_err = chat_err
+                if attempt < _WATSONX_RETRY_ATTEMPTS:
+                    logger.warning(
+                        f"WatsonX chat() failed for {doc_type} '{filename}' "
+                        f"(attempt {attempt}/{_WATSONX_RETRY_ATTEMPTS}): "
+                        f"{chat_err} -- retrying in "
+                        f"{_WATSONX_RETRY_DELAY_SECONDS}s."
+                    )
+                    time.sleep(_WATSONX_RETRY_DELAY_SECONDS)
+        if response is None:
+            raise last_err
+
         raw_text = response["choices"][0]["message"]["content"]
 
         logger.debug(f"WatsonX raw response for {doc_type}: {raw_text[:500]}")
@@ -713,6 +819,7 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
                 extracted["seller_gstin"] = _attempt_gstin_correction(extracted["seller_gstin"])
             if extracted.get("irn"):
                 extracted["irn"] = _clean_irn(extracted["irn"])
+            extracted = _apply_stock_transfer_routing(extracted)
         elif doc_type == "ewaybill":
             if extracted.get("transporter_gstin"):
                 extracted["transporter_gstin"] = _attempt_gstin_correction(extracted["transporter_gstin"])

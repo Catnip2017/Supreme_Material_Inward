@@ -4,8 +4,16 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul
 
 :: ── Log file setup ────────────────────────────────────────────────────────────
-set APP_DIR=C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward
-set LOG_DIR=C:\material_inward\logs
+:: FIX: APP_DIR/LOG_DIR used to be two independent hardcoded literals that
+:: didn't even agree with each other (APP_DIR pointed at the ctn_suresh
+:: path, LOG_DIR at C:\material_inward\logs regardless). Self-locating via
+:: %~dp0 (the folder this .bat file itself lives in) means this script
+:: works unmodified whether it's placed at the prod root or a dev root --
+:: no path to keep in sync by hand, and logs always land next to the app
+:: that's actually running.
+set APP_DIR=%~dp0
+set APP_DIR=%APP_DIR:~0,-1%
+set LOG_DIR=%APP_DIR%\logs
 set LOG_FILE=%LOG_DIR%\startup_%date:~-4,4%%date:~-7,2%%date:~0,2%.log
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 

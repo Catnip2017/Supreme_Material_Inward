@@ -83,7 +83,11 @@ sys.path.insert(0, APP_DIR)
 
 from config.config import config  # noqa: E402  (path insert must come first)
 
-LOG_DIR    = r"C:\material_inward\logs"
+# Derived from config.APP_ROOT, which follows the IS_PRODUCTION switch
+# (config.py) -- was a fixed literal independent of APP_DIR above, so a
+# dev install previously logged to the prod folder regardless of where
+# watchdog.py itself was actually running from.
+LOG_DIR    = os.path.join(config.APP_ROOT, "logs")
 STATE_FILE = os.path.join(LOG_DIR, "watchdog_state.json")
 NGINX_DIR  = os.getenv("NGINX_DIR", r"C:\Program Files\nginx\nginx-1.28.3")
 
