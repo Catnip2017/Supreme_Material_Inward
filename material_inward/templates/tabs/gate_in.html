@@ -350,11 +350,11 @@
       </div>
       {# v7: goods fallbacks now come from invoice hsn_details (EWB goods columns deprecated) #}
       {% set inv_hsn = (invoice_data.get('hsn_details') if invoice_data else []) or [] %}
-      {% set inv_goods_desc = (inv_hsn[0].get('description','') if inv_hsn else '') %}
+      {% set inv_goods_desc = ((inv_hsn[0].get('description') or '') if inv_hsn else '') %}
       {% if inv_hsn|length > 1 and inv_goods_desc %}
         {% set inv_goods_desc = inv_goods_desc ~ ' +' ~ (inv_hsn|length - 1) ~ ' more' %}
       {% endif %}
-      {% set inv_goods_qty = (inv_hsn[0].get('quantity','') if inv_hsn else '') %}
+      {% set inv_goods_qty = ((inv_hsn[0].get('quantity') or '') if inv_hsn else '') %}
       <div class="form-group">
         <label>Material <span class="req">*</span></label>
         <input type="text" id="material" class="form-input" maxlength="40"

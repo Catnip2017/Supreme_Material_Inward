@@ -431,12 +431,12 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
-              <input class="editable-input" id="inv_invoice_number" value="{{ invoice_data.get('invoice_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_invoice_number" value="{{ ((invoice_data.get('invoice_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_invoice_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
-              <input class="editable-input date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ invoice_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((invoice_data.get('invoice_date') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_invoice_date"></div>
             </div>
             <div class="field-block">
@@ -448,12 +448,12 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">IRN (Invoice Reference Number)</div>
-              <input class="editable-input" id="inv_irn" value="{{ invoice_data.get('irn','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_irn" value="{{ ((invoice_data.get('irn') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_irn"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Out Bound Delivery Number</div>
-              <input class="editable-input" id="inv_outbound_delivery_number" value="{{ invoice_data.get('outbound_delivery_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_outbound_delivery_number" value="{{ ((invoice_data.get('outbound_delivery_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -463,16 +463,16 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Buyer Name</div>
-              <input class="editable-input" id="inv_buyer_name" value="{{ invoice_data.get('buyer_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_buyer_name" value="{{ ((invoice_data.get('buyer_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Buyer GSTIN</div>
-              <input class="editable-input" id="inv_buyer_gstin" value="{{ invoice_data.get('buyer_gstin','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_buyer_gstin" value="{{ ((invoice_data.get('buyer_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_buyer_gstin"></div>
             </div>
             <div class="field-block field-block-wide">
               <div class="field-label">Buyer Address</div>
-              <textarea class="editable-input address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ invoice_data.get('buyer_address','') }}</textarea>
+              <textarea class="editable-input address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('buyer_address') if invoice_data else '') or '') }}</textarea>
             </div>
           </div>
         </div>
@@ -482,21 +482,21 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Seller Name</div>
-              <input class="editable-input" id="inv_seller_name" value="{{ invoice_data.get('seller_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_seller_name" value="{{ ((invoice_data.get('seller_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Seller GSTIN</div>
-              <input class="editable-input" id="inv_seller_gstin" value="{{ invoice_data.get('seller_gstin','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_seller_gstin" value="{{ ((invoice_data.get('seller_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_seller_gstin"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Company PAN</div>
-              <input class="editable-input" id="inv_company_pan" value="{{ invoice_data.get('company_pan','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_company_pan" value="{{ ((invoice_data.get('company_pan') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_company_pan"></div>
             </div>
             <div class="field-block field-block-wide">
               <div class="field-label">Seller Address</div>
-              <textarea class="editable-input address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ invoice_data.get('seller_address','') }}</textarea>
+              <textarea class="editable-input address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('seller_address') if invoice_data else '') or '') }}</textarea>
             </div>
           </div>
         </div>
@@ -506,11 +506,11 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Ship To Name</div>
-              <input class="editable-input" id="inv_ship_to_name" value="{{ invoice_data.get('ship_to_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_ship_to_name" value="{{ ((invoice_data.get('ship_to_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block field-block-wide">
               <div class="field-label">Ship To Address</div>
-              <textarea class="editable-input address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ invoice_data.get('ship_to_address','') }}</textarea>
+              <textarea class="editable-input address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('ship_to_address') if invoice_data else '') or '') }}</textarea>
             </div>
             <!-- Ship To Code merged into this single field (client request):
                  label stays "Ship To State", displayed value is
@@ -520,19 +520,19 @@ textarea.address-textarea.editable-input {
                  into the two on save. -->
             <div class="field-block">
               <div class="field-label">Ship To State</div>
-              {% set _sts = invoice_data.get('ship_to_state','') %}
-              {% set _stc = invoice_data.get('ship_to_code','') %}
+              {% set _sts = ((invoice_data.get('ship_to_state') if invoice_data else '') or '') %}
+              {% set _stc = ((invoice_data.get('ship_to_code') if invoice_data else '') or '') %}
               <input class="editable-input" id="inv_ship_to_state"
                      value="{% if _stc and _sts %}{{ _stc }} - {{ _sts }}{% else %}{{ _stc or _sts }}{% endif %}"
                      {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Bill To State</div>
-              <input class="editable-input" id="inv_bill_to_state" value="{{ invoice_data.get('bill_to_state','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_bill_to_state" value="{{ ((invoice_data.get('bill_to_state') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Bill To Code</div>
-              <input class="editable-input" id="inv_bill_to_code" value="{{ invoice_data.get('bill_to_code','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_bill_to_code" value="{{ ((invoice_data.get('bill_to_code') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -542,47 +542,47 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Total Taxable Amount</div>
-              <input class="editable-input" id="inv_total_taxable_amount" value="{{ invoice_data.get('total_taxable_amount','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_total_taxable_amount" value="{{ ((invoice_data.get('total_taxable_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">CGST Rate</div>
-              <input class="editable-input" id="inv_cgst_rate" value="{{ invoice_data.get('cgst_rate','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_cgst_rate" value="{{ ((invoice_data.get('cgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">CGST Amount</div>
-              <input class="editable-input" id="inv_cgst_amount" value="{{ invoice_data.get('cgst_amount','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_cgst_amount" value="{{ ((invoice_data.get('cgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">SGST Rate</div>
-              <input class="editable-input" id="inv_sgst_rate" value="{{ invoice_data.get('sgst_rate','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_sgst_rate" value="{{ ((invoice_data.get('sgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">SGST Amount</div>
-              <input class="editable-input" id="inv_sgst_amount" value="{{ invoice_data.get('sgst_amount','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_sgst_amount" value="{{ ((invoice_data.get('sgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">IGST Rate</div>
-              <input class="editable-input" id="inv_igst_rate" value="{{ invoice_data.get('igst_rate','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_igst_rate" value="{{ ((invoice_data.get('igst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">IGST Amount</div>
-              <input class="editable-input" id="inv_igst_amount" value="{{ invoice_data.get('igst_amount','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_igst_amount" value="{{ ((invoice_data.get('igst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Total Tax Amount</div>
-              <input class="editable-input" id="inv_total_tax_amount" value="{{ invoice_data.get('total_tax_amount','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_total_tax_amount" value="{{ ((invoice_data.get('total_tax_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Grand Total</div>
-              <input class="editable-input" id="inv_grand_total" value="{{ invoice_data.get('grand_total','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_grand_total" value="{{ ((invoice_data.get('grand_total') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Amount in Words</div>
-              <input class="editable-input" id="inv_amount_in_words" value="{{ invoice_data.get('amount_in_words','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_amount_in_words" value="{{ ((invoice_data.get('amount_in_words') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Payment Terms</div>
-              <input class="editable-input" id="inv_payment_terms" value="{{ invoice_data.get('payment_terms','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="inv_payment_terms" value="{{ ((invoice_data.get('payment_terms') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -612,17 +612,17 @@ textarea.address-textarea.editable-input {
                 {% set hsn_list = invoice_data.get('hsn_details') or [] %}
                 {% for hsn in hsn_list %}
                 <tr>
-                  <td><input type="text" value="{{ hsn.get('material_code','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('hsn_sac','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('description','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('quantity','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('unit','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('rate','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('taxable_value','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('cgst_amount','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('sgst_amount','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('igst_amount','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ hsn.get('total','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('material_code') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('hsn_sac') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('description') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('quantity') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('unit') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('rate') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('taxable_value') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('cgst_amount') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('sgst_amount') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('igst_amount') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" value="{{ ((hsn.get('total') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td><button class="btn-row-delete" onclick="deleteInvHsnRow(this)" {% if is_approved %}disabled{% endif %}>×</button></td>
                 </tr>
                 {% endfor %}
@@ -661,12 +661,12 @@ textarea.address-textarea.editable-input {
                 {% for hsn in hsn_list %}
                 <tr data-orig-idx="{{ loop.index0 }}">
                   <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                  <td><input type="text" data-field="material_code" value="{{ hsn.get('material_code','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="description" value="{{ hsn.get('description','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="hsn_sac" value="{{ hsn.get('hsn_sac','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="quantity" value="{{ hsn.get('quantity','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="unit" value="{{ hsn.get('unit','') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="taxable_value" value="{{ hsn.get('taxable_value','') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="material_code" value="{{ ((hsn.get('material_code') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="description" value="{{ ((hsn.get('description') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="hsn_sac" value="{{ ((hsn.get('hsn_sac') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="quantity" value="{{ ((hsn.get('quantity') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="unit" value="{{ ((hsn.get('unit') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                  <td><input type="text" data-field="taxable_value" value="{{ ((hsn.get('taxable_value') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
                   <td>{% if not is_approved %}<button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button>{% endif %}</td>
                 </tr>
                 {% endfor %}
@@ -714,24 +714,24 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">E-Way Bill Number</div>
-              <input class="editable-input" id="eway_ewaybill_number" value="{{ ewaybill_data.get('ewaybill_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_ewaybill_number" value="{{ ((ewaybill_data.get('ewaybill_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Generated Date</div>
-              <input class="editable-input date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('generated_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('generated_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;font-weight:700;">* Validity Date Expired</span>{% endif %}</div>
-              <input class="editable-input date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('validity_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
-              <input class="editable-input" id="eway_invoice_number" value="{{ ewaybill_data.get('invoice_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_eway_invoice_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
-              <input class="editable-input date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_eway_invoice_date"></div>
             </div>
             <!-- CLIENT REQUEST (still-pending items email): PO Number section
@@ -755,11 +755,11 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block field-block-wide">
               <div class="field-label">Dispatch From</div>
-              <textarea class="editable-input address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ewaybill_data.get('dispatch_from','') }}</textarea>
+              <textarea class="editable-input address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_from') if ewaybill_data else '') or '') }}</textarea>
             </div>
             <div class="field-block field-block-wide">
               <div class="field-label">Dispatch To</div>
-              <textarea class="editable-input address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ewaybill_data.get('dispatch_to','') }}</textarea>
+              <textarea class="editable-input address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_to') if ewaybill_data else '') or '') }}</textarea>
             </div>
           </div>
         </div>
@@ -769,29 +769,29 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Transport Mode</div>
-              <input class="editable-input" id="eway_transport_mode" value="{{ ewaybill_data.get('transport_mode','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_transport_mode" value="{{ ((ewaybill_data.get('transport_mode') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
-              <input class="editable-input" id="eway_vehicle_number" maxlength="10" value="{{ ewaybill_data.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_vehicle_number" maxlength="10" value="{{ ((ewaybill_data.get('vehicle_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_eway_vehicle_number"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
-              <input class="editable-input" id="eway_transporter_name" value="{{ ewaybill_data.get('transporter_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_transporter_name" value="{{ ((ewaybill_data.get('transporter_name') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter GSTIN</div>
-              <input class="editable-input" id="eway_transporter_gstin" value="{{ ewaybill_data.get('transporter_gstin','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_transporter_gstin" value="{{ ((ewaybill_data.get('transporter_gstin') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_eway_transporter_gstin"></div>
             </div>
             <div class="field-block">
               <div class="field-label">Transport Doc No</div>
-              <input class="editable-input" id="eway_transport_doc_no" value="{{ ewaybill_data.get('transport_doc_no','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Transport Doc Date</div>
-              <input class="editable-input date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('transport_doc_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('transport_doc_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -839,15 +839,15 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">LR Number</div>
-              <input class="editable-input" id="lr_lr_number" value="{{ lr.get('lr_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">LR Date</div>
-              <input class="editable-input date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ lr.get('lr_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((lr.get('lr_date') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
-              <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ lr.get('vehicle_number','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div>
             </div>
           </div>
@@ -858,27 +858,27 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">Consignor Name</div>
-              <input class="editable-input" id="lr_consignor_name" value="{{ lr.get('consignor_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_consignor_name" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Consignee Name</div>
-              <input class="editable-input" id="lr_consignee_name" value="{{ lr.get('consignee_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_consignee_name" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Material Description</div>
-              <input class="editable-input" id="lr_material_description" value="{{ lr.get('material_description','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_material_description" value="{{ ((lr.get('material_description') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Quantity</div>
-              <input class="editable-input" id="lr_quantity" value="{{ lr.get('quantity','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_quantity" value="{{ ((lr.get('quantity') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Weight</div>
-              <input class="editable-input" id="lr_weight" value="{{ lr.get('weight','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_weight" value="{{ ((lr.get('weight') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">UOM</div>
-              <input class="editable-input" id="lr_uom" value="{{ lr.get('uom','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_uom" value="{{ ((lr.get('uom') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -888,11 +888,11 @@ textarea.address-textarea.editable-input {
           <div class="field-row">
             <div class="field-block">
               <div class="field-label">From Location</div>
-              <input class="editable-input" id="lr_from_location" value="{{ lr.get('from_location','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">To Location</div>
-              <input class="editable-input" id="lr_to_location" value="{{ lr.get('to_location','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block field-block-wide">
               <div class="field-label">Delivery Address</div>
@@ -900,7 +900,7 @@ textarea.address-textarea.editable-input {
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
-              <input class="editable-input" id="lr_transporter_name" value="{{ lr.get('transporter_name','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input" id="lr_transporter_name" value="{{ ((lr.get('transporter_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -1042,6 +1042,37 @@ function _displayDateToIso(disp) {
 }
 document.querySelectorAll('.date-field').forEach(function (el) {
   el.value = _isoToDisplayDate(el.value);
+});
+
+// ============================================================
+// No special characters, ever -- client request (2026-08): GST No, PO
+// No, E-Way Bill No, and IRN must never contain anything but letters and
+// digits, neither extracted (handled server-side in extract.py) nor
+// typed in by a reviewer. Strips on every keystroke, live -- registered
+// BEFORE the length/format checks further down so those checks always
+// see the already-cleaned value, not the raw keystroke. Cursor position
+// is preserved so stripping a character elsewhere in the string doesn't
+// jump the caret to the end.
+// ============================================================
+function _stripSpecialChars(el) {
+  const before = el.value;
+  const cleaned = before.replace(/[^A-Za-z0-9]/g, '');
+  if (cleaned === before) return;
+  const pos = el.selectionStart || 0;
+  const removedBeforeCursor = before.slice(0, pos).length - before.slice(0, pos).replace(/[^A-Za-z0-9]/g, '').length;
+  el.value = cleaned;
+  const newPos = Math.max(0, pos - removedBeforeCursor);
+  try { el.setSelectionRange(newPos, newPos); } catch (e) { /* ignore on unsupported input types */ }
+}
+[
+  'inv_buyer_gstin', 'inv_seller_gstin', 'eway_transporter_gstin',
+  'inv_po_number', 'eway_ewaybill_number', 'inv_irn',
+].forEach(function (fieldId) {
+  const el = document.getElementById(fieldId);
+  if (el) {
+    _stripSpecialChars(el);   // clean whatever OCR/DB already has, on load
+    el.addEventListener('input', function () { _stripSpecialChars(el); });
+  }
 });
 
 // ============================================================

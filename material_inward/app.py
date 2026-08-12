@@ -46,7 +46,7 @@ from database.db_operations import (
 from database.scenario_operations import (
     get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
     delivery_mode_remark_text, ewb_exemption_remark_text, append_remark,
-    DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS
+    DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS, add_history_extra
 )
 from database.vehicle_master_operations import get_drivers_by_truck
 from database.supplier_operations import search_suppliers, get_supplier_by_code
@@ -550,11 +550,50 @@ def _auto_populate_form_tables(history_id: int) -> None:
         logger.warning(f"Auto-populate failed for history_id={history_id}: {e}")
 
 
+# FIX (2026-08-11): manual-upload/G-drive parity. Maps our internal doctype
+# names to the filename-suffix keyword _detect_doc_type() (folder_watcher.py)
+# looks for. Manually-uploaded filenames are arbitrary (e.g. "scan1.pdf") and
+# don't follow the <number>_INV.pdf convention G-drive intake produces, so
+# when a manual upload's OCR fails and gets moved into its failed folder, it
+# must be renamed to end in _INV/_EWB/_LR -- otherwise _detect_doc_type()
+# returns None and /api/rerun_ocr's retry loop silently skips it forever.
+_UPLOAD_DOCTYPE_KEYWORD = {
+    "invoice":  config.INVOICE_KEYWORD,
+    "ewaybill": config.EWAYBILL_KEYWORD,
+    "lr":       config.LR_KEYWORD,
+}
+
+
+def _move_failed_upload(file_path: str, history_id: int, doctype: str) -> str:
+    """
+    Moves a manual-upload OCR failure into its own per-record subfolder
+    (uploads/failed/h{history_id}/) instead of the old single shared
+    UPLOAD_FAILED_FOLDER -- the shared folder meant /api/rerun_ocr's
+    os.listdir(failed_path) could pick up ANOTHER record's failed file and
+    reprocess it under the wrong history_id. Also renames the file so
+    _detect_doc_type() can classify it on retry (see _UPLOAD_DOCTYPE_KEYWORD
+    above). Returns the folder path, for set_ocr_status's failed_path.
+    """
+    failed_folder = os.path.join(config.UPLOAD_FAILED_FOLDER, f"h{history_id}")
+    os.makedirs(failed_folder, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.basename(file_path))
+    keyword = _UPLOAD_DOCTYPE_KEYWORD.get(doctype, doctype).upper()
+    if not stem.lower().endswith(f"_{keyword.lower()}"):
+        stem = f"{stem}_{keyword}"
+    dest_path = os.path.join(failed_folder, f"{stem}{ext}")
+    try:
+        shutil.move(file_path, dest_path)
+    except Exception as e:
+        logger.error(f"Failed to move failed upload {file_path} -> {dest_path}: {e}")
+    return failed_folder
+
+
 def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: int) -> bool:
     try:
         extracted = process_document(doctype, file_path, filename)
         if not extracted:
-            _move_file(file_path, config.UPLOAD_FAILED_FOLDER)
+            failed_folder = _move_failed_upload(file_path, history_id, doctype)
+            set_ocr_status(history_id, "failed", failed_path=failed_folder)
             return False
         extracted["filename"] = filename
         if doctype == "invoice":
@@ -573,7 +612,8 @@ def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: i
         return True
     except Exception as e:
         logger.error(f"OCR error for {doctype}: {e}", exc_info=True)
-        _move_file(file_path, config.UPLOAD_FAILED_FOLDER)
+        failed_folder = _move_failed_upload(file_path, history_id, doctype)
+        set_ocr_status(history_id, "failed", failed_path=failed_folder)
         return False
 
 
@@ -1431,6 +1471,24 @@ def api_rerun_ocr(history_id):
         set_ocr_status(history_id, "success")
         return jsonify({"success": True, "message": f"OCR retry succeeded — {files_processed} document(s)", "retry_count": retry_count})
 
+    # FIX (2026-08-11): manual-upload parity. The /upload/<doctype> route
+    # lets a user upload invoice/ewaybill/lr as separate requests (one tab at
+    # a time), so it's possible for Invoice to have already succeeded on its
+    # own earlier while, say, E-Way Bill failed and is the only thing sitting
+    # in the failed folder now. In that case this retry batch never touches
+    # an invoice file at all, so invoice_succeeded above stays False even
+    # though the anchor document is already saved -- without this check the
+    # record would stay stuck on "failed" forever despite a fully successful
+    # retry, which is worse than the original 404 (silently wrong, not just
+    # broken). Falls back to checking the DB directly for existing invoice
+    # data rather than only what this particular retry call re-extracted.
+    if files_processed > 0:
+        details = get_history_details_by_id(history_id)
+        if details.get("invoice_data"):
+            _auto_populate_form_tables(history_id)
+            set_ocr_status(history_id, "success")
+            return jsonify({"success": True, "message": f"OCR retry succeeded — {files_processed} document(s)", "retry_count": retry_count})
+
     if files_processed > 0:
         # Some other document(s) re-extracted and were saved above, but the
         # Invoice specifically still failed -- leave the record as "failed"
@@ -1511,7 +1569,10 @@ def upload_document(doctype):
     blocked = _require_role_edit("compliance")
     if blocked:
         return blocked
-    valid_types = ["invoice", "ewaybill", "lr"]
+    # FIX (2026-08-11): "others" added for G-drive parity -- no OCR, just
+    # attached to the record the same way folder_watcher.py's
+    # _process_batch() handles an Others file dropped in G-drive.
+    valid_types = ["invoice", "ewaybill", "lr", "others"]
     if doctype not in valid_types:
         return jsonify({"error": f"Invalid document type: {doctype}"}), 400
     if "file" not in request.files or not request.files["file"].filename:
@@ -1519,14 +1580,27 @@ def upload_document(doctype):
 
     file = request.files["file"]
     filename = file.filename
-    file_path = os.path.join(config.UPLOAD_FOLDER, filename)
-    file.save(file_path)
 
     try:
         history_id = session.get("current_history_id")
         if not history_id:
             history_id = create_history_record()
             session["current_history_id"] = history_id
+
+        if doctype == "others":
+            safe_name = f"h{history_id}_{filename}"
+            others_path = os.path.join(config.UPLOAD_FOLDER, safe_name)
+            os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+            file.save(others_path)
+            add_history_extra(history_id, safe_name, filename, doc_type="others")
+            return jsonify({
+                "success": True,
+                "history_id": history_id,
+                "message": "Others document attached"
+            })
+
+        file_path = os.path.join(config.UPLOAD_FOLDER, filename)
+        file.save(file_path)
 
         if not _run_ocr_and_save(doctype, file_path, filename, history_id):
             return jsonify({"error": "OCR failed — file moved to failed/"}), 500
@@ -1557,6 +1631,10 @@ def process_all():
         "ewaybill": request.files.get("ewaybill"),
         "lr":       request.files.get("lr")
     }
+    # "others" kept separate from the OCR-required check below -- Others
+    # alone (with none of invoice/ewaybill/lr) shouldn't be treated as a
+    # valid /process_all submission, same as before this fix.
+    others_file = request.files.get("others")
     if not any(f and f.filename for f in files.values()):
         return jsonify({"error": "No files uploaded"}), 400
 
@@ -1573,14 +1651,123 @@ def process_all():
         file.save(file_path)
         results[doctype] = _run_ocr_and_save(doctype, file_path, filename, history_id)
 
+    # FIX (2026-08-11): "Others" doctype support, mirroring folder_watcher.py's
+    # _process_batch() -- no OCR, just attached via history_extras so
+    # doc_consolidator.py picks it up into the DMS-bound consolidated PDF the
+    # same way a G-drive-dropped Others file would be. Doesn't touch `results`
+    # / the ocr_status logic below, which only concerns invoice/ewaybill/lr.
+    if others_file and others_file.filename:
+        safe_others_name = f"h{history_id}_{others_file.filename}"
+        others_path = os.path.join(config.UPLOAD_FOLDER, safe_others_name)
+        try:
+            os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+            others_file.save(others_path)
+            add_history_extra(history_id, safe_others_name, others_file.filename, doc_type="others")
+        except Exception as e:
+            logger.error(f"Failed to attach Others document for history_id={history_id}: {e}")
+
     session["current_history_id"] = history_id
     _auto_populate_form_tables(history_id)
     if any(results.values()):
         set_ocr_status(history_id, "success")
     else:
-        set_ocr_status(history_id, "failed")
+        # FIX (2026-08-11): previously this always called
+        # set_ocr_status(history_id, "failed") with NO failed_path, which
+        # overwrote (wiped to NULL) the failed_path _run_ocr_and_save() had
+        # just set per-doctype above -- get_ocr_failed_path() would come back
+        # empty and /api/rerun_ocr always 404'd ("Failed folder not found")
+        # for a manual upload, even though the failed file(s) were sitting
+        # right there in uploads/failed/h{history_id}/. Re-pass the same
+        # folder so this aggregate call doesn't clobber it.
+        failed_folder = os.path.join(config.UPLOAD_FAILED_FOLDER, f"h{history_id}")
+        set_ocr_status(history_id, "failed", failed_path=failed_folder)
 
     return jsonify({"success": True, "history_id": history_id, "results": results})
+
+
+@app.route("/api/upload_missing/<int:history_id>/<doctype>", methods=["POST"])
+@api_login_required
+def api_upload_missing_document(history_id, doctype):
+    """
+    FIX (2026-08-11): lets a user add a document to a record that was
+    already started -- e.g. only Invoice was uploaded via /process_all
+    earlier, and E-Way Bill/LR need to be added later. Previously there was
+    no way to do this at all: /process_all always creates a brand new
+    history_id every time it's submitted, and the only other upload route
+    (/upload/<doctype>) relied on a session-stored current_history_id that
+    nothing in the UI ever actually called. Takes history_id explicitly in
+    the URL instead (tied to the record the Documents tab is already
+    showing), so there's no session-state guessing involved.
+
+    Blocked once the record's Extracted Data is approved -- save_invoice_to_db/
+    save_ewaybill_to_db/save_lr_to_db are unconditional upserts with no
+    approval check of their own, so without this gate a re-upload here would
+    silently overwrite already-approved data. Gate In can't run until
+    approval_status = 'approved' anyway (_check_step_allowed), so blocking
+    on approval here also transitively prevents document changes after Gate
+    In has posted -- no separate check needed for that.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    valid_types = ["invoice", "ewaybill", "lr", "others"]
+    if doctype not in valid_types:
+        return jsonify({"success": False, "error": f"Invalid document type: {doctype}"}), 400
+    if "file" not in request.files or not request.files["file"].filename:
+        return jsonify({"success": False, "error": "No file provided"}), 400
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "") == "approved":
+        return jsonify({
+            "success": False,
+            "error": "This record is already approved — revert the approval from Admin Records before adding or replacing documents."
+        }), 400
+
+    file = request.files["file"]
+    filename = file.filename
+
+    try:
+        if doctype == "others":
+            safe_name = f"h{history_id}_{filename}"
+            others_path = os.path.join(config.UPLOAD_FOLDER, safe_name)
+            os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+            file.save(others_path)
+            add_history_extra(history_id, safe_name, filename, doc_type="others")
+            return jsonify({"success": True, "history_id": history_id, "message": "Others document attached"})
+
+        safe_name = f"h{history_id}_{filename}"
+        file_path = os.path.join(config.UPLOAD_FOLDER, safe_name)
+        os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+        file.save(file_path)
+
+        if not _run_ocr_and_save(doctype, file_path, safe_name, history_id):
+            return jsonify({
+                "success": False,
+                "error": f"OCR failed for {doctype.upper()} — it's been moved to this record's failed folder, use Re-run OCR from Extracted Data once it shows as failed."
+            }), 500
+
+        details = get_history_details_by_id(history_id)
+        # _run_ocr_and_save's success path never touches ocr_status (only its
+        # failure branches do) -- if this record was previously "failed"
+        # (e.g. the doc being added/replaced right now is the one that
+        # failed originally), leaving ocr_status stale would keep showing
+        # "failed" even though this upload just fixed it. Same invoice-anchor
+        # rule as /api/rerun_ocr's own fallback check.
+        if details.get("invoice_data"):
+            set_ocr_status(history_id, "success")
+
+        _auto_populate_form_tables(history_id)
+        return jsonify({
+            "success": True,
+            "history_id": history_id,
+            "data": details.get(f"{doctype}_data") or {},
+            "message": f"{doctype.upper()} uploaded"
+        })
+    except Exception as e:
+        logger.error(f"Upload-missing error {doctype} h{history_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ============================================================

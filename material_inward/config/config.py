@@ -46,7 +46,7 @@ class Config:
     # and dev run on different servers so there's no collision risk either
     # way, and moving it would require hand-editing that other app too).
     IS_PRODUCTION: bool = os.getenv("IS_PRODUCTION", "true").lower() == "true"
-    _PROD_APP_ROOT: str = os.getenv("PROD_APP_ROOT", r"C:\material_inward")
+    _PROD_APP_ROOT: str = os.getenv("PROD_APP_ROOT", r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward")
     _DEV_APP_ROOT: str = os.getenv("DEV_APP_ROOT", r"C:\material_inward")
     APP_ROOT: str = _PROD_APP_ROOT if IS_PRODUCTION else _DEV_APP_ROOT
 
