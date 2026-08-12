@@ -19,6 +19,7 @@ import json
 import base64
 import os
 import re
+import time
 from typing import Optional
 
 from config.config import config
@@ -38,10 +39,27 @@ except ImportError:
 # Cached model instance — initialized once, reused for all calls
 _model_instance = None
 
+# FIX (2026-08-10): retry transient WatsonX network/DNS failures instead of
+# giving up after a single attempt. Confirmed in production: record 200's
+# OCR (UT422_INV.pdf) failed outright with "[Errno 11002] getaddrinfo
+# failed" trying to resolve ml.cloud.ibm.com -- a momentary DNS blip (a
+# manual ping to the same host seconds later resolved fine, 0% packet
+# loss). Previously a single bad lookup permanently failed that document's
+# OCR with no built-in retry -- OCR retries are manual-only (the Extracted
+# Data tab's retry button, keyed off history.ocr_retry_count), so the
+# failure just sat there marked 'failed' until a human happened to notice.
+# Used by both _get_model() (connection setup) and process_document()'s
+# model.chat() call (the actual OCR request) -- either one can hit the
+# same class of transient failure.
+_WATSONX_RETRY_ATTEMPTS = 3
+_WATSONX_RETRY_DELAY_SECONDS = 3
+
 
 def _get_model() -> Optional[object]:
     """
     Return cached WatsonX model. Initialize once on first call.
+    Retries up to _WATSONX_RETRY_ATTEMPTS times on failure -- see the FIX
+    note above _WATSONX_RETRY_ATTEMPTS for why.
     """
     global _model_instance
     if _model_instance is not None:
@@ -52,22 +70,36 @@ def _get_model() -> Optional[object]:
     if not config.WATSONX_API_KEY or not config.WATSONX_PROJECT_ID:
         logger.error("WatsonX credentials not configured in .env")
         return None
-    try:
-        credentials = Credentials(
-            url=config.WATSONX_URL,
-            api_key=config.WATSONX_API_KEY
-        )
-        _model_instance = ModelInference(
-            model_id=config.WATSONX_MODEL_ID,
-            credentials=credentials,
-            project_id=config.WATSONX_PROJECT_ID,
-            params={"max_tokens": 4000}
-        )
-        logger.info(f"WatsonX model initialized: {config.WATSONX_MODEL_ID}")
-        return _model_instance
-    except Exception as e:
-        logger.error(f"Failed to initialize WatsonX model: {e}")
-        return None
+
+    for attempt in range(1, _WATSONX_RETRY_ATTEMPTS + 1):
+        try:
+            credentials = Credentials(
+                url=config.WATSONX_URL,
+                api_key=config.WATSONX_API_KEY
+            )
+            _model_instance = ModelInference(
+                model_id=config.WATSONX_MODEL_ID,
+                credentials=credentials,
+                project_id=config.WATSONX_PROJECT_ID,
+                params={"max_tokens": 4000}
+            )
+            logger.info(f"WatsonX model initialized: {config.WATSONX_MODEL_ID}")
+            return _model_instance
+        except Exception as e:
+            if attempt < _WATSONX_RETRY_ATTEMPTS:
+                logger.warning(
+                    f"WatsonX model init failed (attempt {attempt}/"
+                    f"{_WATSONX_RETRY_ATTEMPTS}): {e} -- retrying in "
+                    f"{_WATSONX_RETRY_DELAY_SECONDS}s (likely transient "
+                    "DNS/network)."
+                )
+                time.sleep(_WATSONX_RETRY_DELAY_SECONDS)
+            else:
+                logger.error(
+                    f"Failed to initialize WatsonX model after "
+                    f"{_WATSONX_RETRY_ATTEMPTS} attempts: {e}"
+                )
+    return None
 
 
 def _encode_pages_to_base64(file_path: str, max_pages: int = 10) -> list:
@@ -299,6 +331,50 @@ def _clean_irn(raw: str) -> str:
     return re.sub(r'\s+', '', cleaned)
 
 
+def _apply_stock_transfer_routing(extracted: dict) -> dict:
+    """
+    Client-requested routing rule (2026-08): this stock-transfer document
+    family's Delivery Challan and Tax Invoice documents (goods moving
+    between the company's own plants, no real GSTIN-to-GSTIN sale) label
+    their invoice/PO-equivalent fields differently from a normal
+    third-party purchase invoice, but ONLY when "Type of Sale" says
+    STOCK TRANSFER:
+      - Delivery Challan + Stock Transfer: invoice_number <- "GST Challan
+        Sr. No.", po_number <- "Ref No."
+      - Tax Invoice + Stock Transfer: invoice_number <- "GST Invoice Sr.
+        No.", po_number <- "Sales Order / STO No."
+
+    document_title / type_of_sale / gst_invoice_sr_no / gst_challan_sr_no /
+    sales_order_sto_no / ref_no are internal-only fields -- never rendered
+    on the Extracted Data tab -- used purely to decide this routing. If
+    Type of Sale isn't Stock Transfer (the normal case), extracted is
+    returned untouched and the regular invoice_number/po_number extraction
+    above stands as-is.
+    """
+    type_of_sale = (extracted.get("type_of_sale") or "").upper()
+    if "STOCK TRANSFER" not in type_of_sale:
+        return extracted
+
+    title = (extracted.get("document_title") or "").upper()
+    is_challan = "DELIVERY CHALLAN" in title or bool(extracted.get("gst_challan_sr_no"))
+    is_tax_invoice = "TAX INVOICE" in title or bool(extracted.get("gst_invoice_sr_no"))
+
+    if is_challan and not is_tax_invoice:
+        if extracted.get("gst_challan_sr_no"):
+            extracted["invoice_number"] = extracted["gst_challan_sr_no"]
+        if extracted.get("ref_no"):
+            extracted["po_number"] = extracted["ref_no"]
+        logger.info("Stock Transfer routing applied: Delivery Challan (invoice_number <- GST Challan Sr. No., po_number <- Ref No.)")
+    elif is_tax_invoice:
+        if extracted.get("gst_invoice_sr_no"):
+            extracted["invoice_number"] = extracted["gst_invoice_sr_no"]
+        if extracted.get("sales_order_sto_no"):
+            extracted["po_number"] = extracted["sales_order_sto_no"]
+        logger.info("Stock Transfer routing applied: Tax Invoice (invoice_number <- GST Invoice Sr. No., po_number <- Sales Order/STO No.)")
+
+    return extracted
+
+
 def _build_prompt(doc_type: str) -> str:
     """
     Build extraction prompt. Keys use lowercase_underscore to match DB columns.
@@ -385,6 +461,34 @@ Important field notes:
   page, not just the header. Do not confuse it with "Ack No" — that is a shorter,
   separate acknowledgement number, not the IRN. Return empty string if no line
   labeled IRN is found.
+- "document_title": The literal document-type heading printed at the very top of
+  the page (e.g. "TAX INVOICE", "DELIVERY CHALLAN", "BILL OF SUPPLY"). Return it
+  exactly as printed. This is used only for internal routing logic below and is
+  never shown to the reviewer -- still extract it accurately.
+- "type_of_sale": Look for a label "Type of Sale" (seen on some stock-transfer
+  style documents, in the header info block on the right side, e.g.
+  "Type of Sale : STOCK TRANSFER - FOR" or "STOCK TRANSFER"). Return the value
+  exactly as printed. Most documents do not have this label at all -- return
+  empty string if it's not present rather than guessing.
+- "gst_invoice_sr_no": Only appears on documents titled "TAX INVOICE" from this
+  stock-transfer document family -- look for a label "GST Invoice Sr. No." (top
+  right header block, near Date / Sales Order info). Return empty string if not
+  present.
+- "gst_challan_sr_no": Only appears on documents titled "DELIVERY CHALLAN" from
+  this stock-transfer document family -- look for a label "GST Challan Sr. No."
+  (top right header block, near Date / Ref No info). Return empty string if not
+  present.
+- "sales_order_sto_no": Look for a label "Sales Order / STO No" or
+  "Sales Order/STO No:" (top right header block). Return empty string if not
+  present.
+- "ref_no": Look for a label "Ref No." (top right header block, distinct from
+  "Customer PO No."). Return empty string if not present.
+- "outbound_delivery_number": Look for a label "Outbound Delivery Number" or
+  "Outbound Delivery No" (commonly near the bottom-left, next to Lot Number /
+  Vehicle Number). Extract this into its own field whenever it's visible,
+  regardless of whether a proper Invoice Number was also found -- this is
+  separate from invoice_number's FALLBACK rule above, not a replacement for it.
+  Return empty string if not present.
 
 Line-item table columns can appear in varying order and density. Read each
 row left to right and match each value to its column header exactly as
@@ -423,6 +527,13 @@ Correct any field that fails these checks before returning the JSON.
   "invoice_date": "",
   "po_number": "",
   "irn": "",
+  "document_title": "",
+  "type_of_sale": "",
+  "gst_invoice_sr_no": "",
+  "gst_challan_sr_no": "",
+  "sales_order_sto_no": "",
+  "ref_no": "",
+  "outbound_delivery_number": "",
   "buyer_name": "",
   "buyer_address": "",
   "buyer_gstin": "",
@@ -651,7 +762,29 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
 
     try:
         messages = _build_messages(pages_b64, prompt)
-        response = model.chat(messages=messages)
+
+        # Retry the actual OCR request too, not just model init above --
+        # same transient-DNS/network class of failure could just as easily
+        # hit here mid-document instead of at startup.
+        response = None
+        last_err = None
+        for attempt in range(1, _WATSONX_RETRY_ATTEMPTS + 1):
+            try:
+                response = model.chat(messages=messages)
+                break
+            except Exception as chat_err:
+                last_err = chat_err
+                if attempt < _WATSONX_RETRY_ATTEMPTS:
+                    logger.warning(
+                        f"WatsonX chat() failed for {doc_type} '{filename}' "
+                        f"(attempt {attempt}/{_WATSONX_RETRY_ATTEMPTS}): "
+                        f"{chat_err} -- retrying in "
+                        f"{_WATSONX_RETRY_DELAY_SECONDS}s."
+                    )
+                    time.sleep(_WATSONX_RETRY_DELAY_SECONDS)
+        if response is None:
+            raise last_err
+
         raw_text = response["choices"][0]["message"]["content"]
 
         logger.debug(f"WatsonX raw response for {doc_type}: {raw_text[:500]}")
@@ -686,6 +819,7 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
                 extracted["seller_gstin"] = _attempt_gstin_correction(extracted["seller_gstin"])
             if extracted.get("irn"):
                 extracted["irn"] = _clean_irn(extracted["irn"])
+            extracted = _apply_stock_transfer_routing(extracted)
         elif doc_type == "ewaybill":
             if extracted.get("transporter_gstin"):
                 extracted["transporter_gstin"] = _attempt_gstin_correction(extracted["transporter_gstin"])

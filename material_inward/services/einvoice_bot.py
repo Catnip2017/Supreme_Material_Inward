@@ -43,10 +43,14 @@ from selenium.webdriver.edge.options import Options
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from services.edge_driver_check import ensure_matching_edge_driver
+from config.config import config
 
 logger = logging.getLogger(__name__)
 
-SCREENSHOT_DIR = r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward\gst_screenshots\einvoice"
+# Derived from config.GST_SCREENSHOTS_ROOT / GST_EDGE_PROFILE_ROOT, which
+# follow the IS_PRODUCTION switch (config.py) -- no longer hardcoded to one
+# fixed machine path, so this bot writes to the right environment's folder.
+SCREENSHOT_DIR = os.path.join(config.GST_SCREENSHOTS_ROOT, "einvoice")
 SCREENSHOT_TTL = 10 * 24 * 3600   # 10 days in seconds
 
 # Persistent Edge profile -- was previously unset, so every run got a fresh
@@ -59,7 +63,7 @@ SCREENSHOT_TTL = 10 * 24 * 3600   # 10 days in seconds
 # and the prompt just came back on the next run. Pointing at a real,
 # reused folder means a single manual Allow/Block click here sticks for
 # every future run against this same site.
-EDGE_PROFILE_DIR = r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward\gst_edge_profile\einvoice"
+EDGE_PROFILE_DIR = os.path.join(config.GST_EDGE_PROFILE_ROOT, "einvoice")
 
 
 class EInvoiceBot:

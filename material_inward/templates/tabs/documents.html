@@ -5,7 +5,7 @@
   &nbsp;|&nbsp;
   MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
-  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
   MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
 </div>
@@ -15,6 +15,21 @@
   <span>✓ Consolidated document uploaded to DMS</span>
   <a href="{{ dms_document_link }}" target="_blank" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;text-decoration:none;background:#1a7a3c;color:white;">🔗 Open in DMS</a>
 </div>
+{% elif history and history.gate_in and history.dms_status == 'uploaded' %}
+{# FIX: this record WAS uploaded (history.dms_status says so) -- the link
+   just hasn't landed in dms_document_links yet (see services/
+   dms_links_import.py's own note on unmatched rows). Previously this fell
+   into the same branch as "never uploaded" below and showed a Retry
+   Upload button, which the backend then correctly refused because it
+   really is already uploaded -- a contradictory "not uploaded, click
+   here" -> "already uploaded" experience. Re-uploading isn't the right
+   action for this state anyway (risks a Contentverse duplicate); syncing
+   the link is. #}
+<div style="background:#eef6ff;border:1px solid #b9d7fb;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px;color:#1e5ca8;display:flex;align-items:center;gap:10px;">
+  <span>✓ Uploaded to DMS — the document link hasn't synced into this app yet</span>
+  <button id="dmsSyncLinkBtn" onclick="syncDmsLink({{ history_id }})" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;border:none;cursor:pointer;background:#1e5ca8;color:white;">🔄 Sync Link</button>
+</div>
+<div id="dmsRetryStatus" style="display:none;font-size:12px;margin-bottom:16px;"></div>
 {% elif history and history.gate_in %}
 <div style="background:#fff8e6;border:1px solid #ffd889;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px;color:#8a6100;display:flex;align-items:center;gap:10px;">
   <span>⏳ Consolidated document {% if history.dms_status == 'staged' %}staged but not yet confirmed uploaded to DMS{% else %}not yet uploaded to DMS{% endif %}</span>
@@ -22,6 +37,35 @@
 </div>
 <div id="dmsRetryStatus" style="display:none;font-size:12px;margin-bottom:16px;"></div>
 {% endif %}
+
+<!-- FIX (2026-08-11): "add remaining/replace document" for records started
+     with only some documents uploaded (/process_all always creates a new
+     history_id, there was previously no way to add to an existing one).
+     Hidden once Extracted Data is approved -- see /api/upload_missing's own
+     docstring for why the block is on approval_status specifically. -->
+{% if history %}
+  {% if history.approval_status == 'approved' %}
+  <div style="background:#f5f5f5;border:1px solid #ddd;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#666;">
+    🔒 This record is approved — revert the approval from Admin Records to add or replace documents.
+  </div>
+  {% else %}
+  <div class="content-card" style="background: white; padding: 20px 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
+    <h4 style="color:#333; font-size:16px; margin-bottom:14px;">➕ Add / Replace Document</h4>
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <select id="addDocType" style="padding:8px 12px; border-radius:6px; border:1px solid #ccc; font-size:13px;">
+        <option value="invoice">Invoice</option>
+        <option value="ewaybill">E-Way Bill</option>
+        <option value="lr">Lorry Receipt (LR)</option>
+        <option value="others">Others</option>
+      </select>
+      <input type="file" id="addDocFile" accept=".pdf" style="font-size:13px;">
+      <button id="addDocBtn" onclick="uploadMissingDocument({{ history_id }})" style="padding:8px 18px; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; background:#1e5ca8; color:white;">⬆️ Upload</button>
+    </div>
+    <div id="addDocStatus" style="display:none; margin-top:10px; font-size:13px; font-weight:500;"></div>
+  </div>
+  {% endif %}
+{% endif %}
+
 <div class="content-card" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
   <h3 style="color: #333; margin-bottom: 20px;">📁 Original Documents</h3>
   
@@ -322,6 +366,166 @@ function retryDmsUpload(historyId) {
       }
     }
   });
+}
+
+// Companion to retryDmsUpload() above, for the "already uploaded, link just
+// hasn't synced yet" state. This is a quick DB+Excel-file operation (see
+// /api/dms/sync_link and services/dms_links_import.py), not an RF robot
+// job, so it's a plain fetch -- no job_id/poll_url to hand to
+// submitAndPoll().
+function syncDmsLink(historyId) {
+  const btn = document.getElementById('dmsSyncLinkBtn');
+  const statusEl = document.getElementById('dmsRetryStatus');
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#555';
+    statusEl.textContent = 'Syncing document link...';
+  }
+  fetch(`/api/dms/sync_link/${historyId}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        if (statusEl) {
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✓ Link found. Reloading...';
+        }
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        if (btn) btn.disabled = false;
+        if (statusEl) {
+          statusEl.style.color = '#e17055';
+          // FIX: sync failing here means the link genuinely isn't in the
+          // Excel file yet -- not just that the DB import hadn't caught up
+          // (that's what this button just ran). Offer the actual next
+          // step (re-running just the Contentverse link-generation step
+          // for this one document) right in the same status line instead
+          // of leaving a dead end.
+          statusEl.innerHTML =
+            '❌ ' + _escHtmlDocs(data.error || 'Link sync failed') +
+            ' <button type="button" onclick="regenDmsLink(' + historyId + ')" ' +
+            'style="margin-left:8px;padding:3px 10px;border-radius:5px;font-size:11px;' +
+            'border:none;cursor:pointer;background:#1e5ca8;color:white;">🤖 Regenerate Link</button>';
+        }
+      }
+    })
+    .catch(err => {
+      if (btn) btn.disabled = false;
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ Network error: ' + err.message;
+      }
+    });
+}
+
+// Last resort after syncDmsLink() above has confirmed the link truly isn't
+// in the Excel file: re-runs dms_upload.robot's single-document link step
+// via the RF queue (see /api/dms/regen_link, services/dms_upload_runner.py's
+// run_dms_link_regen) -- an actual browser automation job, so this DOES
+// have a job_id/poll_url and uses the same submitAndPoll() as retryDmsUpload.
+function regenDmsLink(historyId) {
+  const statusEl = document.getElementById('dmsRetryStatus');
+  if (statusEl) {
+    statusEl.style.color = '#555';
+    statusEl.textContent = 'Regenerating link via Contentverse (this can take a minute)...';
+  }
+  submitAndPoll(`/api/dms/regen_link/${historyId}`, {}, null, {
+    onSuccess: () => {
+      if (statusEl) {
+        statusEl.style.color = '#00b894';
+        statusEl.textContent = '✓ Link regenerated. Reloading...';
+      }
+      setTimeout(() => window.location.reload(), 1500);
+    },
+    onFailure: (error) => {
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ ' + error;
+      }
+    },
+    onError: (error) => {
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ ' + error;
+      }
+    }
+  });
+}
+
+// Tiny local HTML-escape helper for the innerHTML build above -- this file
+// doesn't already have a shared _escHtml here (that's gate_in.html's own),
+// so a minimal one of its own rather than assuming a global exists.
+function _escHtmlDocs(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+// Companion to the "Add / Replace Document" panel above -- posts to
+// /api/upload_missing/<history_id>/<doctype> (explicit history_id, no
+// session-state guessing). Uses the same reloadToFreshData() pattern as
+// gate_in.html/migo_105.html/miro.html (sessionStorage + reload, reopens
+// the Documents tab after) rather than a bare window.location.reload(),
+// consistent with the rest of this file's post-action refreshes
+// (retryDmsUpload/syncDmsLink/regenDmsLink above all do the same).
+function uploadMissingDocument(historyId) {
+  const typeSel  = document.getElementById('addDocType');
+  const fileInp  = document.getElementById('addDocFile');
+  const btn      = document.getElementById('addDocBtn');
+  const statusEl = document.getElementById('addDocStatus');
+  if (!typeSel || !fileInp || !btn) return;
+  const doctype = typeSel.value;
+  const file = fileInp.files[0];
+
+  if (!file) {
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.style.color = '#e17055';
+      statusEl.textContent = 'Choose a file first.';
+    }
+    return;
+  }
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳ Uploading...';
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#555';
+    statusEl.textContent = doctype === 'others'
+      ? 'Attaching document...'
+      : 'Uploading and running OCR — this may take 30-60 seconds...';
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  fetch(`/api/upload_missing/${historyId}/${doctype}`, { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        if (statusEl) {
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✓ ' + (data.message || 'Uploaded') + ' — refreshing...';
+        }
+        reloadToFreshData('documents', 1200);
+      } else {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        if (statusEl) {
+          statusEl.style.color = '#e17055';
+          statusEl.textContent = '❌ ' + (data.error || 'Upload failed');
+        }
+      }
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.textContent = originalText;
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ Network error: ' + err.message;
+      }
+    });
 }
 
 function downloadAllDocuments(historyId) {

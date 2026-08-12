@@ -48,26 +48,25 @@ Load Environment Variables
     Evaluate    __import__('dotenv').load_dotenv(r'''${env_path}''')
     ${USERNAME}=    Evaluate    __import__('os').getenv('CV_USERNAME')
     ${PASSWORD}=    Evaluate    __import__('os').getenv('CV_PASSWORD')
-    ${LINKS_PATH}=    Evaluate    __import__('os').getenv('DMS_LINKS_EXCEL_PATH')
+    # FIX: DMS_LINKS_EXCEL_PATH / DMS_STAGING_FOLDER used to be read
+    # straight from the raw .env file via os.getenv() here -- a second,
+    # independent path computation disconnected from config.py's own
+    # (config.py derives both from PROD_APP_ROOT/DEV_APP_ROOT +
+    # IS_PRODUCTION, and neither is a literal .env key anymore). Reading
+    # them via config.config instead means this robot always sees exactly
+    # what the Python side sees, for whichever environment IS_PRODUCTION
+    # currently selects -- one source of truth instead of two that could
+    # silently drift apart.
+    ${_ADD_ROOT}=    Evaluate    __import__('sys').path.insert(0, r'''${EXECDIR}''')
+    ${LINKS_PATH}=    Evaluate    __import__('config.config', fromlist=['config']).config.DMS_LINKS_EXCEL_PATH
+    ${STAGING_FOLDER}=    Evaluate    __import__('config.config', fromlist=['config']).config.DMS_STAGING_FOLDER
     Should Not Be Empty    ${USERNAME}
     Should Not Be Empty    ${PASSWORD}
     Should Not Be Empty    ${LINKS_PATH}
+    Should Not Be Empty    ${STAGING_FOLDER}
     Set Suite Variable    ${USERNAME}
     Set Suite Variable    ${PASSWORD}
     Set Suite Variable    ${DMS_LINKS_EXCEL_PATH}    ${LINKS_PATH}
-    # FIX: DMS_PENDING_UPLOAD_FOLDER/DMS_UPLOADED_ARCHIVE_FOLDER were pure
-    # hardcoded literals in the *** Variables *** table above, completely
-    # disconnected from config.DMS_STAGING_FOLDER (the single source of
-    # truth every Python-side path -- dms_upload_runner.py, folder_watcher.py,
-    # the staging/consolidation step -- already reads from .env). Two
-    # independent copies of the same folder path is exactly how this file
-    # can silently drift out of sync with where the app is actually staging
-    # files, if .env's DMS_STAGING_FOLDER is ever changed without also
-    # hand-editing this file. Now mirrors the DMS_LINKS_EXCEL_PATH pattern
-    # immediately above: .env wins when set, hardcoded literal is only the
-    # fallback if DMS_STAGING_FOLDER is missing from .env entirely.
-    ${STAGING_FOLDER}=    Evaluate
-    ...    __import__('os').getenv('DMS_STAGING_FOLDER', r'''${DMS_PENDING_UPLOAD_FOLDER}''')
     Set Suite Variable    ${DMS_PENDING_UPLOAD_FOLDER}    ${STAGING_FOLDER}
     Set Suite Variable    ${DMS_UPLOADED_ARCHIVE_FOLDER}    ${STAGING_FOLDER}\\uploaded
     Create Directory    ${DMS_UPLOADED_ARCHIVE_FOLDER}

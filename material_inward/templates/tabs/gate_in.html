@@ -36,6 +36,32 @@
   overflow-y: auto; margin-top: 4px;
 }
 .driver-dropdown.show { display: block; }
+/* Vendor dropdown specifically: taller (more rows can come back now that
+   the server cap is 100, not 10) and its item list scrolls independently
+   of the header + filter box above it, which stay pinned in view.
+   FIX: the first version of this set `display: flex` on the bare
+   (non-.show) selector -- an ID selector, so it beat `.driver-dropdown`'s
+   `display: none` on specificity and left the pane permanently in the
+   layout. Worse, `.vendor-dd-items` had no height/flex constraint of its
+   own, so in a flex column a child with no min-height won't shrink to
+   scroll internally -- it just grows to fit all rows, and the OUTER pane
+   (inherited overflow-y:auto + max-height from .driver-dropdown) ended up
+   being the thing that scrolled, taking the header and search box out of
+   view along with it on any list long enough to scroll. Fixed by keeping
+   `display: none` as the default (only `.show` switches to flex), and
+   giving `.vendor-dd-items` its own `flex:1; min-height:0; overflow-y:auto`
+   so IT scrolls while the header/search box above it stay fixed in place. */
+#vendorCodeDropdown, #vendorCodeDropdownHand {
+  max-height: 340px; flex-direction: column; overflow: hidden;
+}
+#vendorCodeDropdown.show, #vendorCodeDropdownHand.show { display: flex; }
+.vendor-dd-items { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.vendor-dropdown-search { padding: 6px 10px; border-bottom: 1px solid #f0f4ff; background:#fff; }
+.vendor-dropdown-search input {
+  width: 100%; box-sizing: border-box; padding: 6px 10px; font-size: 12px;
+  border: 1px solid #d9e4f5; border-radius: 6px; outline: none;
+}
+.vendor-dropdown-search input:focus { border-color: #1e5ca8; }
 .driver-dropdown-item {
   padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f4ff;
   font-size: 13px; transition: background .15s;
@@ -133,7 +159,7 @@
     <strong>Status:</strong>
     Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
     &nbsp;|&nbsp; MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
-    &nbsp;|&nbsp; MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
     &nbsp;|&nbsp; MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   </div>
   {% endif %}
@@ -279,14 +305,29 @@
     <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
       <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">🚦 Delivery Type</div>
       <div class="delivery-type-group">
+        {# FIX (2026-08-10): these three -- and the poAvail radios further
+           below -- used to hardcode `checked` on truck/with_po regardless
+           of what was actually saved, with a comment acknowledging the gap
+           ("reopening a without_po record will still show With PO selected
+           by default"). Now driven from history.po_flow_type (e.g.
+           "truck_without_po" -- see _getPoFlowType() below, delivery type
+           + "_" + po availability), same format saved server-side. Falls
+           back to truck/with_po -- the original defaults -- when there's
+           no history yet (brand new record) or po_flow_type is unset. #}
         <label class="delivery-radio-option">
-          <input type="radio" name="deliveryType" value="truck" checked onchange="onDeliveryTypeChange()"> 🚚 Truck
+          <input type="radio" name="deliveryType" value="truck"
+                 {% if not history or not history.po_flow_type or history.po_flow_type.startswith('truck') %}checked{% endif %}
+                 onchange="onDeliveryTypeChange()"> 🚚 Truck
         </label>
         <label class="delivery-radio-option">
-          <input type="radio" name="deliveryType" value="hand" onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
+          <input type="radio" name="deliveryType" value="hand"
+                 {% if history and history.po_flow_type and history.po_flow_type.startswith('hand') %}checked{% endif %}
+                 onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
         </label>
         <label class="delivery-radio-option">
-          <input type="radio" name="deliveryType" value="courier" onchange="onDeliveryTypeChange()"> 📦 Courier
+          <input type="radio" name="deliveryType" value="courier"
+                 {% if history and history.po_flow_type and history.po_flow_type.startswith('courier') %}checked{% endif %}
+                 onchange="onDeliveryTypeChange()"> 📦 Courier
         </label>
       </div>
     </div>
@@ -333,8 +374,8 @@
       </div>
       <div class="form-group">
         <label>Challan Quantity <span class="req">*</span></label>
-        <input type="text" id="challanQty" class="form-input" maxlength="17"
-              value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(17, True, '', 0) }}"
+        <input type="text" id="challanQty" class="form-input" maxlength="20" inputmode="decimal"
+              value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(20, True, '', 0) }}"
                {% if gate_in_locked %}disabled{% endif %}>
         <div class="field-error-msg" id="err_challanQty">Required</div>
       </div>
@@ -382,10 +423,14 @@
       <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">📋 Purchase Order Available?</div>
       <div class="po-avail-group">
         <label class="delivery-radio-option">
-          <input type="radio" name="poAvail" value="with_po" checked onchange="onPoAvailChange()"> With PO
+          <input type="radio" name="poAvail" value="with_po"
+                 {% if not history or not history.po_flow_type or history.po_flow_type.endswith('_with_po') %}checked{% endif %}
+                 onchange="onPoAvailChange()"> With PO
         </label>
         <label class="delivery-radio-option">
-          <input type="radio" name="poAvail" value="without_po" onchange="onPoAvailChange()"> Without PO
+          <input type="radio" name="poAvail" value="without_po"
+                 {% if history and history.po_flow_type and history.po_flow_type.endswith('_without_po') %}checked{% endif %}
+                 onchange="onPoAvailChange()"> Without PO
         </label>
       </div>
     </div>
@@ -457,12 +502,17 @@ const STEP_LOCKS_ENABLED_GATEIN = {{ 'true' if config.ENABLE_STEP_LOCKS else 'fa
     const now = new Date();
     timeEl.value = now.toTimeString().slice(0, 5);
   }
-  // Apply initial show/hide state to match whichever poAvail radio is
-  // checked by default. Note: the poAvail/deliveryType radios don't
-  // currently get re-checked from a previously-saved po_flow_type on
-  // reload (pre-existing gap, separate from this fix) -- so reopening a
-  // without_po record will still show "With PO" selected by default here.
+  // Apply initial show/hide state to match whichever poAvail/deliveryType
+  // radio is actually checked (now driven from history.po_flow_type -- see
+  // the FIX comment above the radio markup -- rather than always being the
+  // hardcoded truck/with_po default). onDeliveryTypeChange() wasn't called
+  // here before since the delivery radio always defaulted to "truck" and
+  // the static HTML already matched that (handFieldsSection starts
+  // display:none) -- now that the radio can load as "hand"/"courier" on a
+  // reopened record, this has to run too or the visible fields section
+  // would mismatch whichever radio is actually checked.
   onPoAvailChange();
+  onDeliveryTypeChange();
 })();
 
 const TRUCK_MANDATORY_FIELDS = [
@@ -648,6 +698,58 @@ function validateGateIn() {
       this.classList.remove('field-error');
       if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
     }
+  });
+})();
+
+// Challan Quantity: numeric only, max 16 digits before the decimal point
+// and 3 after (client request, 2026-08-07). Bad characters are blocked as
+// the user types (real-time filter on 'input', which also covers paste --
+// unlike 'keypress'), rather than validated after the fact, so it's
+// physically impossible to end up with letters or an over-length value.
+// On blur, a bare integer (or a value typed with fewer than 3 decimal
+// digits) is normalized to exactly 3 decimals -- "100" becomes "100.000",
+// "100.5" becomes "100.500". Client-side only, matching how Truck No and
+// License No are handled in this same tab -- no server-side re-check.
+// Same as those two, this only fires once the user actually interacts with
+// the field, so a pre-filled value (from a saved record, or the invoice's
+// goods quantity) isn't force-reformatted just by loading the page.
+(function() {
+  const el = document.getElementById('challanQty');
+  if (!el) return;
+
+  el.addEventListener('input', function() {
+    let v = this.value;
+    // Strip anything that isn't a digit or a period -- this alone blocks
+    // alphabets, currency symbols, spaces, etc.
+    v = v.replace(/[^0-9.]/g, '');
+    // Only the first period counts as the decimal point; drop any others
+    // (e.g. typing "1.2.3" collapses to "1.23").
+    const firstDot = v.indexOf('.');
+    if (firstDot !== -1) {
+      v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+    }
+    // Cap 16 digits before the decimal, 3 after (16+3, total 20 chars).
+    const parts = v.split('.');
+    parts[0] = parts[0].slice(0, 16);
+    if (parts.length > 1) parts[1] = parts[1].slice(0, 3);
+    this.value = parts.join('.');
+  });
+
+  el.addEventListener('blur', function() {
+    const errEl = document.getElementById('err_challanQty');
+    let v = this.value.trim();
+    if (!v) return;  // required-check on submit handles blank
+    if (!v.includes('.')) {
+      v = v + '.000';
+    } else {
+      let [intPart, decPart] = v.split('.');
+      intPart = intPart || '0';  // guard against a lone "." with nothing before it
+      decPart = (decPart + '000').slice(0, 3);
+      v = intPart + '.' + decPart;
+    }
+    this.value = v;
+    this.classList.remove('field-error');
+    if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
   });
 })();
 
@@ -850,7 +952,17 @@ function _renderDriverDropdown(drivers) {
 // field's value with the resolved SAP vendor code, since Gate In posts to
 // SAP through the existing VENDOR_NAME slot either way.
 // ============================================================
-let _vendorTypeaheadTimer = null;
+let _vendorTypeaheadTimer  = null;
+// FIX: the debounce timer only ever guarded when a request gets SENT, not
+// which response wins if two are in flight at once -- a slower response to
+// an earlier, shorter query (e.g. "supreme") could resolve AFTER a later,
+// more specific one ("supreme petrochem") and silently overwrite it,
+// which looked exactly like a stale-cache bug even though nothing was
+// actually being cached anywhere. Each outgoing request now gets a
+// sequence number per field; a response is only rendered if it's still
+// the latest one issued for that field.
+let _vendorFetchSeq       = {};   // suffix -> latest issued sequence number
+let _vendorCandidatesCache = {};  // suffix -> full unfiltered list from the last successful fetch
 
 // suffix is '' for the truck-flow fields, 'Hand' for hand-delivery fields --
 // same vendorName id either way, just with/without the suffix, since only
@@ -874,9 +986,13 @@ function onVendorNameTypeahead(suffix) {
 }
 
 function _searchVendorCandidates(name, suffix, isTypeahead) {
+  const seq = (_vendorFetchSeq[suffix] || 0) + 1;
+  _vendorFetchSeq[suffix] = seq;
+
   fetch('/api/vendor_lookup?name=' + encodeURIComponent(name))
     .then(r => r.json())
     .then(data => {
+      if (_vendorFetchSeq[suffix] !== seq) return; // superseded by a newer request -- discard
       if (!data.success) {
         if (!isTypeahead) showToast(data.error || 'Vendor lookup failed', 'error');
         return;
@@ -887,9 +1003,11 @@ function _searchVendorCandidates(name, suffix, isTypeahead) {
         if (dd) dd.classList.remove('show');
         return;
       }
+      _vendorCandidatesCache[suffix] = data.candidates;
       _renderVendorCodeDropdown(data.candidates, suffix);
     })
     .catch(err => {
+      if (_vendorFetchSeq[suffix] !== seq) return;
       if (!isTypeahead) showToast('Vendor lookup error: ' + err.message, 'error');
     });
 }
@@ -922,9 +1040,60 @@ function _fullAddress(c) {
     .filter(Boolean).join(', ');
 }
 
+// Builds the pane shell ONCE per fetch: header + a small filter box + a
+// scrollable items container. The filter box re-filters the already-fetched
+// full list client-side (see _filterVendorDropdown) -- no extra server
+// round trip, since the server already did the real fuzzy/code-prefix
+// matching to build this set; this box just narrows what's already there,
+// e.g. down to one city when a name matches several plants.
 function _renderVendorCodeDropdown(candidates, suffix) {
   const dd = document.getElementById('vendorCodeDropdown' + suffix);
   if (!dd) return;
+
+  dd.innerHTML = `<div class="po-dropdown-header">
+    <span id="vendorDdCount${suffix}">${candidates.length} Match(es) Found</span>
+    <span onclick="document.getElementById('vendorCodeDropdown${suffix}').classList.remove('show')"
+    style="cursor:pointer;color:#888;font-size:14px;">✕</span></div>
+    <div class="vendor-dropdown-search">
+      <input type="text" placeholder="🔎 Search this list (name, code, city...)"
+             id="vendorDdFilter${suffix}" oninput="_filterVendorDropdown('${suffix}')" autocomplete="off">
+    </div>
+    <div class="vendor-dd-items" id="vendorDdItems${suffix}"></div>`;
+
+  _renderVendorItems(candidates, suffix);
+  dd.classList.add('show');
+}
+
+// Client-side "proximity" filter over the full fetched list: matches a row
+// if every whitespace-separated word the user typed is a substring of SOME
+// field on that row (name, code, city, district, postal code), in any
+// order and regardless of which field it's in -- e.g. "supreme mumbai"
+// matches a Supreme Petrochem row located in Mumbai even though "mumbai"
+// isn't part of the vendor name itself.
+function _filterVendorDropdown(suffix) {
+  const filterEl = document.getElementById('vendorDdFilter' + suffix);
+  const raw = (filterEl ? filterEl.value : '').trim().toLowerCase();
+  const all = _vendorCandidatesCache[suffix] || [];
+
+  const filtered = !raw ? all : all.filter(function(c) {
+    const haystack = [c.name_1, c.name, c.supplier, c.city, c.district, c.postal_code]
+      .filter(Boolean).join(' ').toLowerCase();
+    return raw.split(/\s+/).every(w => haystack.indexOf(w) !== -1);
+  });
+
+  const countEl = document.getElementById('vendorDdCount' + suffix);
+  if (countEl) countEl.textContent = filtered.length + ' Match(es) Found' + (raw ? ' (filtered)' : '');
+  _renderVendorItems(filtered, suffix);
+}
+
+function _renderVendorItems(candidates, suffix) {
+  const itemsEl = document.getElementById('vendorDdItems' + suffix);
+  if (!itemsEl) return;
+
+  if (candidates.length === 0) {
+    itemsEl.innerHTML = '<div class="driver-dropdown-item" style="color:#999;cursor:default;">No matches for this filter.</div>';
+    return;
+  }
 
   const groupCounts = {};
   candidates.forEach(c => {
@@ -932,10 +1101,7 @@ function _renderVendorCodeDropdown(candidates, suffix) {
     groupCounts[key] = (groupCounts[key] || 0) + 1;
   });
 
-  dd.innerHTML = `<div class="po-dropdown-header">
-    <span>${candidates.length} Match(es) Found</span>
-    <span onclick="document.getElementById('vendorCodeDropdown${suffix}').classList.remove('show')"
-    style="cursor:pointer;color:#888;font-size:14px;">✕</span></div>`;
+  itemsEl.innerHTML = '';
   candidates.forEach(function(c) {
     const item = document.createElement('div');
     item.className = 'driver-dropdown-item';
@@ -952,9 +1118,8 @@ function _renderVendorCodeDropdown(candidates, suffix) {
       '<div class="drv-meta">' + (locationWithPin || 'No location on file') + '</div>' +
       (address ? '<div class="drv-meta" style="color:#c0392b;">' + _escHtml(address) + '</div>' : '');
     item.onclick = function() { _applyVendorCode(c, suffix); };
-    dd.appendChild(item);
+    itemsEl.appendChild(item);
   });
-  dd.classList.add('show');
 }
 
 // ============================================================

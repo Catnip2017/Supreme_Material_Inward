@@ -114,15 +114,42 @@
       background: white; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.1);
       padding: 40px; width: 100%; max-width: 95%;
     }
+    /* FIX (2026-08-12): Back button so the upload page (reached via the
+       "New Entry" dropdown link, from_history=False here so the top-bar's
+       "← Back to History" button doesn't render) isn't a dead end -- user
+       previously had no in-page way back except the browser Back button. */
+    .upload-back-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: none; border: 1px solid #dde3ec; color: #555;
+      padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      cursor: pointer; margin-bottom: 18px; transition: 0.2s;
+    }
+    .upload-back-btn:hover { background: #f5f7fa; border-color: #c5cedb; }
     .upload-page-title { font-size: 22px; font-weight: 700; color: #2c3e50; margin-bottom: 8px; text-align: center; }
     .upload-page-subtitle { font-size: 14px; color: #888; text-align: center; margin-bottom: 32px; }
-    .upload-cards-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+    .upload-cards-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
     .upload-card {
       background: #f8f9fb; border: 2px solid #e0e7ff; border-radius: 12px;
       padding: 20px 16px; text-align: center; transition: all 0.2s;
+      position: relative;
     }
     .upload-card.has-file { border-color: #00b894; background: #ecfdf5; }
     .upload-card-icon { font-size: 32px; margin-bottom: 8px; }
+    /* FIX (2026-08-12): per-card remove/X button -- previously the only way
+       to change a selection was to re-click "Choose File" and pick again;
+       there was no way to clear a card back to empty (e.g. picked the wrong
+       file) short of reloading the whole page and losing every other
+       selection too. Only shown once a file is actually selected
+       (.has-file), positioned top-right corner of the card. */
+    .upload-card-remove {
+      display: none; position: absolute; top: 8px; right: 8px;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #fff; border: 1px solid #f0b4b4; color: #e74c3c;
+      font-size: 12px; line-height: 1; cursor: pointer;
+      align-items: center; justify-content: center; padding: 0;
+    }
+    .upload-card.has-file .upload-card-remove { display: flex; }
+    .upload-card-remove:hover { background: #ffecec; }
     .upload-card-title { font-size: 14px; font-weight: 600; color: #333; margin-bottom: 12px; }
     .upload-card input[type="file"] { display: none; }
     .upload-card label {
@@ -340,11 +367,13 @@
     <!-- UPLOAD PAGE -->
     <div class="upload-page">
       <div class="upload-page-inner">
+        <button class="upload-back-btn" onclick="window.location.href='/history'">← Back</button>
         <div class="upload-page-title">📄 Upload Documents</div>
         <div class="upload-page-subtitle">Select the documents and click Process — OCR will extract all data automatically</div>
 
         <div class="upload-cards-row">
           <div class="upload-card" id="invoiceCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('invoice')" title="Remove selected file">✕</button>
             <div class="upload-card-icon">📄</div>
             <div class="upload-card-title">Invoice</div>
             <input type="file" id="invoiceInput" accept=".pdf" onchange="handleUploadSelect('invoice', this)">
@@ -352,6 +381,7 @@
             <div class="file-name" id="invoiceFileName"></div>
           </div>
           <div class="upload-card" id="ewaybillCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('ewaybill')" title="Remove selected file">✕</button>
             <div class="upload-card-icon">🚚</div>
             <div class="upload-card-title">E-Way Bill</div>
             <input type="file" id="ewaybillInput" accept=".pdf" onchange="handleUploadSelect('ewaybill', this)">
@@ -359,11 +389,23 @@
             <div class="file-name" id="ewaybillFileName"></div>
           </div>
           <div class="upload-card" id="lrCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('lr')" title="Remove selected file">✕</button>
             <div class="upload-card-icon">📦</div>
             <div class="upload-card-title">Lorry Receipt (LR)</div>
             <input type="file" id="lrInput" accept=".pdf" onchange="handleUploadSelect('lr', this)">
             <label for="lrInput">Choose File</label>
             <div class="file-name" id="lrFileName"></div>
+          </div>
+          <!-- FIX (2026-08-11): Others doctype for G-drive parity -- no OCR,
+               just attached to the record (see /process_all's others_file
+               handling and services/folder_watcher.py's own Others block). -->
+          <div class="upload-card" id="othersCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('others')" title="Remove selected file">✕</button>
+            <div class="upload-card-icon">📎</div>
+            <div class="upload-card-title">Others</div>
+            <input type="file" id="othersInput" accept=".pdf" onchange="handleUploadSelect('others', this)">
+            <label for="othersInput">Choose File</label>
+            <div class="file-name" id="othersFileName"></div>
           </div>
         </div>
 
@@ -502,7 +544,7 @@ document.getElementById('confirmYesBtn').onclick = function() {
 };
 
 // Upload page logic
-const selectedFiles = { invoice: null, ewaybill: null, lr: null };
+const selectedFiles = { invoice: null, ewaybill: null, lr: null, others: null };
 
 function handleUploadSelect(type, input) {
   const file = input.files[0];
@@ -510,7 +552,33 @@ function handleUploadSelect(type, input) {
   selectedFiles[type] = file;
   document.getElementById(type + 'FileName').textContent = file.name;
   document.getElementById(type + 'Card').classList.add('has-file');
-  const hasAny = Object.values(selectedFiles).some(f => f !== null);
+  _refreshProcessBtnState();
+}
+
+// FIX (2026-08-12): lets the user clear a single card's selection (e.g. picked
+// the wrong file) without reloading the page and losing every other card's
+// selection too. Resets the <input> itself (not just selectedFiles) so
+// choosing the same filename again still fires onchange.
+function removeUploadFile(type) {
+  selectedFiles[type] = null;
+  const input = document.getElementById(type + 'Input');
+  if (input) input.value = '';
+  const nameEl = document.getElementById(type + 'FileName');
+  if (nameEl) nameEl.textContent = '';
+  const card = document.getElementById(type + 'Card');
+  if (card) card.classList.remove('has-file');
+  _refreshProcessBtnState();
+}
+
+// FIX (2026-08-11 / 2026-08-12): "Others" alone can't be submitted here --
+// /process_all still requires at least one of invoice/ewaybill/lr (Others is
+// an additive attachment, not a standalone submission) -- so it's excluded
+// from the check that enables the Process button, matching that backend
+// requirement instead of enabling a button that would just error out.
+// Factored out of handleUploadSelect so removeUploadFile can re-run the same
+// check (a remove can just as easily flip the button back to disabled).
+function _refreshProcessBtnState() {
+  const hasAny = ['invoice', 'ewaybill', 'lr'].some(k => selectedFiles[k] !== null);
   const btn = document.getElementById('processBtn');
   if (btn) btn.disabled = !hasAny;
 }
@@ -531,6 +599,7 @@ async function processAllDocs() {
   if (selectedFiles.invoice)  formData.append('invoice',  selectedFiles.invoice);
   if (selectedFiles.ewaybill) formData.append('ewaybill', selectedFiles.ewaybill);
   if (selectedFiles.lr)       formData.append('lr',       selectedFiles.lr);
+  if (selectedFiles.others)   formData.append('others',   selectedFiles.others);
 
   try {
     const res = await fetch('/process_all', { method: 'POST', body: formData });

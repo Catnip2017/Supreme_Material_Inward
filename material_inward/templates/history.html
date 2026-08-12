@@ -62,6 +62,19 @@
         .count-card.pending { border-left:4px solid #fdcb6e; }
         .count-card.progress { border-left:4px solid #74b9ff; }
         .count-card.done   { border-left:4px solid #00b894; }
+        /* FIX (2026-08-12): count cards are now clickable filters (see
+           applyCardFilter() below) -- these are today-scoped counts
+           (get_today_counts()'s WHERE created_at::date = CURRENT_DATE), so
+           clicking one filters the table to today + that card's status. */
+        .count-card { cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; }
+        .count-card:hover { transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,0.14); }
+        .count-card.card-active { outline:2px solid #1e5ca8; outline-offset:-2px; }
+        .apply-filter-btn {
+            padding:10px 20px; background:linear-gradient(135deg,#1e5ca8,#164a8a);
+            border:none; border-radius:8px; font-size:14px; cursor:pointer;
+            color:white; font-weight:600; transition:0.2s; white-space:nowrap;
+        }
+        .apply-filter-btn:hover { opacity:0.9; transform:translateY(-1px); }
 
         /* Page header */
         .page-header {
@@ -101,8 +114,12 @@
             font-size:14px; transition:border-color 0.2s; outline:none;
         }
         .filter-input:focus, .filter-select:focus { border-color:#1e5ca8; }
-        .filter-date-row { display:flex; gap:8px; }
-        .filter-date-row input { flex:1; }
+        .filter-date-row { display:flex; flex-wrap:wrap; gap:8px; }
+        .filter-date-row input { flex:1; min-width:150px; }
+        /* Apply Filter button wraps onto its own line under the two date
+           inputs -- the date filter-group only gets 1fr of the grid, not
+           enough room for 2 inputs + a button all on one line. */
+        .filter-date-row .apply-filter-btn { flex:0 0 100%; }
         .clear-btn {
             padding:10px 20px; background:#f0f0f0; border:none;
             border-radius:8px; font-size:14px; cursor:pointer;
@@ -203,29 +220,29 @@
 
     <!-- Dashboard count cards -->
     {% if show_dashboard_counts and today_counts %}
-    <div class="counts-row">
-        <div class="count-card total">
+    <div class="counts-row" id="countsRow">
+        <div class="count-card total" data-card-status="" onclick="applyCardFilter('', this)" title="Show today's records">
             <div class="count-icon">📋</div>
             <div>
                 <div class="count-label">Total Today</div>
                 <div class="count-value">{{ today_counts.total or 0 }}</div>
             </div>
         </div>
-        <div class="count-card pending">
+        <div class="count-card pending" data-card-status="pending" onclick="applyCardFilter('pending', this)" title="Show today's Pending records">
             <div class="count-icon">⏳</div>
             <div>
                 <div class="count-label">Pending</div>
                 <div class="count-value">{{ today_counts.pending or 0 }}</div>
             </div>
         </div>
-        <div class="count-card progress">
+        <div class="count-card progress" data-card-status="in_progress" onclick="applyCardFilter('in_progress', this)" title="Show today's In Progress records">
             <div class="count-icon">🔄</div>
             <div>
                 <div class="count-label">In Progress</div>
                 <div class="count-value">{{ today_counts.in_progress or 0 }}</div>
             </div>
         </div>
-        <div class="count-card done">
+        <div class="count-card done" data-card-status="completed" onclick="applyCardFilter('completed', this)" title="Show today's Completed records">
             <div class="count-icon">✅</div>
             <div>
                 <div class="count-label">Completed</div>
@@ -289,9 +306,16 @@
         </div>
         <div class="filter-group">
             <label>Date &amp; Time Range</label>
+            <!-- FIX (2026-08-12): dateFrom/dateTo no longer filter live on
+                 every change (each keystroke/picker click used to refetch
+                 mid-edit) -- now require an explicit "Apply" click (see
+                 applyDateFilter() below), which also gives status-only
+                 changes a stable, intentionally-committed date range to
+                 stay scoped to. -->
             <div class="filter-date-row">
-                <input type="datetime-local" class="filter-input" id="dateFrom" onchange="loadHistory(1)">
-                <input type="datetime-local" class="filter-input" id="dateTo" onchange="loadHistory(1)">
+                <input type="datetime-local" class="filter-input" id="dateFrom">
+                <input type="datetime-local" class="filter-input" id="dateTo">
+                <button class="apply-filter-btn" onclick="applyDateFilter()">Apply Filter</button>
             </div>
         </div>
         <div class="filter-group">
@@ -343,11 +367,63 @@ function debounceSearch() {
     searchTimer = setTimeout(() => { currentPage = 1; loadHistory(); }, 300);
 }
 
+// FIX (2026-08-12): dateFrom/dateTo are no longer read live off the inputs
+// on every loadHistory() call -- they're only picked up once "Apply Filter"
+// is clicked (or a count card, which applies its own today+status combo
+// immediately). appliedDateFrom/appliedDateTo hold whatever's actually in
+// effect; the input fields themselves can be freely edited in between
+// without affecting the table until Apply is clicked, which is what "the
+// status filter should work within that [applied] data" required -- a
+// status change alone must never pick up a half-edited, not-yet-applied
+// date range sitting in the boxes.
+let appliedDateFrom = '';
+let appliedDateTo   = '';
+
+function _pad2(n) { return String(n).padStart(2, '0'); }
+function _todayRange() {
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}-${_pad2(d.getMonth() + 1)}-${_pad2(d.getDate())}`;
+    return { from: `${dateStr}T00:00`, to: `${dateStr}T23:59` };
+}
+
+function applyDateFilter() {
+    appliedDateFrom = document.getElementById('dateFrom').value;
+    appliedDateTo   = document.getElementById('dateTo').value;
+    _clearCardActiveState();
+    currentPage = 1;
+    loadHistory();
+}
+
+// Count cards are today-scoped (get_today_counts() only counts
+// created_at::date = CURRENT_DATE), so clicking one both applies today's
+// date range AND that card's status filter immediately -- no separate
+// Apply Filter click needed, matching "click Pending -> show today's
+// Pending" directly.
+function applyCardFilter(status, cardEl) {
+    const range = _todayRange();
+    document.getElementById('dateFrom').value = range.from;
+    document.getElementById('dateTo').value   = range.to;
+    appliedDateFrom = range.from;
+    appliedDateTo   = range.to;
+    document.getElementById('statusFilter').value = status;
+    _clearCardActiveState();
+    if (cardEl) cardEl.classList.add('card-active');
+    currentPage = 1;
+    loadHistory();
+}
+
+function _clearCardActiveState() {
+    document.querySelectorAll('#countsRow .count-card').forEach(c => c.classList.remove('card-active'));
+}
+
 function clearFilters() {
     document.getElementById('searchInput').value = '';
     document.getElementById('statusFilter').value = '';
     document.getElementById('dateFrom').value = '';
     document.getElementById('dateTo').value = '';
+    appliedDateFrom = '';
+    appliedDateTo = '';
+    _clearCardActiveState();
     currentPage = 1;
     loadHistory();
 }
@@ -368,8 +444,12 @@ function loadHistory(page) {
     if (page) currentPage = page;
     const search   = document.getElementById('searchInput').value.trim();
     const status   = document.getElementById('statusFilter').value;
-    const dateFrom = document.getElementById('dateFrom').value;
-    const dateTo   = document.getElementById('dateTo').value;
+    // FIX (2026-08-12): date range now comes from appliedDateFrom/
+    // appliedDateTo (only ever updated by applyDateFilter()/
+    // applyCardFilter()/clearFilters()), not read live off the inputs --
+    // see those functions' comments for why.
+    const dateFrom = appliedDateFrom;
+    const dateTo   = appliedDateTo;
 
     const params = new URLSearchParams({
         search, status, date_from: dateFrom, date_to: dateTo, page: currentPage
@@ -571,8 +651,16 @@ document.addEventListener("click", function(e) {
 // loadHistory()'s replaceState call) before the initial load, instead of
 // always starting from the blank/default state. See loadHistory()'s own
 // comment for why this exists.
+// FIX (2026-08-12): defaults to TODAY's date range on a genuinely fresh
+// page load (no restorable state in the URL at all) -- previously defaulted
+// to blank/all-time. A URL that already carries filter state (returning
+// from a record view, a bookmarked/shared link, etc.) still restores
+// exactly what it says, including an explicitly blank date range from
+// clearFilters()'s replaceState -- so this only fires on a true first visit.
 function _restoreFiltersFromUrl() {
     const params = new URLSearchParams(window.location.search);
+    const hasAnyState = [...params.keys()].length > 0;
+
     const search   = params.get('search');
     const status   = params.get('status');
     const dateFrom = params.get('date_from');
@@ -581,8 +669,18 @@ function _restoreFiltersFromUrl() {
 
     if (search)   document.getElementById('searchInput').value = search;
     if (status)   document.getElementById('statusFilter').value = status;
-    if (dateFrom) document.getElementById('dateFrom').value = dateFrom;
-    if (dateTo)   document.getElementById('dateTo').value = dateTo;
+
+    if (hasAnyState) {
+        appliedDateFrom = dateFrom || '';
+        appliedDateTo   = dateTo || '';
+    } else {
+        const range = _todayRange();
+        appliedDateFrom = range.from;
+        appliedDateTo   = range.to;
+    }
+    document.getElementById('dateFrom').value = appliedDateFrom;
+    document.getElementById('dateTo').value   = appliedDateTo;
+
     if (page && page > 0) currentPage = page;
 }
 

@@ -59,6 +59,17 @@
 .field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px; border-left:3px solid #1e5ca8; }
 .field-label { font-size:11px; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:5px; }
 
+/* Address fields (client request): span the full row width and grow to
+   fit their content height via JS (_autoGrowTextarea) so the complete
+   address is always visible without scrolling, vertically or
+   horizontally -- no fixed/clipped single-line box. */
+.field-block-wide { grid-column: 1 / -1; }
+textarea.address-textarea.editable-input {
+  width:100%; min-height:38px; resize:vertical; overflow:hidden;
+  font-family:inherit; line-height:1.4; white-space:pre-wrap;
+  word-break:break-word; box-sizing:border-box;
+}
+
 .section-card {
   background:white; padding:18px; border-radius:10px;
   box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:18px;
@@ -371,7 +382,7 @@
   &nbsp;|&nbsp;
   MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
-  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
   &nbsp;|&nbsp;
   MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
 </div>
@@ -390,7 +401,7 @@
         {% endif %}
       </div>
       {% if can_edit_extracted %}
-      <button class="btn-rerun-ocr" onclick="rerunOCR()">🔄 Re-run OCR</button>
+      <button id="rerunOcrBtn" class="btn-rerun-ocr" onclick="rerunOCR()">🔄 Re-run OCR</button>
       {% endif %}
     </div>
   </div>
@@ -425,7 +436,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
-              <input class="editable-input" id="inv_invoice_date" type="date" value="{{ invoice_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ invoice_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_invoice_date"></div>
             </div>
             <div class="field-block">
@@ -439,6 +450,10 @@
               <div class="field-label">IRN (Invoice Reference Number)</div>
               <input class="editable-input" id="inv_irn" value="{{ invoice_data.get('irn','') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_irn"></div>
+            </div>
+            <div class="field-block">
+              <div class="field-label">Out Bound Delivery Number</div>
+              <input class="editable-input" id="inv_outbound_delivery_number" value="{{ invoice_data.get('outbound_delivery_number','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -455,9 +470,9 @@
               <input class="editable-input" id="inv_buyer_gstin" value="{{ invoice_data.get('buyer_gstin','') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_buyer_gstin"></div>
             </div>
-            <div class="field-block">
+            <div class="field-block field-block-wide">
               <div class="field-label">Buyer Address</div>
-              <input class="editable-input" id="inv_buyer_address" value="{{ invoice_data.get('buyer_address','') }}" {% if is_approved %}disabled{% endif %}>
+              <textarea class="editable-input address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ invoice_data.get('buyer_address','') }}</textarea>
             </div>
           </div>
         </div>
@@ -479,9 +494,9 @@
               <input class="editable-input" id="inv_company_pan" value="{{ invoice_data.get('company_pan','') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_inv_company_pan"></div>
             </div>
-            <div class="field-block">
+            <div class="field-block field-block-wide">
               <div class="field-label">Seller Address</div>
-              <input class="editable-input" id="inv_seller_address" value="{{ invoice_data.get('seller_address','') }}" {% if is_approved %}disabled{% endif %}>
+              <textarea class="editable-input address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ invoice_data.get('seller_address','') }}</textarea>
             </div>
           </div>
         </div>
@@ -493,17 +508,23 @@
               <div class="field-label">Ship To Name</div>
               <input class="editable-input" id="inv_ship_to_name" value="{{ invoice_data.get('ship_to_name','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
-            <div class="field-block">
+            <div class="field-block field-block-wide">
               <div class="field-label">Ship To Address</div>
-              <input class="editable-input" id="inv_ship_to_address" value="{{ invoice_data.get('ship_to_address','') }}" {% if is_approved %}disabled{% endif %}>
+              <textarea class="editable-input address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ invoice_data.get('ship_to_address','') }}</textarea>
             </div>
+            <!-- Ship To Code merged into this single field (client request):
+                 label stays "Ship To State", displayed value is
+                 "CODE - STATE" (e.g. "27 - Maharashtra"). Both underlying
+                 DB columns (ship_to_state, ship_to_code) are unchanged --
+                 saveExtractedInvoice() below splits this field's value back
+                 into the two on save. -->
             <div class="field-block">
               <div class="field-label">Ship To State</div>
-              <input class="editable-input" id="inv_ship_to_state" value="{{ invoice_data.get('ship_to_state','') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Ship To Code</div>
-              <input class="editable-input" id="inv_ship_to_code" value="{{ invoice_data.get('ship_to_code','') }}" {% if is_approved %}disabled{% endif %}>
+              {% set _sts = invoice_data.get('ship_to_state','') %}
+              {% set _stc = invoice_data.get('ship_to_code','') %}
+              <input class="editable-input" id="inv_ship_to_state"
+                     value="{% if _stc and _sts %}{{ _stc }} - {{ _sts }}{% else %}{{ _stc or _sts }}{% endif %}"
+                     {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Bill To State</div>
@@ -697,11 +718,11 @@
             </div>
             <div class="field-block">
               <div class="field-label">Generated Date</div>
-              <input class="editable-input" id="eway_generated_date" type="date" value="{{ ewaybill_data.get('generated_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('generated_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;font-weight:700;">* Validity Date Expired</span>{% endif %}</div>
-              <input class="editable-input{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="date" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('validity_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Number</div>
@@ -710,7 +731,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">Invoice Date</div>
-              <input class="editable-input" id="eway_invoice_date" type="date" value="{{ ewaybill_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('invoice_date','') }}" {% if is_approved %}disabled{% endif %}>
               <div class="field-error-msg-inline" id="err_eway_invoice_date"></div>
             </div>
             <!-- CLIENT REQUEST (still-pending items email): PO Number section
@@ -732,13 +753,13 @@
         <div class="section-card">
           <div class="section-title">📍 Dispatch Information</div>
           <div class="field-row">
-            <div class="field-block">
+            <div class="field-block field-block-wide">
               <div class="field-label">Dispatch From</div>
-              <input class="editable-input" id="eway_dispatch_from" value="{{ ewaybill_data.get('dispatch_from','') }}" {% if is_approved %}disabled{% endif %}>
+              <textarea class="editable-input address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ewaybill_data.get('dispatch_from','') }}</textarea>
             </div>
-            <div class="field-block">
+            <div class="field-block field-block-wide">
               <div class="field-label">Dispatch To</div>
-              <input class="editable-input" id="eway_dispatch_to" value="{{ ewaybill_data.get('dispatch_to','') }}" {% if is_approved %}disabled{% endif %}>
+              <textarea class="editable-input address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ewaybill_data.get('dispatch_to','') }}</textarea>
             </div>
           </div>
         </div>
@@ -770,7 +791,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">Transport Doc Date</div>
-              <input class="editable-input" id="eway_transport_doc_date" type="date" value="{{ ewaybill_data.get('transport_doc_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ewaybill_data.get('transport_doc_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
           </div>
         </div>
@@ -822,7 +843,7 @@
             </div>
             <div class="field-block">
               <div class="field-label">LR Date</div>
-              <input class="editable-input" id="lr_lr_date" type="date" value="{{ lr.get('lr_date','') }}" {% if is_approved %}disabled{% endif %}>
+              <input class="editable-input date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ lr.get('lr_date','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
             <div class="field-block">
               <div class="field-label">Vehicle Number</div>
@@ -873,9 +894,9 @@
               <div class="field-label">To Location</div>
               <input class="editable-input" id="lr_to_location" value="{{ lr.get('to_location','') }}" {% if is_approved %}disabled{% endif %}>
             </div>
-            <div class="field-block">
+            <div class="field-block field-block-wide">
               <div class="field-label">Delivery Address</div>
-              <input class="editable-input" id="lr_delivery_address" value="{{ lr.get('delivery_address') or '' }}" {% if is_approved %}disabled{% endif %}>
+              <textarea class="editable-input address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea>
             </div>
             <div class="field-block">
               <div class="field-label">Transporter Name</div>
@@ -981,6 +1002,49 @@ function _nextDocStep(current) {
 const ORIGINAL_HSN = {{ ((invoice_data.get('hsn_details') or []) if invoice_data else []) | tojson }};
 
 // ============================================================
+// Address fields: auto-expand textarea height to fit full content, so
+// the complete address is always visible without scrolling (client
+// request). Runs on load and on every keystroke; also re-run whenever a
+// tab becomes active (a textarea hidden by `.tab-content` not being
+// `.active` yet reports scrollHeight 0, so it needs re-measuring once
+// it's actually visible).
+// ============================================================
+function _autoGrowTextarea(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+function _autoGrowAllAddressFields() {
+  document.querySelectorAll('.address-textarea').forEach(_autoGrowTextarea);
+}
+document.querySelectorAll('.address-textarea').forEach(function (el) {
+  el.addEventListener('input', function () { _autoGrowTextarea(el); });
+});
+_autoGrowAllAddressFields();
+
+// ============================================================
+// Date fields: always DISPLAY/EDIT as dd/mm/yyyy (client request), no
+// matter what format the browser/OS locale would otherwise pick for a
+// native date input. Storage/API format is unchanged (ISO YYYY-MM-DD) --
+// only the on-screen text changes. Converted to display format once on
+// load; converted back to ISO by _isoOrDisplayToIso() at save time (see
+// the save*() functions below).
+// ============================================================
+function _isoToDisplayDate(iso) {
+  if (!iso) return '';
+  const m = String(iso).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? (m[3] + '/' + m[2] + '/' + m[1]) : iso;  // leave already-odd values untouched
+}
+function _displayDateToIso(disp) {
+  if (!disp) return '';
+  const m = String(disp).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? (m[3] + '-' + m[2] + '-' + m[1]) : disp;  // unparseable -- pass through rather than blank it
+}
+document.querySelectorAll('.date-field').forEach(function (el) {
+  el.value = _isoToDisplayDate(el.value);
+});
+
+// ============================================================
 // Tab switching
 // ============================================================
 function switchDataTab(dataType) {
@@ -998,6 +1062,8 @@ function switchDataTab(dataType) {
       btn.classList.add('active');
     }
   });
+  // Re-measure this tab's address textareas now that they're visible.
+  setTimeout(_autoGrowAllAddressFields, 0);
 }
 
 // ============================================================
@@ -1010,12 +1076,28 @@ function _showSaveStatus(elId, ok, msg) {
   setTimeout(() => { el.textContent = ''; }, 4000);
 }
 
+// Ship To Code was merged into the Ship To State field's display (client
+// request: label "Ship To State", value "CODE - STATE" e.g. "27 -
+// Maharashtra"). The underlying DB columns are still separate
+// (ship_to_state, ship_to_code), so split the combined text back apart
+// here before saving -- "27 - Maharashtra" -> code="27", state="Maharashtra".
+// If it doesn't match that shape (e.g. reviewer typed a plain state name
+// with no code), the whole value is treated as the state and code is left
+// blank rather than guessing.
+function _splitShipToState() {
+  const raw = (document.getElementById('inv_ship_to_state').value || '').trim();
+  const m = raw.match(/^(\S+)\s*-\s*(.+)$/);
+  return m ? { code: m[1], state: m[2] } : { code: '', state: raw };
+}
+
 async function saveExtractedInvoice() {
+  const _shipTo = _splitShipToState();
   const payload = {
     invoice_number: document.getElementById('inv_invoice_number').value,
-    invoice_date:   document.getElementById('inv_invoice_date').value,
+    invoice_date:   _displayDateToIso(document.getElementById('inv_invoice_date').value),
     po_number:      document.getElementById('inv_po_number').value,
     irn:            document.getElementById('inv_irn').value,
+    outbound_delivery_number: document.getElementById('inv_outbound_delivery_number').value,
     buyer_name:     document.getElementById('inv_buyer_name').value,
     buyer_gstin:    document.getElementById('inv_buyer_gstin').value,
     buyer_address:  document.getElementById('inv_buyer_address').value,
@@ -1025,8 +1107,8 @@ async function saveExtractedInvoice() {
     seller_address: document.getElementById('inv_seller_address').value,
     ship_to_name:   document.getElementById('inv_ship_to_name').value,
     ship_to_address:document.getElementById('inv_ship_to_address').value,
-    ship_to_state:  document.getElementById('inv_ship_to_state').value,
-    ship_to_code:   document.getElementById('inv_ship_to_code').value,
+    ship_to_state:  _shipTo.state,
+    ship_to_code:   _shipTo.code,
     bill_to_state:  document.getElementById('inv_bill_to_state').value,
     bill_to_code:   document.getElementById('inv_bill_to_code').value,
     total_taxable_amount: document.getElementById('inv_total_taxable_amount').value,
@@ -1061,10 +1143,10 @@ async function saveExtractedInvoice() {
 async function saveExtractedEway() {
   const payload = {
     ewaybill_number: document.getElementById('eway_ewaybill_number').value,
-    generated_date:  document.getElementById('eway_generated_date').value,
-    validity_date:   document.getElementById('eway_validity_date').value,
+    generated_date:  _displayDateToIso(document.getElementById('eway_generated_date').value),
+    validity_date:   _displayDateToIso(document.getElementById('eway_validity_date').value),
     invoice_number:  document.getElementById('eway_invoice_number').value,
-    invoice_date:    document.getElementById('eway_invoice_date').value,
+    invoice_date:    _displayDateToIso(document.getElementById('eway_invoice_date').value),
     // PO Number field removed from this tab (client request) -- po_number
     // is intentionally left out of this save payload now, so this route
     // never overwrites whatever OCR originally put in ewaybill_data.po_number.
@@ -1075,7 +1157,7 @@ async function saveExtractedEway() {
     transporter_name: document.getElementById('eway_transporter_name').value,
     transporter_gstin: document.getElementById('eway_transporter_gstin').value,
     transport_doc_no: document.getElementById('eway_transport_doc_no').value,
-    transport_doc_date: document.getElementById('eway_transport_doc_date').value,
+    transport_doc_date: _displayDateToIso(document.getElementById('eway_transport_doc_date').value),
   };
   try {
     const res = await fetch(`/api/save_extracted_eway/${HISTORY_ID}`, {
@@ -1096,7 +1178,7 @@ async function saveExtractedEway() {
 async function saveExtractedLr() {
   const payload = {
     lr_number:       document.getElementById('lr_lr_number').value,
-    lr_date:         document.getElementById('lr_lr_date').value,
+    lr_date:         _displayDateToIso(document.getElementById('lr_lr_date').value),
     consignor_name:  document.getElementById('lr_consignor_name').value,
     consignee_name:  document.getElementById('lr_consignee_name').value,
     vehicle_number:  document.getElementById('lr_vehicle_number').value,
@@ -1534,6 +1616,46 @@ function _checkPoNumberLength() {
     _checkPoNumberLength();
   }
 })();
+
+// ============================================================
+// Invoice No. is government-mandated to never exceed 16 characters. If
+// OCR (or manual entry) produced more than 16, truncate the field down to
+// the first 16 characters and highlight red -- client request: never
+// silently keep/save a value that's already known to be invalid, always
+// show the reviewer exactly what's wrong. Applies to both the Invoice tab
+// field and the E-way tab's own Invoice Number field (kept in sync via
+// the existing cross-tab mismatch check below).
+// ============================================================
+function _enforceInvoiceNumberMaxLength(fieldId, errId) {
+  const el = document.getElementById(fieldId);
+  const err = document.getElementById(errId);
+  if (!el) return;
+  const original = el.value;
+  if (original.length > 16) {
+    el.value = original.slice(0, 16);
+    el.classList.add('field-expired');
+    if (err) {
+      err.textContent = `Invoice No. was ${original.length} characters -- govt mandate is max 16, showing first 16 only. Verify against the original document.`;
+      err.classList.add('show');
+    }
+  } else {
+    el.classList.remove('field-expired');
+    if (err) {
+      err.textContent = '';
+      err.classList.remove('show');
+    }
+  }
+}
+[
+  ['inv_invoice_number', 'err_inv_invoice_number'],
+  ['eway_invoice_number', 'err_eway_invoice_number'],
+].forEach(function ([fieldId, errId]) {
+  const el = document.getElementById(fieldId);
+  if (el) {
+    el.addEventListener('input', function () { _enforceInvoiceNumberMaxLength(fieldId, errId); });
+    _enforceInvoiceNumberMaxLength(fieldId, errId);
+  }
+});
 
 // ============================================================
 // GSTIN format + checksum validation (client requested: visual flag only,

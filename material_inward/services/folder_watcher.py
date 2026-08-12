@@ -122,7 +122,7 @@ GROUPED_FOLDER   = os.path.join(WATCH_FOLDER, "grouped")
 OCR_DONE_FOLDER  = os.path.join(os.path.dirname(WATCH_FOLDER), "ocr_done")
 FAILED_FOLDER    = os.path.join(os.path.dirname(WATCH_FOLDER), "failed")
 
-STABLE_SECONDS = 40      # File must be unmodified this long before being touched
+STABLE_SECONDS = 100     # File must be unmodified this long before being touched -- bumped from 40s to 70s (2026-08-05, client request), then 70s to 100s (2026-08-10, client request) -- users were still missing the 3-file window: the 3rd file (often LR) sometimes lands more than 70s after the first two, so GROUP_GRACE_SECONDS (same value, aliased below) treated the group as final/partial and processed it before the LR arrived -- see folder_watcher's "OCR returned no data"/partial-group log lines for 5042700104 on 2026-08-10 as a concrete example. Still comfortably above POLL_INTERVAL below, so a stable file is always caught within one extra poll cycle at worst.
 ORPHAN_DAYS    = 60      #Must match DB_RETENTION_DAYS in app.py cleanup
 POLL_INTERVAL  = 30      # Watcher cycle interval
 
@@ -186,6 +186,116 @@ def _get_group_key(filename: str) -> str:
     if "_" not in stem:
         return filename.lower()
     return stem.rsplit("_", 1)[0].strip().lower()
+
+
+def claim_matching_incoming_file(original_filename: str, success: bool):
+    """
+    ADDED (2026-08-12): manual-upload / WATCH_FOLDER dedup filing.
+
+    Client scenario: the office scanner drops files straight into
+    WATCH_FOLDER using the <invoiceno>_<INV|EWB|LR|OTH>.pdf naming
+    convention, same as always -- but staff now mostly upload documents
+    through the app's manual "Upload Invoice/E-Way Bill/LR" feature
+    instead of waiting for this watcher to pick them up, browsing to and
+    selecting that SAME file straight off the mapped scanner drive rather
+    than a different local copy. The manual-upload routes (app.py's
+    /upload/<doctype>, /process_all, /api/upload_missing/<id>/<doctype>)
+    only ever touch config.UPLOAD_FOLDER -- they never look at
+    WATCH_FOLDER at all -- so the original scanner file is left behind
+    exactly where it landed. This watcher's own poll loop has no idea a
+    manual upload just handled it, so it goes on to sweep that same file
+    into grouped/ and eventually run OCR on it too, producing a second,
+    duplicate history record for the same physical document.
+
+    Called from app.py right after a manual upload finishes (success or
+    failure) for a given doctype, with the EXACT filename the browser
+    sent (file.filename, before any h{history_id}_ prefix the upload
+    routes apply to their own local copy) -- when staff pick the file
+    straight off the scanner drive via the browser's file picker, this is
+    the identical filename already sitting in WATCH_FOLDER, so an exact
+    match is reliable without needing any content/hash comparison.
+
+    Looks in two places, in order, since this watcher's own background
+    poll thread could have already swept the file in the time between it
+    landing and the manual upload finishing:
+      1. WATCH_FOLDER root (not yet swept)
+      2. GROUPED_FOLDER/<group_key>/ (already swept, still waiting on
+         sibling doc types or the grace timer)
+
+    If found, moves ONLY that single file -- never the whole group
+    folder, since sibling doc types in the same group may still be
+    genuinely incoming and this watcher still needs to track them
+    normally -- into ocr_done/ or failed/ under a "_manual"-tagged
+    subfolder, so it ends up filed the same way a watcher-only intake
+    always was, but sitting somewhere this watcher's own sweep/group
+    logic will never look again. If claiming the file empties out its
+    group folder, that now-empty folder is removed too; a group folder
+    that still has other files in it (a genuinely incoming sibling doc)
+    is left alone.
+
+    Best-effort and silent by design -- this is filing/housekeeping only
+    and must NEVER be allowed to affect the manual upload's own
+    success/failure response. If this watcher's background poll thread
+    wins the race and moves the file first, the resulting
+    FileNotFoundError is caught and treated as "already handled", not an
+    error -- and if this whole thing fails for any other reason, the
+    worst case is identical to today's pre-existing behavior (the file
+    sits unclaimed and may eventually get double-processed), not a new
+    failure mode or any data loss.
+
+    Returns the destination path if a file was actually claimed and
+    moved, else None.
+    """
+    try:
+        if not os.path.exists(WATCH_FOLDER):
+            return None
+
+        group_key = _get_group_key(original_filename)
+        candidates = [
+            os.path.join(WATCH_FOLDER, original_filename),
+            os.path.join(GROUPED_FOLDER, group_key, original_filename),
+        ]
+
+        src_path = next((c for c in candidates if os.path.isfile(c)), None)
+        if not src_path:
+            return None
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_outcome_folder = OCR_DONE_FOLDER if success else FAILED_FOLDER
+        dest_folder = os.path.join(base_outcome_folder, f"{group_key}_manual_{timestamp}")
+        os.makedirs(dest_folder, exist_ok=True)
+        dest_path = os.path.join(dest_folder, os.path.basename(src_path))
+
+        shutil.move(src_path, dest_path)
+        logger.info(
+            f"Manual-upload dedup: claimed incoming file {src_path} → "
+            f"{dest_path} (matches manual upload of {original_filename!r}, "
+            f"success={success})"
+        )
+
+        # Clean up the group folder ONLY if claiming this file left it
+        # empty -- a group folder that still has a sibling doc type
+        # sitting in it is a real, still-active group and must be left
+        # for this watcher's normal processing to keep tracking.
+        group_folder = os.path.join(GROUPED_FOLDER, group_key)
+        try:
+            if os.path.isdir(group_folder) and not os.listdir(group_folder):
+                os.rmdir(group_folder)
+        except OSError:
+            pass  # non-empty (race: another file just landed) or already gone -- fine either way
+
+        return dest_path
+    except FileNotFoundError:
+        # This watcher's own poll loop already moved/claimed the file
+        # first -- no duplicate-processing risk left either way, so this
+        # is a normal, expected outcome of the race, not an error.
+        return None
+    except Exception as e:
+        logger.warning(
+            f"Manual-upload dedup: non-fatal error claiming "
+            f"{original_filename!r}: {e}"
+        )
+        return None
 
 
 # FIX: _is_stable() used to trust os.path.getmtime() alone -- but a file

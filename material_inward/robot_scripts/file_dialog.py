@@ -14,10 +14,20 @@ app's default staging path only if called without an argument.
 """
 
 import sys
+import os
 import time
 import pywinauto
 
-DEFAULT_FOLDER = r"C:\material_inward\dms_staging"
+# Make the project root importable regardless of cwd (this script is run as
+# a standalone subprocess by dms_upload.robot via `Run Process`), so the
+# fallback below can reuse config.py's own IS_PRODUCTION-aware path instead
+# of a second hardcoded literal that could drift out of sync with it.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from config.config import config
+    DEFAULT_FOLDER = config.DMS_STAGING_FOLDER
+except Exception:
+    DEFAULT_FOLDER = r"C:\material_inward\dms_staging"
 
 folder_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FOLDER
 

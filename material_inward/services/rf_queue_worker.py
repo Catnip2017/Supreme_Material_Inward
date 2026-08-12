@@ -340,15 +340,52 @@ def _process_migo_103(history_id: int, payload: dict) -> dict:
                     history_id, po_number, gate_in_number,
                     requested_by, target_username
                 )
-                create_notification(
-                    history_id=history_id,
-                    title="PO Number Ready for Gate In Update",
-                    message=(
+                # v21: auto-trigger the actual zgatein_update (update_gatein_po)
+                # job right here instead of waiting for the original submitter
+                # to click "Update PO" on the History page. Safe to call
+                # enqueue_rf_job directly (no Flask `session` needed) because
+                # update_gatein_po is in FORCE_LOCAL_STEPS (app.py's
+                # _enqueue_sap_job) -- it already always runs under the shared
+                # spl_rpa/.env credential regardless of who/what submitted it,
+                # so there's no credential-attribution change here, just no
+                # longer requiring a human to manually click Retry. de-duped
+                # by enqueue_rf_job itself (pending/running check), so if the
+                # user's own Retry click race-condition-beats this, only one
+                # job actually runs -- the pending_po_updates row from
+                # upsert_pending_po_update above still logs/tracks it either way.
+                po_job_id = enqueue_rf_job(history_id, "update_gatein_po", {
+                    "gate_in_number": gate_in_number,
+                    "po_number":      po_number,
+                    "history_id":     history_id,
+                    "_submitted_by_username": "system (auto)",
+                })
+                if po_job_id:
+                    logger.info(
+                        f"Auto-triggered update_gatein_po — history_id={history_id} "
+                        f"job_id={po_job_id} GIN={gate_in_number} po={po_number}"
+                    )
+                    notif_message = (
+                        f"MIGO 103 captured PO {po_number} for this record -- "
+                        f"the Gate In entry (GIN {gate_in_number}) is being "
+                        f"updated in SAP automatically. If it fails, it'll show "
+                        f"up here again with a Retry option."
+                    )
+                else:
+                    logger.info(
+                        f"update_gatein_po already queued/running for "
+                        f"history_id={history_id} -- skipped auto-trigger, "
+                        f"pending_po_updates row still logged for visibility."
+                    )
+                    notif_message = (
                         f"MIGO 103 captured PO {po_number} for this record -- "
                         f"the Gate In entry (GIN {gate_in_number}) still needs "
                         f"it backfilled. Update it from the Pending PO Updates "
                         f"panel on the History page."
-                    ),
+                    )
+                create_notification(
+                    history_id=history_id,
+                    title="PO Number Ready for Gate In Update",
+                    message=notif_message,
                     notification_type="po_update_pending",
                     user_target=target_username,
                     # Fallback broadcast to any gate_in-role user if we
@@ -594,14 +631,24 @@ def _process_update_gatein_po(history_id: int, payload: dict) -> dict:
     Update the SAP Gate In entry with the fetched PO number.
 
     v17: no longer called synchronously from _process_migo_103. Enqueued
-    as its own standalone job by app.py's /api/pending_po_updates/<id>/run
-    route, triggered by the Gate In record's original submitter clicking
-    "Update PO" on the History page's Pending PO Updates panel -- so this
-    now runs under THEIR live session credential (via the normal
-    _enqueue_sap_job/credential_cache path), not the MIGO 103 submitter's.
+    as its own standalone job, either auto-triggered from _process_migo_103
+    (v21, see above -- "system (auto)") when MIGO 103 captures a PO number
+    for a without_po record, or manually via app.py's
+    /api/pending_po_updates/<id>/run route if the auto-trigger already
+    failed once and the original submitter clicks Retry.
+
+    v20 correction: update_gatein_po is in FORCE_LOCAL_STEPS
+    (app.py's _enqueue_sap_job), so this always runs under the shared
+    spl_rpa/.env credential -- NOT "the calling user's own live session"
+    as earlier revisions of this docstring claimed. That distinction no
+    longer applies to this step regardless of whether it's the v21
+    auto-trigger or a manual Retry click.
 
     On success, also writes po_number back to history.po_number and marks
-    the corresponding pending_po_updates row resolved either way.
+    the corresponding pending_po_updates row resolved either way. On
+    failure, also raises a notification (v21) since a failed auto-trigger
+    is no longer witnessed live by anyone -- previously only the manual
+    Retry path had a human watching for the result.
     """
     result = execute_update_gatein_po_sap(payload)
     po_number      = payload.get("po_number", "")
@@ -640,6 +687,32 @@ def _process_update_gatein_po(history_id: int, payload: dict) -> dict:
             history_id, False, resolved_by=resolved_by,
             error_message=result.get("error")
         )
+        # v21: the auto-trigger runs unattended (no human clicked a button
+        # and is watching for the result), so a failure needs its own
+        # notification -- otherwise it silently disappears back into
+        # "pending" with nothing telling the original submitter it already
+        # tried and failed once.
+        try:
+            from database.gate_in_operations import get_gatein_entry as _get_gatein_entry
+            gatein_entry    = _get_gatein_entry(history_id) or {}
+            target_username = gatein_entry.get("submitted_by")
+            create_notification(
+                history_id=history_id,
+                title="PO Update Failed — Retry Needed",
+                message=(
+                    f"Automatic SAP update for PO {po_number} on Gate In "
+                    f"{gate_in_number} did not succeed. Retry it from the "
+                    f"Pending PO Updates panel on the History page."
+                ),
+                notification_type="po_update_pending",
+                user_target=target_username,
+                role_target=None if target_username else "gate_in",
+            )
+        except Exception as notif_err:
+            logger.error(
+                f"Failed to create po_update failure notification for "
+                f"history_id={history_id}: {notif_err}"
+            )
     return result
 
 
