@@ -49,13 +49,23 @@ def save_po_line_items(history_id: int, items: list) -> bool:
     on the MIGO 103 tab's PO table (client decision) -- doesn't feed into
     the Invoice/PO matching or mismatch-highlighting logic at all, just
     stored and displayed.
+
+    FIX (2026-08-12): po_fetch.robot now also reads each line's SAP
+    deletion-indicator icon (sap_helpers.py's get_delflag_status()) and
+    emits "row_status": "Active" or "Deleted" per item -- a deleted PO
+    line still shows a grid row, so without this it was indistinguishable
+    from a genuine line with similar data (reported as items appearing to
+    "repeat"). schema_migration_v23.sql adds po_line_items.row_status,
+    defaulting existing rows to 'Active'. View-only like open_qty --
+    migo_103.html greys it out and blocks pairing, doesn't touch the
+    mismatch-highlighting logic.
     """
     delete_sql = "DELETE FROM po_line_items WHERE history_id = %s"
     insert_sql = """
         INSERT INTO po_line_items (
             history_id, item_no, material, short_text,
-            po_qty, rate, amount, hsn_sac, unit, open_qty
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            po_qty, rate, amount, hsn_sac, unit, open_qty, row_status
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     try:
         with get_connection() as conn:
@@ -73,6 +83,7 @@ def save_po_line_items(history_id: int, items: list) -> bool:
                         item.get("hsn_sac", ""),
                         item.get("uom", "") or item.get("unit", ""),
                         item.get("open_qty", ""),
+                        item.get("row_status", "") or "Active",
                     ))
                 logger.info(f"Saved {len(items)} PO line item(s) for history_id={history_id}")
                 return True
@@ -92,7 +103,7 @@ def get_po_line_items(history_id: int) -> list:
                 cur.execute(
                     """
                      SELECT item_no, material, short_text,
-                    po_qty, rate, amount, hsn_sac, unit, open_qty, fetched_at
+                    po_qty, rate, amount, hsn_sac, unit, open_qty, row_status, fetched_at
                     FROM po_line_items
                     WHERE history_id = %s
                     ORDER BY id ASC
@@ -116,6 +127,11 @@ def get_po_line_items(history_id: int) -> list:
                     # already named to match what migo_103.html reads
                     # (item.get('unit','') / item.get('open_qty','')),
                     # unlike material_code/qty above.
+                    # row_status: defensive default for rows saved before
+                    # schema_migration_v23.sql (or any NULL edge case) --
+                    # treat as Active rather than leaving migo_103.html to
+                    # guess what an empty value means.
+                    r['row_status'] = r.get('row_status') or 'Active'
                     result.append(r)
                 return result
     except Exception as e:

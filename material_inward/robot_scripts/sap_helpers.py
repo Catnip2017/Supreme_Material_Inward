@@ -84,3 +84,52 @@ def set_sap_focus(element_path: str):
     connection = app.Children(0)
     session = connection.Children(0)
     session.FindById(element_path).SetFocus()
+
+
+def get_delflag_status(table_path, row):
+    """
+    ADDED (2026-08-12): reads IconName/Tooltip/Text of the deletion-status
+    button in a PO line-item grid row directly via the SAP GUI Scripting
+    COM API. Robot's SapGuiLibrary has no generic 'Get Property' keyword,
+    so this bypasses it and talks to the SAP session object directly.
+
+    po_fetch.robot's Fetch PO Line Items now calls this per row in STEP 1
+    to tell a genuinely deleted PO line (IconName 'B_DELE') apart from a
+    normal active one -- a deleted line still renders a row in the grid, so
+    without this it was indistinguishable from a real line with similar
+    data, which is what was being reported as line items "repeating".
+    Deleted rows are still returned (row_status="Deleted" in the JSON
+    output) rather than dropped, so the app can grey them out instead of
+    making them look like they silently vanished.
+    """
+    try:
+        sap_gui_auto = win32com.client.GetObject("SAPGUI")
+        application = sap_gui_auto.GetScriptingEngine
+        connection = application.Children(0)
+        session = connection.Children(0)
+    except Exception as e:
+        return f"ERROR:SESSION:{e}"
+
+    path = f"{table_path}/btnMEPO1211-STATUSICON[0,{row}]"
+    try:
+        btn = session.findById(path)
+    except Exception as e:
+        return f"ERROR:NOTFOUND:{e}"
+
+    icon_name = ""
+    tooltip = ""
+    text = ""
+    try:
+        icon_name = btn.IconName
+    except Exception:
+        pass
+    try:
+        tooltip = btn.Tooltip
+    except Exception:
+        pass
+    try:
+        text = btn.Text
+    except Exception:
+        pass
+
+    return f"IconName='{icon_name}' | Tooltip='{tooltip}' | Text='{text}'"

@@ -588,12 +588,37 @@ def _move_failed_upload(file_path: str, history_id: int, doctype: str) -> str:
     return failed_folder
 
 
-def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: int) -> bool:
+def _dedupe_watch_folder(original_filename: str, success: bool) -> None:
+    """
+    ADDED (2026-08-12): best-effort call into
+    folder_watcher.claim_matching_incoming_file() -- see that function's
+    docstring for the full scenario. `original_filename` must be the RAW
+    filename the browser sent (file.filename), never the h{history_id}_
+    prefixed local copy name -- when staff pick a document straight off
+    the mapped scanner drive via the browser's file picker (rather than a
+    different local copy), this raw name is what's still sitting in
+    folder_watcher's WATCH_FOLDER/GROUPED_FOLDER, and matching against the
+    prefixed name would never find it.
+
+    Deliberately swallows every exception -- this is filing/housekeeping
+    only and must never be able to turn a successful manual upload into a
+    failed API response, or vice versa.
+    """
+    try:
+        from services.folder_watcher import claim_matching_incoming_file
+        claim_matching_incoming_file(original_filename, success)
+    except Exception as e:
+        logger.warning(f"WATCH_FOLDER dedup skipped for {original_filename!r}: {e}")
+
+
+def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: int, original_filename: str = None) -> bool:
+    original_filename = original_filename or filename
     try:
         extracted = process_document(doctype, file_path, filename)
         if not extracted:
             failed_folder = _move_failed_upload(file_path, history_id, doctype)
             set_ocr_status(history_id, "failed", failed_path=failed_folder)
+            _dedupe_watch_folder(original_filename, success=False)
             return False
         extracted["filename"] = filename
         if doctype == "invoice":
@@ -609,11 +634,13 @@ def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: i
         elif doctype == "lr":
             save_lr_to_db(history_id, extracted)
         _move_file(file_path, config.UPLOAD_PROCESSED_FOLDER)
+        _dedupe_watch_folder(original_filename, success=True)
         return True
     except Exception as e:
         logger.error(f"OCR error for {doctype}: {e}", exc_info=True)
         failed_folder = _move_failed_upload(file_path, history_id, doctype)
         set_ocr_status(history_id, "failed", failed_path=failed_folder)
+        _dedupe_watch_folder(original_filename, success=False)
         return False
 
 
@@ -1593,6 +1620,10 @@ def upload_document(doctype):
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             file.save(others_path)
             add_history_extra(history_id, safe_name, filename, doc_type="others")
+            # v22: Others has no OCR to succeed/fail -- same as
+            # folder_watcher.py's own Others handling, "attached" is the
+            # only outcome, so always claim as success.
+            _dedupe_watch_folder(filename, success=True)
             return jsonify({
                 "success": True,
                 "history_id": history_id,
@@ -1602,7 +1633,7 @@ def upload_document(doctype):
         file_path = os.path.join(config.UPLOAD_FOLDER, filename)
         file.save(file_path)
 
-        if not _run_ocr_and_save(doctype, file_path, filename, history_id):
+        if not _run_ocr_and_save(doctype, file_path, filename, history_id, original_filename=filename):
             return jsonify({"error": "OCR failed — file moved to failed/"}), 500
 
         _auto_populate_form_tables(history_id)
@@ -1649,7 +1680,23 @@ def process_all():
         filename = f"h{history_id}_{file.filename}"
         file_path = os.path.join(config.UPLOAD_FOLDER, filename)
         file.save(file_path)
-        results[doctype] = _run_ocr_and_save(doctype, file_path, filename, history_id)
+        results[doctype] = _run_ocr_and_save(doctype, file_path, filename, history_id, original_filename=file.filename)
+
+    # FIX (2026-08-11): "Others" doctype support, mirroring folder_watcher.py's
+    # _process_batch() -- no OCR, just attached via history_extras so
+    # doc_consolidator.py picks it up into the DMS-bound consolidated PDF the
+    # same way a G-drive-dropped Others file would be. Doesn't touch `results`
+    # / the ocr_status logic below, which only concerns invoice/ewaybill/lr.
+    if others_file and others_file.filename:
+        safe_others_name = f"h{history_id}_{others_file.filename}"
+        others_path = os.path.join(config.UPLOAD_FOLDER, safe_others_name)
+        try:
+            os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+            others_file.save(others_path)
+            add_history_extra(history_id, safe_others_name, others_file.filename, doc_type="others")
+            _dedupe_watch_folder(others_file.filename, success=True)
+        except Exception as e:
+            logger.error(f"Failed to attach Others document for history_id={history_id}: {e}")
 
     # FIX (2026-08-11): "Others" doctype support, mirroring folder_watcher.py's
     # _process_batch() -- no OCR, just attached via history_extras so
@@ -1735,6 +1782,7 @@ def api_upload_missing_document(history_id, doctype):
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             file.save(others_path)
             add_history_extra(history_id, safe_name, filename, doc_type="others")
+            _dedupe_watch_folder(filename, success=True)
             return jsonify({"success": True, "history_id": history_id, "message": "Others document attached"})
 
         safe_name = f"h{history_id}_{filename}"
@@ -1742,7 +1790,7 @@ def api_upload_missing_document(history_id, doctype):
         os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
         file.save(file_path)
 
-        if not _run_ocr_and_save(doctype, file_path, safe_name, history_id):
+        if not _run_ocr_and_save(doctype, file_path, safe_name, history_id, original_filename=filename):
             return jsonify({
                 "success": False,
                 "error": f"OCR failed for {doctype.upper()} — it's been moved to this record's failed folder, use Re-run OCR from Extracted Data once it shows as failed."

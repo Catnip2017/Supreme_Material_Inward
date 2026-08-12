@@ -136,6 +136,16 @@
 .pair-btn.paired-inv { border-color:#1e5ca8; background:#1e5ca8; color:white; }
 .pair-btn.paired-po  { border-color:#00b894; background:#00b894; color:white; }
 
+/* FIX (2026-08-12): SAP-deleted PO line items -- greyed out, struck
+   through, not selectable for pairing (see po_data render loop above). */
+.po-row-deleted td { color:#aaa !important; text-decoration:line-through; background:#f7f7f7; }
+.po-row-deleted td[data-field] { color:#aaa !important; }
+.po-deleted-badge {
+  display:inline-block; margin-left:4px; padding:1px 6px;
+  border-radius:4px; font-size:10px; font-weight:700;
+  background:#ffe3e3; color:#c0392b; text-decoration:none;
+}
+
 /* .match-controls {
   display:flex; align-items:center; justify-content:center;
   margin-top:14px; gap:12px; flex-wrap:wrap;
@@ -499,16 +509,32 @@
                  stays 8. #}
               {% if po_data and po_data|length > 0 %}
                 {% for item in po_data %}
-                <tr data-idx="{{ loop.index0 }}">
-                  <td><button type="button" class="pair-btn pair-btn-po" data-pair="" onclick="onPoPairClick(this)" ></button></td>
-                  <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                  <td data-field="material_code">{{ ((item.get('material_code') if item else '') or '') }}</td>
-                  <td data-field="qty">{{ ((item.get('qty') if item else '') or '') }}</td>
-                  <td data-field="unit">{{ ((item.get('unit') if item else '') or '') }}</td>
-                  <td data-field="rate">{{ ((item.get('rate') if item else '') or '') }}</td>
-                  <td data-field="amount">{{ ((item.get('amount') if item else '') or '') }}</td>
-                  <td data-field="hsn_sac">{{ ((item.get('hsn_sac') if item else '') or '') }}</td>
-                  <td data-field="open_qty" style="color:#666;">{{ ((item.get('open_qty') if item else '') or '') }}</td>
+                {% set is_deleted = item.get('row_status') == 'Deleted' %}
+                {# FIX (2026-08-12): po_fetch.robot now flags a SAP-deleted PO
+                   line (row_status, via sap_helpers.py's get_delflag_status())
+                   instead of it looking like an unexplained duplicate/repeat
+                   of a neighboring active line. Client decision: keep it
+                   visible (nothing should look like it silently vanished) but
+                   grey it out and block it from being paired -- see
+                   data-deleted below, read by autoPair()'s poRows filter,
+                   and the disabled pair-btn-po which also blocks manual
+                   click-to-pair. #}
+                <tr data-idx="{{ loop.index0 }}" data-deleted="{{ 'true' if is_deleted else 'false' }}"{% if is_deleted %} class="po-row-deleted" title="This line is marked deleted in SAP -- not selectable for pairing."{% endif %}>
+                  <td>
+                    {% if is_deleted %}
+                    <button type="button" class="pair-btn pair-btn-po" data-pair="" disabled title="Deleted in SAP -- not pairable"></button>
+                    {% else %}
+                    <button type="button" class="pair-btn pair-btn-po" data-pair="" onclick="onPoPairClick(this)" ></button>
+                    {% endif %}
+                  </td>
+                  <td style="color:#888;font-size:11px;">{{ loop.index }}{% if is_deleted %} <span class="po-deleted-badge">Deleted</span>{% endif %}</td>
+                  <td data-field="material_code">{{ item.get('material_code','') }}</td>
+                  <td data-field="qty">{{ item.get('qty','') }}</td>
+                  <td data-field="unit">{{ item.get('unit','') }}</td>
+                  <td data-field="rate">{{ item.get('rate','') }}</td>
+                  <td data-field="amount">{{ item.get('amount','') }}</td>
+                  <td data-field="hsn_sac">{{ item.get('hsn_sac','') }}</td>
+                  <td data-field="open_qty" style="color:#666;">{{ item.get('open_qty','') }}</td>
                 </tr>
                 <tr class="item-desc-row">
                   <td colspan="9">
@@ -926,7 +952,13 @@ function autoPair() {
   resetAllMatches();
 
   const invRows = document.querySelectorAll('#invoiceItemsBody tr[data-idx]');
-  const poRows  = document.querySelectorAll('#poItemsBody tr[data-idx]');
+  // FIX (2026-08-12): exclude SAP-deleted PO lines (data-deleted="true",
+  // see po_data render loop above) -- the pair-btn-po on those rows is
+  // already `disabled` (blocks manual click), but querySelector() still
+  // finds a disabled button fine, so autoPair()'s own poData/usedPo
+  // bookkeeping needed its own filter too, or it would happily
+  // auto-pair an Invoice line against a line SAP considers deleted.
+  const poRows  = document.querySelectorAll('#poItemsBody tr[data-idx]:not([data-deleted="true"])');
 
   function norm(v) {
     if (!v) return '';
