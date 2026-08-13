@@ -395,7 +395,14 @@ def execute_gate_in_sap(data: dict) -> dict:
     purchase_order_clean = "" if is_without_po else cleaned.get("purchaseOrder", "")
 
     variables = {
-        "VENDOR_NAME":    _s(cleaned.get("vendorName", "")),
+        # FIX (2026-08-13): Vendor Name / Vendor Code split -- this SAP
+        # posting variable is still named VENDOR_NAME (matches
+        # gate_in.robot's field mapping, not worth renaming), but the value
+        # it needs was always the SAP vendor CODE, not the display name.
+        # Reads from the new vendorCode field now instead of vendorName,
+        # which is display/search text only from here on (see
+        # gate_in_entries.vendor_code, schema_migration_v25).
+        "VENDOR_NAME":    _s(cleaned.get("vendorCode", "")),
         "TRANSPORTER":    _s(cleaned.get("transporter", "")),
         "TRUCK_NO":       _s(truck_no_clean),
         "DRIVER_NAME":    _s(cleaned.get("driverName", "")),

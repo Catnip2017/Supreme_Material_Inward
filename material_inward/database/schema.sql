@@ -167,6 +167,9 @@ CREATE TABLE IF NOT EXISTS gate_in_entries (
     gate_in_date            TEXT,
     gate_in_time            TEXT,
     vendor_name             TEXT,
+    vendor_code             TEXT,  -- v25: resolved SAP vendor code (LIFNR), split out
+                                    -- from vendor_name so the latter can stay a real,
+                                    -- human-readable name -- see schema_migration_v25.sql
     transporter             TEXT,
     truck_no                TEXT,
     driver_name             TEXT,

@@ -617,15 +617,21 @@ def get_history_search(
     elif status == "completed":
         conditions.append("h.miro = 1")
 
-    # date_from/date_to now carry full datetime-local values (e.g.
-    # "2026-07-16T14:30"), not date-only strings -- compared directly
-    # against created_at (a timestamp) instead of casting to ::date, so the
-    # time portion the user picks is actually honored rather than discarded.
+    # FIX (2026-08-13): History page's date filter is date-only now (no
+    # time-of-day picker -- see templates/history.html), so date_from/
+    # date_to arrive as plain "YYYY-MM-DD" strings. Compare against
+    # created_at::date rather than created_at directly -- the old direct
+    # comparison treated date_to as midnight 00:00:00 of that day, which
+    # excluded every record created later that same day; casting to ::date
+    # (same pattern get_today_counts() already uses) makes "To" inclusive
+    # of the whole day. Also tolerates a caller that still sends a full
+    # datetime string (e.g. Admin Records, if it reuses this function) --
+    # ::date on a "2026-07-16T14:30" value just truncates to the date part.
     if date_from:
-        conditions.append("h.created_at >= %s")
+        conditions.append("h.created_at::date >= %s")
         params.append(date_from)
     if date_to:
-        conditions.append("h.created_at <= %s")
+        conditions.append("h.created_at::date <= %s")
         params.append(date_to)
 
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -735,7 +741,18 @@ def get_today_counts() -> dict:
     sql = """
         SELECT
             COUNT(*)                                         AS total,
-            COUNT(*) FILTER (WHERE gate_in = 0)              AS pending,
+            -- FIX (2026-08-12): narrowed to match get_history_search()'s
+            -- "pending" filter exactly -- this used to be plain
+            -- gate_in = 0, which also counted records that are already
+            -- Data Approved or GST Approved but just not yet gated in.
+            -- Those don't match the actual "Pending" filter/status badge
+            -- (see get_history_search()'s own note on this), so the card's
+            -- number and the rows you got after clicking it could disagree.
+            COUNT(*) FILTER (
+                WHERE gate_in = 0
+                  AND COALESCE(approval_status, '') != 'approved'
+                  AND COALESCE(gst_check, 0) = 0
+            )                                                 AS pending,
             COUNT(*) FILTER (WHERE gate_in = 1 AND miro = 0) AS in_progress,
             COUNT(*) FILTER (WHERE miro = 1)                 AS completed
         FROM history

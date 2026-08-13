@@ -31,13 +31,13 @@ def upsert_gatein_entry(history_id: int, data: dict) -> bool:
     """
     sql = """
         INSERT INTO gate_in_entries (
-            history_id, gate_in_date, gate_in_time, vendor_name,
+            history_id, gate_in_date, gate_in_time, vendor_name, vendor_code,
             transporter, truck_no, driver_name, license_no,
             num_persons, container_no, category, material,
             challan_no, challan_qty, boe_no, purchase_order,
             gate_pass_no, note, weight_option
         ) VALUES (
-            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
             %s, %s, %s, %s,
             %s, %s, %s, %s,
             %s, %s, %s, %s,
@@ -47,6 +47,7 @@ def upsert_gatein_entry(history_id: int, data: dict) -> bool:
             gate_in_date    = EXCLUDED.gate_in_date,
             gate_in_time    = EXCLUDED.gate_in_time,
             vendor_name     = EXCLUDED.vendor_name,
+            vendor_code     = EXCLUDED.vendor_code,
             transporter     = EXCLUDED.transporter,
             truck_no        = EXCLUDED.truck_no,
             driver_name     = EXCLUDED.driver_name,
@@ -80,6 +81,7 @@ def upsert_gatein_entry(history_id: int, data: dict) -> bool:
         data.get("gateInDate") or data.get("gate_in_date"),
         data.get("gateInTime") or data.get("gate_in_time"),
         data.get("vendorName") or data.get("vendor_name"),
+        data.get("vendorCode") or data.get("vendor_code"),
         data.get("transporter"),
         data.get("truckNo") or data.get("truck_no"),
         data.get("driverName") or data.get("driver_name"),
