@@ -70,14 +70,14 @@
    straight"). Real <table> elements so row heights (and therefore
    divider lines) stay natively synced across paired sub-sections without
    any manual alignment work. */
-.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:white; }
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
 .xd-table td {
   border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
   font-size:12.5px;
 }
 .xd-table td.xd-lbl {
   writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
-  width:22px; background:#f7f8fb; color:#5a6472; font-weight:700;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
   font-size:10.5px; letter-spacing:0.3px;
 }
 .xd-table td.xd-hd {
@@ -85,7 +85,7 @@
   text-transform:uppercase; letter-spacing:0.3px;
 }
 .xd-cap {
-  display:block; font-size:9.5px; color:#8a93a0; font-weight:600;
+  display:block; font-size:10.5px; color:#5a6472; font-weight:700;
   text-transform:uppercase; letter-spacing:0.3px; margin-bottom:1px;
 }
 .xd-table input, .xd-table textarea {
@@ -107,9 +107,9 @@
 /* Two row-bands sit side by side (e.g. Doc Details | Buyer Info) as one
    flex row so each band's own straight lines stay independent of the
    other band's row count. */
-.xd-band-pair { display:flex; gap:10px; margin-bottom:2px; }
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; }
 .xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
-.xd-transport-pair { display:flex; gap:10px; align-items:flex-start; }
+.xd-transport-pair { display:flex; gap:10px; align-items:stretch; }
 .xd-transport-pair > .xd-table { flex:1; }
 
 /* Material Info -- clamps to ~3 visible rows by default; "View N more"
@@ -129,12 +129,12 @@
 .btn-view-more:hover { background:#fdeecb; }
 .btn-view-more[hidden] { display:none; }
 
-.hsn-table-edit { width:100%; border-collapse:collapse; font-size:12px; }
+.hsn-table-edit { width:100%; border-collapse:collapse; font-size:12px; background:#f0f4ff; }
 .hsn-table-edit th {
-  background:#f5f5f5; padding:6px 8px; text-align:left; font-weight:700;
-  border-bottom:2px solid #ddd; font-size:10.5px; text-transform:uppercase;
+  background:#fff3c4; color:#7a5c00; padding:6px 8px; text-align:left; font-weight:700;
+  border-bottom:2px solid #f0d58c; font-size:10.5px; text-transform:uppercase;
 }
-.hsn-table-edit td { padding:4px 6px; border-bottom:1px solid #eee; }
+.hsn-table-edit td { padding:4px 6px; border-bottom:1px solid #e3e3e3; }
 .hsn-table-edit input {
   width:100%; padding:4px 6px; font-size:12px; border:1px solid #e0e0e0;
   border-radius:4px;
@@ -188,6 +188,18 @@
 .xd-modal-cancel:hover { background:#d5dbdc; }
 .xd-modal-confirm { background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
 .xd-modal-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
+/* v26-follow-up: Remarks panel, scoped to THIS tab's instance only
+   (#remarksPanel-extracted -- _remarks_panel.html is shared across 6
+   tabs, so nothing here touches the shared partial or its JS). Client
+   request: always open, no collapse affordance, on Extracted Data
+   specifically. The toggle's click handler and .open class in the
+   shared JS still run harmlessly -- .remarks-body simply never actually
+   hides because of the !important below, so nothing needs to change in
+   the shared file. */
+#remarksPanel-extracted .remarks-body { display:block !important; }
+#remarksPanel-extracted .remarks-chevron { display:none; }
+#remarksPanel-extracted .remarks-toggle { cursor:default; }
 
 .hold-box textarea {
   width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:8px;
@@ -542,7 +554,7 @@
 
   <!-- Band 3: Material Info | Tax Info -->
   <div class="xd-band-pair">
-    <div class="xd-material-card" style="flex:1.3;flex-direction:column;" id="materialInfoCard">
+    <div class="xd-material-card" style="flex:1;flex-direction:column;" id="materialInfoCard">
       <table class="xd-table" style="margin-bottom:0;">
         <tr>
           <td class="xd-lbl" rowspan="1" style="width:22px;">Material info</td>
