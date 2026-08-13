@@ -1,6 +1,6 @@
 <style>
 .approval-banner {
-  border-radius:10px; padding:14px 20px; margin-bottom:20px;
+  border-radius:10px; padding:14px 20px;
   display:flex; justify-content:space-between; align-items:center;
   font-weight:500; font-size:14px;
 }
@@ -30,74 +30,113 @@
 .btn-rerun-ocr:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(243,156,18,0.4); }
 .btn-rerun-ocr:disabled { background:#b0bec5; cursor:not-allowed; }
 
-.editable-input {
-  width:100%; padding:8px 12px; border:1.5px solid #e0e0e0;
-  border-radius:6px; font-size:13px; transition:border-color .2s;
+/* v25 excel-style redesign: banners row (approval status + delivery-mode
+   lock summary side by side, matching the pasted mockup) */
+.xd-banners-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+.xd-banners-row .approval-banner { margin-bottom:0; }
+.xd-lock-banner {
+  background:#ecfdf5; border:1px solid #00b894; border-radius:10px;
+  padding:14px 20px; font-size:13px; color:#1a7a3c;
 }
-.editable-input:focus { outline:none; border-color:#1e5ca8; }
-.editable-input:disabled { background:#f8f9fb; color:#666; cursor:not-allowed; }
-.editable-input.field-expired { border-color:#e74c3c; background:#fee; }
-.editable-input.field-expired:focus { border-color:#e74c3c; }
+.xd-lock-banner .xd-lock-title { font-weight:700; margin-bottom:6px; }
+.xd-lock-banner .xd-lock-sub { color:#3a8a5c; margin-top:8px; }
+.xd-category-options { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.xd-cat-pill {
+  background:white; border:1.5px solid #b9e4cd; border-radius:20px;
+  padding:5px 14px; font-size:12px; font-weight:600; color:#3a8a5c;
+  cursor:pointer; user-select:none; transition:.15s;
+}
+.xd-cat-pill:hover { border-color:#00b894; }
+.xd-cat-pill.selected { border-color:#00b894; background:#00b894; color:white; }
+.xd-cat-pill input { display:none; }
 
-/* Re-used for IRN short-length warning and GSTIN format/checksum errors --
-   same red-flag visual language as .field-expired above, just with an
-   inline text message under the field instead of a static label note. */
-.field-error-msg-inline { color:#e74c3c; font-size:11px; margin-top:4px; display:none; }
+/* Section title bars ("INVOICE DATA" / "TRANSPORT DETAILS") -- amber,
+   square left accent (client request: straight, unrounded accent edge). */
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+.xd-section-title .xd-orig-links a {
+  color:#8a6100; font-size:11px; font-weight:600; text-decoration:none;
+  margin-left:14px; letter-spacing:normal;
+}
+.xd-section-title .xd-orig-links a:hover { text-decoration:underline; }
+
+/* Excel-style grid tables -- straight, continuous 1px borders throughout
+   a row-band (client request, 2026-08-13: "the line in between must be
+   straight"). Real <table> elements so row heights (and therefore
+   divider lines) stay natively synced across paired sub-sections without
+   any manual alignment work. */
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:white; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#f7f8fb; color:#5a6472; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-hd {
+  background:#f5f6f8; font-weight:700; font-size:10.5px; color:#666;
+  text-transform:uppercase; letter-spacing:0.3px;
+}
+.xd-cap {
+  display:block; font-size:9.5px; color:#8a93a0; font-weight:600;
+  text-transform:uppercase; letter-spacing:0.3px; margin-bottom:1px;
+}
+.xd-table input, .xd-table textarea {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table textarea { resize:none; overflow:hidden; line-height:1.35; white-space:pre-wrap; word-break:break-word; }
+.xd-table input:hover, .xd-table textarea:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table textarea:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table textarea:disabled { color:#4a5568; cursor:not-allowed; }
+.xd-table input.field-expired, .xd-table textarea.field-expired { border-color:#e74c3c; background:#fee; }
+.xd-table input.field-mismatch, .xd-table textarea.field-mismatch { border-color:#e08e0b; background:#fff8e6; }
+.xd-table td.xd-num { text-align:right; }
+.field-error-msg-inline { color:#e74c3c; font-size:10.5px; margin-top:2px; display:none; }
 .field-error-msg-inline.show { display:block; }
-
-/* v13-follow-up: cross-tab mismatch highlight (Invoice Number / Invoice
-   Date / PO Number / Vehicle Number, compared between the tabs that share
-   them). Deliberately a different colour from .field-expired -- amber
-   "please verify" rather than red "this is malformed" -- since a mismatch
-   here isn't necessarily an error, just something worth a second look.
-   Visual only: never disables the field, never blocks Save/Approve. */
-.editable-input.field-mismatch { border-color:#e08e0b; background:#fff8e6; }
-.editable-input.field-mismatch:focus { border-color:#e08e0b; }
 .field-error-msg-inline.mismatch { color:#b8720a; }
 
-.field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:14px; }
-.field-block { background:#f8f9fb; padding:10px 14px; border-radius:6px; border-left:3px solid #1e5ca8; }
-.field-label { font-size:11px; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:5px; }
+/* Two row-bands sit side by side (e.g. Doc Details | Buyer Info) as one
+   flex row so each band's own straight lines stay independent of the
+   other band's row count. */
+.xd-band-pair { display:flex; gap:10px; margin-bottom:2px; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-transport-pair { display:flex; gap:10px; align-items:flex-start; }
+.xd-transport-pair > .xd-table { flex:1; }
 
-/* Address fields (client request): span the full row width and grow to
-   fit their content height via JS (_autoGrowTextarea) so the complete
-   address is always visible without scrolling, vertically or
-   horizontally -- no fixed/clipped single-line box. */
-.field-block-wide { grid-column: 1 / -1; }
-textarea.address-textarea.editable-input {
-  width:100%; min-height:38px; resize:vertical; overflow:hidden;
-  font-family:inherit; line-height:1.4; white-space:pre-wrap;
-  word-break:break-word; box-sizing:border-box;
+/* Material Info -- clamps to ~3 visible rows by default; "View N more"
+   moves the live table (not a copy) into a modal so add/delete-row and
+   the save-time collector (#invGoodsBody) keep working unchanged
+   regardless of which container currently holds the table. */
+.xd-material-card { display:flex; gap:0; }
+.xd-material-clamp { max-height:118px; overflow:hidden; flex:1; }
+.xd-material-expanded .xd-material-clamp { max-height:none; overflow:visible; }
+.xd-material-more-row { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; background:#fafbfc; border:1px solid #e3e3e3; border-top:none; }
+.xd-material-count { font-size:11px; color:#888; }
+.btn-view-more {
+  background:#fff8e6; color:#8a6100; border:1px solid #f0d58c;
+  padding:5px 14px; border-radius:6px; font-size:12px; font-weight:700;
+  cursor:pointer;
 }
-
-.section-card {
-  background:white; padding:18px; border-radius:10px;
-  box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:18px;
-}
-.section-title { color:#1e5ca8; font-size:15px; margin-bottom:14px; padding-bottom:8px; border-bottom:2px solid #f0f0f0; font-weight:700; }
-
-.btn-save-section {
-  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white;
-  border:none; padding:10px 26px; border-radius:8px;
-  font-size:14px; font-weight:600; cursor:pointer;
-  display:inline-flex; align-items:center; gap:8px;
-}
-.btn-save-section:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
-.btn-save-section:disabled { background:#ccc; cursor:not-allowed; }
-.save-status {
-  margin-left:14px; font-size:13px; font-weight:500;
-}
-.save-status.success { color:#00b894; }
-.save-status.error { color:#e17055; }
+.btn-view-more:hover { background:#fdeecb; }
+.btn-view-more[hidden] { display:none; }
 
 .hsn-table-edit { width:100%; border-collapse:collapse; font-size:12px; }
 .hsn-table-edit th {
-  background:#f5f5f5; padding:8px; text-align:left; font-weight:700;
-  border-bottom:2px solid #ddd; font-size:11px; text-transform:uppercase;
+  background:#f5f5f5; padding:6px 8px; text-align:left; font-weight:700;
+  border-bottom:2px solid #ddd; font-size:10.5px; text-transform:uppercase;
 }
-.hsn-table-edit td { padding:6px; border-bottom:1px solid #eee; }
+.hsn-table-edit td { padding:4px 6px; border-bottom:1px solid #eee; }
 .hsn-table-edit input {
-  width:100%; padding:5px 8px; font-size:12px; border:1px solid #e0e0e0;
+  width:100%; padding:4px 6px; font-size:12px; border:1px solid #e0e0e0;
   border-radius:4px;
 }
 .btn-row-add { background:#e8f0fe; color:#1e5ca8; border:1px solid #c5d8f8;
@@ -108,52 +147,54 @@ textarea.address-textarea.editable-input {
   padding:4px 8px; border-radius:4px; font-size:12px; font-weight:700;
   cursor:pointer; }
 
-/* Approve confirm modal */
-.approve-modal {
-  display:none; position:fixed; inset:0;
-  background:rgba(0,0,0,0.6); z-index:10000;
-  align-items:center; justify-content:center;
+/* Bottom action bar -- Hold + Save and Proceed only (client request,
+   2026-08-13: this single action now replaces the old per-section
+   Save-and-Next / Approve flow entirely; GST Verification is a separate
+   standalone on-demand tab, no longer part of this chain). */
+.xd-action-bar {
+  margin-top:18px; display:flex; align-items:center; gap:10px;
+  padding-top:14px; border-top:1px solid #f0f0f0;
 }
-.approve-modal.show { display:flex; }
-.approve-box {
-  background:white; border-radius:12px; padding:30px;
-  width:90%; max-width:460px; text-align:center;
-  box-shadow:0 8px 32px rgba(0,0,0,0.2);
+.btn-save-proceed {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white;
+  border:none; padding:11px 28px; border-radius:8px;
+  font-size:14px; font-weight:700; cursor:pointer;
 }
-.approve-box h3 { color:#1e5ca8; margin-bottom:10px; }
-.approve-box p { color:#555; font-size:13px; margin-bottom:22px; }
-.approve-box-actions { display:flex; gap:10px; }
-.approve-box-actions button { flex:1; padding:12px; border:none; border-radius:8px;
-  font-weight:600; font-size:14px; cursor:pointer; transition:.2s; }
-.approve-box-cancel { background:#ecf0f1; color:#333; }
-.approve-box-cancel:hover { background:#d5dbdc; }
-.approve-box-confirm {
-  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
-.approve-box-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.btn-save-proceed:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.btn-save-proceed:disabled { background:#ccc; cursor:not-allowed; }
+.save-status { font-size:12px; font-weight:500; }
+.save-status.success { color:#00b894; }
+.save-status.error { color:#e17055; }
 
-/* Hold modal */
-.hold-modal {
+/* Shared modal shell -- approve / courier / hold / material-info popups
+   all reuse this one pattern instead of four near-duplicate blocks. */
+.xd-modal {
   display:none; position:fixed; inset:0;
   background:rgba(0,0,0,0.6); z-index:10000;
   align-items:center; justify-content:center;
 }
-.hold-modal.show { display:flex; }
-.hold-box {
-  background:white; border-radius:12px; padding:30px;
-  width:90%; max-width:500px;
+.xd-modal.show { display:flex; }
+.xd-modal-box {
+  background:white; border-radius:12px; padding:26px;
+  width:90%; max-width:460px; box-shadow:0 8px 32px rgba(0,0,0,0.2);
 }
-.hold-box h3 { color:#2c3e50; margin-bottom:14px; }
+.xd-modal-box.wide { max-width:920px; max-height:82vh; overflow-y:auto; }
+.xd-modal-box h3 { color:#1e5ca8; margin-bottom:10px; }
+.xd-modal-box p { color:#555; font-size:13px; margin-bottom:22px; }
+.xd-modal-actions { display:flex; gap:10px; }
+.xd-modal-actions button { flex:1; padding:12px; border:none; border-radius:8px;
+  font-weight:600; font-size:14px; cursor:pointer; transition:.2s; }
+.xd-modal-cancel { background:#ecf0f1; color:#333; }
+.xd-modal-cancel:hover { background:#d5dbdc; }
+.xd-modal-confirm { background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
+.xd-modal-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
 .hold-box textarea {
   width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:8px;
   font-family:inherit; font-size:14px; min-height:90px; margin:10px 0 18px;
 }
-.hold-actions { display:flex; gap:10px; }
-.hold-actions button { flex:1; padding:12px; border:none; border-radius:8px;
-  font-weight:600; font-size:14px; cursor:pointer; }
-.hold-cancel { background:#ecf0f1; color:#333; }
-.hold-confirm { background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
 
-/* v13: Extras banner + partial-document scenario panel */
+/* v13: Extras banner + partial-document scenario panel. */
 .extras-banner {
   background:#fff8e6; border:1px solid #f0d58c; border-radius:8px;
   padding:10px 16px; margin-bottom:16px; font-size:12px; color:#7a5c00;
@@ -169,7 +210,7 @@ textarea.address-textarea.editable-input {
 
 .scenario-panel {
   background:#f7f9ff; border:1.5px solid #c5d8f8; border-radius:10px;
-  padding:16px 20px; margin-bottom:20px;
+  padding:16px 20px; margin-bottom:16px;
 }
 .scenario-block { margin-bottom:14px; }
 .scenario-block:last-child { margin-bottom:0; }
@@ -200,29 +241,6 @@ textarea.address-textarea.editable-input {
   padding:10px 14px; font-size:12px; color:#1a7a3c; display:flex;
   align-items:center; gap:8px;
 }
-
-/* Courier confirm modal — same visual language as the Approve/Hold modals */
-.courier-modal {
-  display:none; position:fixed; inset:0;
-  background:rgba(0,0,0,0.6); z-index:10000;
-  align-items:center; justify-content:center;
-}
-.courier-modal.show { display:flex; }
-.courier-box {
-  background:white; border-radius:12px; padding:30px;
-  width:90%; max-width:460px; text-align:center;
-  box-shadow:0 8px 32px rgba(0,0,0,0.2);
-}
-.courier-box h3 { color:#1e5ca8; margin-bottom:10px; }
-.courier-box p { color:#555; font-size:13px; margin-bottom:22px; }
-.courier-box-actions { display:flex; gap:10px; }
-.courier-box-actions button { flex:1; padding:12px; border:none; border-radius:8px;
-  font-weight:600; font-size:14px; cursor:pointer; transition:.2s; }
-.courier-box-cancel { background:#ecf0f1; color:#333; }
-.courier-box-cancel:hover { background:#d5dbdc; }
-.courier-box-confirm {
-  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
-.courier-box-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
 </style>
 
 <div class="content-card">
@@ -240,7 +258,10 @@ textarea.address-textarea.editable-input {
   {% endif %}
 </div>
 {% endif %}
-  <h3>📊 Extracted Data — Verify & Approve</h3>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;">
+    <h3 style="margin:0;">📊 Extracted Data — Verify &amp; Approve</h3>
+    <span style="font-size:11px;color:#999;">Click any value below to edit</span>
+  </div>
 
   {% set status = (history.approval_status if history else 'pending') or 'pending' %}
   {# can_edit_extracted comes from app.py's _extracted_data_view_state() --
@@ -253,45 +274,75 @@ textarea.address-textarea.editable-input {
   {% set can_edit_extracted = can_edit_extracted if can_edit_extracted is defined else true %}
   {% set is_approved = (status == 'approved') or not can_edit_extracted %}
 
-  {# Sequential Invoice -> E-way -> LR -> GST Approval flow. doc_order only
-     lists whichever of the three documents actually exist for this record,
-     so a record missing (say) LR naturally skips it -- E-way becomes the
-     final step and shows the real Approve button instead of "Save & Next".
-     Nothing here is a new approval state: Invoice/E-way "Approve" clicks
-     are really just "Save & Next" (save that section, advance the sub-tab)
-     -- the one real approval (history.approval_status) still only happens
-     on the last present document, exactly as before this change. #}
+  {# Only used now to gate what saveAndProceed() collects/saves -- the old
+     sequential Invoice -> E-way -> LR "Save & Next" tab flow is gone
+     (v25, 2026-08-13: single "Save and Proceed" action covers whichever
+     of the three documents exist for this record, then approves in one
+     shot). doc_order still only lists documents that actually exist. #}
   {% set doc_order = [] %}
   {% if invoice_data %}{% set _ = doc_order.append('invoice') %}{% endif %}
   {% if ewaybill_data %}{% set _ = doc_order.append('ewaybill') %}{% endif %}
   {% if lr_data %}{% set _ = doc_order.append('lr') %}{% endif %}
-  {% set last_doc = doc_order[-1] if doc_order else none %}
 
-  <!-- Approval status banner -->
-  {% if status == 'pending' %}
-  <div class="approval-banner pending">
-    <div>⏳ <strong>Pending Verification</strong> — Review Invoice, then E-Way Bill, then LR below (each "Save &amp; Next" saves that section and moves you forward). Approve appears on the last section once all three are reviewed.</div>
-  </div>
-  {% elif status == 'approved' %}
-  <div class="approval-banner approved">
-    <div>
-      ✓ <strong>Approved</strong> by {{ history.approval_by }}
-      {% if history.approval_at %}on {{ history.approval_at.strftime('%d-%m-%Y %H:%M') }}{% endif %}
-      — fields locked, Gate In unlocked.
+  {% set need_delivery_mode = invoice_data and not lr_data %}
+  {% set need_ewb_exemption = invoice_data and not ewaybill_data %}
+
+  <!-- Status banners row -->
+  <div class="xd-banners-row">
+    {% if status == 'pending' %}
+    <div class="approval-banner pending">
+      <div>⏳ <strong>Pending Verification</strong> — review all extracted values below, then Save and Proceed.</div>
     </div>
-  </div>
-  {% elif status == 'hold' %}
-  <div class="approval-banner hold">
-    <div>
-      ⏸ <strong>On Hold</strong> by {{ history.approval_by }}: {{ history.hold_reason or 'No reason given' }}
+    {% elif status == 'approved' %}
+    <div class="approval-banner approved">
+      <div>
+        ✓ <strong>Approved</strong> by {{ history.approval_by }}
+        {% if history.approval_at %}on {{ history.approval_at.strftime('%d-%m-%Y %H:%M') }}{% endif %}
+        — fields locked, Gate In unlocked.
+      </div>
     </div>
-    {% if can_edit_extracted %}
-    <div class="approval-actions">
-      <button class="btn-approve" onclick="approveRecord()">✓ Approve</button>
+    {% elif status == 'hold' %}
+    <div class="approval-banner hold">
+      <div>
+        ⏸ <strong>On Hold</strong> by {{ history.approval_by }}: {{ history.hold_reason or 'No reason given' }}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if history %}
+    {% set _category = history.category or 'stores' %}
+    <div class="xd-lock-banner">
+      <div class="xd-lock-title">Category</div>
+      <div class="xd-category-options" id="categoryOptions">
+        {% for _val, _label in [('stores','Stores'), ('sales_return','Sales Return'), ('job_work','Job Work')] %}
+        <label class="xd-cat-pill{% if _category == _val %} selected{% endif %}" data-value="{{ _val }}">
+          <input type="radio" name="extractedCategory" value="{{ _val }}"
+                 {% if _category == _val %}checked{% endif %}
+                 {% if is_approved %}disabled{% endif %}>{{ _label }}
+        </label>
+        {% endfor %}
+        <span class="save-status" id="categorySaveStatus"></span>
+      </div>
+      {% if history.goods_delivery_mode and not need_delivery_mode and not need_ewb_exemption %}
+      <div class="xd-lock-sub">
+        ✓ {{ {'utility_van':'Utility Van','vendor_vehicle':'Vendor Own Vehicle','hand_delivery':'Hand Delivery','courier':'Courier'}.get(history.goods_delivery_mode, history.goods_delivery_mode) }}
+        · E-Way Bill exemption:
+        {% if history.ewb_exemption_reasons %}
+          {% set _labels = {'value_exemption':'Value Exemption','distance_exemption':'Distance Exemption','other_exemption':'Other Exemptions'} %}
+          {% set _parts = [] %}
+          {% for _r in history.ewb_exemption_reasons.split(',') %}
+            {% set _ = _parts.append(_labels.get(_r.strip(), _r.strip())) %}
+          {% endfor %}
+          {{ _parts|join(', ') }}
+        {% else %}
+          not applicable
+        {% endif %}
+        — locked
+      </div>
+      {% endif %}
     </div>
     {% endif %}
   </div>
-  {% endif %}
 
   {% if history and not can_edit_extracted %}
   <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#4a5568;">
@@ -299,9 +350,7 @@ textarea.address-textarea.editable-input {
   </div>
   {% endif %}
 
-  <!-- v13: Extras banner — files folder_watcher.py couldn't recognize as
-       Invoice/E-Way Bill/LR (unrecognized filename suffix). View/download
-       only, no other action. -->
+  <!-- v13: Extras banner -->
   {% if history_extras %}
   <div class="extras-banner">
     <div class="extras-banner-title">📎 Extras — {{ history_extras|length }} unrecognized file{{ 's' if history_extras|length != 1 else '' }} from intake</div>
@@ -317,16 +366,7 @@ textarea.address-textarea.editable-input {
   </div>
   {% endif %}
 
-  <!-- v13: partial-document scenario panel. Shown above the sub-tabs
-       (rather than pinned to whichever sub-tab happens to be "last") so
-       it's visible no matter which sub-tab the reviewer is on -- there's
-       only ever one real Approve button in the DOM at a time regardless
-       (see last_doc below), so blocking that one button has the same
-       effect either way. Once answered, goods_delivery_mode /
-       ewb_exemption_reasons are permanent -- the panel switches to a
-       locked summary instead of the picker. -->
-  {% set need_delivery_mode = invoice_data and not lr_data %}
-  {% set need_ewb_exemption = invoice_data and not ewaybill_data %}
+  <!-- v13: partial-document scenario panel -->
   {% if (need_delivery_mode or need_ewb_exemption) and can_edit_extracted %}
   <div class="scenario-panel" id="scenarioPanel">
 
@@ -408,576 +448,354 @@ textarea.address-textarea.editable-input {
   {% endif %}
 
   {% if invoice_data or ewaybill_data or lr_data %}
-    <div class="content-tabs">
-      {% if invoice_data %}
-        <button class="tab-button active" onclick="switchDataTab('invoice')">Invoice Data</button>
-      {% endif %}
-      {% if ewaybill_data %}
-        <button class="tab-button {% if not invoice_data %}active{% endif %}" onclick="switchDataTab('ewaybill')">E-Way Bill Data</button>
-      {% endif %}
-      {% if lr_data or history.goods_delivery_mode == 'courier' %}
-        <button class="tab-button {% if not invoice_data and not ewaybill_data %}active{% endif %}" onclick="switchDataTab('lr')">LR Data{% if not lr_data %} (Manual Entry){% endif %}</button>
-      {% endif %}
-    </div>
 
-    <!-- ============================ INVOICE DATA ============================ -->
-    {% if invoice_data %}
-    <div id="invoiceData" class="tab-content active">
-      <div class="data-display">
-        <input type="hidden" id="inv_history_id" value="{{ history_id }}">
+  <!-- ============================ INVOICE DATA ============================ -->
+  {% if invoice_data %}
+  <div class="xd-section-title">
+    <span>INVOICE DATA</span>
+    {% if invoice_data.get('filename') %}
+    <span class="xd-orig-links">
+      <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data['filename']) }}" target="_blank">📄 View original invoice</a>
+    </span>
+    {% endif %}
+  </div>
 
-        <div class="section-card">
-          <div class="section-title">📋 Basic Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Invoice Number</div>
-              <input class="editable-input" id="inv_invoice_number" value="{{ ((invoice_data.get('invoice_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_inv_invoice_number"></div>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Invoice Date</div>
-              <input class="editable-input date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((invoice_data.get('invoice_date') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_inv_invoice_date"></div>
-            </div>
-            <div class="field-block">
-              <div class="field-label">PO Number</div>
-              <input class="editable-input" id="inv_po_number" value="{{ (invoice_data.get('po_number') if invoice_data else '') or '' }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_inv_po_number"></div>
-            </div>
-          </div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">IRN (Invoice Reference Number)</div>
-              <input class="editable-input" id="inv_irn" value="{{ ((invoice_data.get('irn') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_inv_irn"></div>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Out Bound Delivery Number</div>
-              <input class="editable-input" id="inv_outbound_delivery_number" value="{{ ((invoice_data.get('outbound_delivery_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-          </div>
-        </div>
+  <!-- Band 1: Doc Details | Buyer Info -->
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Doc details</td>
+        <td><span class="xd-cap">Invoice No.</span><input id="inv_invoice_number" value="{{ ((invoice_data.get('invoice_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Invoice Date</span><input class="date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((invoice_data.get('invoice_date') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">PO No.</span><input id="inv_po_number" value="{{ (invoice_data.get('po_number') if invoice_data else '') or '' }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_po_number"></div></td>
+      </tr>
+      <tr>
+        <td colspan="3"><span class="xd-cap">IRN</span><input id="inv_irn" value="{{ ((invoice_data.get('irn') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_irn"></div></td>
+      </tr>
+      <tr>
+        <td colspan="3"><span class="xd-cap">Out Bound Delivery No.</span><input id="inv_outbound_delivery_number" value="{{ ((invoice_data.get('outbound_delivery_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
 
-        <div class="section-card">
-          <div class="section-title">🏢 Buyer Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Buyer Name</div>
-              <input class="editable-input" id="inv_buyer_name" value="{{ ((invoice_data.get('buyer_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Buyer GSTIN</div>
-              <input class="editable-input" id="inv_buyer_gstin" value="{{ ((invoice_data.get('buyer_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_inv_buyer_gstin"></div>
-            </div>
-            <div class="field-block field-block-wide">
-              <div class="field-label">Buyer Address</div>
-              <textarea class="editable-input address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('buyer_address') if invoice_data else '') or '') }}</textarea>
-            </div>
-          </div>
-        </div>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Buyer info</td>
+        <td colspan="3"><span class="xd-cap">Buyer Name</span><input id="inv_buyer_name" value="{{ ((invoice_data.get('buyer_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="3"><span class="xd-cap">Buyer Address</span><textarea class="address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('buyer_address') if invoice_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Buyer GSTIN</span><input id="inv_buyer_gstin" value="{{ ((invoice_data.get('buyer_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_buyer_gstin"></div></td>
+        <!-- Ship To Code merged into "Ship To State" display (client
+             request): value shown as "CODE - STATE". Bill To Code shown
+             here as its own real field -- has no home in the mockup's row
+             pairing but is a genuinely saved column (invoice_data.
+             bill_to_code); dropping the input would also break
+             saveExtractedInvoice()'s payload (document.getElementById(...)
+             .value on a null element). -->
+        <td><span class="xd-cap">Bill To State</span><input id="inv_bill_to_state" value="{{ ((invoice_data.get('bill_to_state') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Bill To Code</span><input id="inv_bill_to_code" value="{{ ((invoice_data.get('bill_to_code') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
+  </div>
 
-        <div class="section-card">
-          <div class="section-title">🏪 Seller Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Seller Name</div>
-              <input class="editable-input" id="inv_seller_name" value="{{ ((invoice_data.get('seller_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Seller GSTIN</div>
-              <input class="editable-input" id="inv_seller_gstin" value="{{ ((invoice_data.get('seller_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_inv_seller_gstin"></div>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Company PAN</div>
-              <input class="editable-input" id="inv_company_pan" value="{{ ((invoice_data.get('company_pan') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_inv_company_pan"></div>
-            </div>
-            <div class="field-block field-block-wide">
-              <div class="field-label">Seller Address</div>
-              <textarea class="editable-input address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('seller_address') if invoice_data else '') or '') }}</textarea>
-            </div>
-          </div>
-        </div>
+  <!-- Band 2: Shipping Info | Seller Info -->
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Shipping info</td>
+        <td colspan="3"><span class="xd-cap">Ship To Name</span><input id="inv_ship_to_name" value="{{ ((invoice_data.get('ship_to_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="3"><span class="xd-cap">Ship To Address</span><textarea class="address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('ship_to_address') if invoice_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        {% set _sts = ((invoice_data.get('ship_to_state') if invoice_data else '') or '') %}
+        {% set _stc = ((invoice_data.get('ship_to_code') if invoice_data else '') or '') %}
+        <td colspan="3"><span class="xd-cap">Ship To State</span>
+          <input id="inv_ship_to_state"
+                 value="{% if _stc and _sts %}{{ _stc }} - {{ _sts }}{% else %}{{ _stc or _sts }}{% endif %}"
+                 {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
 
-        <div class="section-card">
-          <div class="section-title">🚚 Shipping Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Ship To Name</div>
-              <input class="editable-input" id="inv_ship_to_name" value="{{ ((invoice_data.get('ship_to_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block field-block-wide">
-              <div class="field-label">Ship To Address</div>
-              <textarea class="editable-input address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('ship_to_address') if invoice_data else '') or '') }}</textarea>
-            </div>
-            <!-- Ship To Code merged into this single field (client request):
-                 label stays "Ship To State", displayed value is
-                 "CODE - STATE" (e.g. "27 - Maharashtra"). Both underlying
-                 DB columns (ship_to_state, ship_to_code) are unchanged --
-                 saveExtractedInvoice() below splits this field's value back
-                 into the two on save. -->
-            <div class="field-block">
-              <div class="field-label">Ship To State</div>
-              {% set _sts = ((invoice_data.get('ship_to_state') if invoice_data else '') or '') %}
-              {% set _stc = ((invoice_data.get('ship_to_code') if invoice_data else '') or '') %}
-              <input class="editable-input" id="inv_ship_to_state"
-                     value="{% if _stc and _sts %}{{ _stc }} - {{ _sts }}{% else %}{{ _stc or _sts }}{% endif %}"
-                     {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Bill To State</div>
-              <input class="editable-input" id="inv_bill_to_state" value="{{ ((invoice_data.get('bill_to_state') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Bill To Code</div>
-              <input class="editable-input" id="inv_bill_to_code" value="{{ ((invoice_data.get('bill_to_code') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-          </div>
-        </div>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Seller info</td>
+        <td colspan="3"><span class="xd-cap">Seller Name</span><input id="inv_seller_name" value="{{ ((invoice_data.get('seller_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="3"><span class="xd-cap">Seller Address</span><textarea class="address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('seller_address') if invoice_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Seller GSTIN</span><input id="inv_seller_gstin" value="{{ ((invoice_data.get('seller_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_seller_gstin"></div></td>
+        <td colspan="2"><span class="xd-cap">Company PAN</span><input id="inv_company_pan" value="{{ ((invoice_data.get('company_pan') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_company_pan"></div></td>
+      </tr>
+    </table>
+  </div>
 
-        <div class="section-card">
-          <div class="section-title">💰 Tax & Amount Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Total Taxable Amount</div>
-              <input class="editable-input" id="inv_total_taxable_amount" value="{{ ((invoice_data.get('total_taxable_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+  <!-- Band 3: Material Info | Tax Info -->
+  <div class="xd-band-pair">
+    <div class="xd-material-card" style="flex:1.3;flex-direction:column;" id="materialInfoCard">
+      <table class="xd-table" style="margin-bottom:0;">
+        <tr>
+          <td class="xd-lbl" rowspan="1" style="width:22px;">Material info</td>
+          <td colspan="6" style="padding:0;">
+            <div class="xd-material-clamp">
+              <table class="hsn-table-edit" id="invGoodsTable">
+                <thead>
+                  <tr>
+                    <th style="width:26px;">#</th>
+                    <th>Code</th>
+                    <th>HSN</th>
+                    <th>Description</th>
+                    <th>Qty</th>
+                    <th>UOM</th>
+                    <th style="text-align:right;">Value</th>
+                    <th style="width:30px;"></th>
+                  </tr>
+                </thead>
+                <tbody id="invGoodsBody">
+                  {% set hsn_list = invoice_data.get('hsn_details') or [] %}
+                  {% for hsn in hsn_list %}
+                  <tr data-orig-idx="{{ loop.index0 }}">
+                    <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                    <td><input type="text" data-field="material_code" value="{{ ((hsn.get('material_code') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="hsn_sac" value="{{ ((hsn.get('hsn_sac') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="description" value="{{ ((hsn.get('description') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="quantity" value="{{ ((hsn.get('quantity') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="unit" value="{{ ((hsn.get('unit') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="taxable_value" style="text-align:right;" value="{{ ((hsn.get('taxable_value') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td>{% if not is_approved %}<button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button>{% endif %}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
             </div>
-            <div class="field-block">
-              <div class="field-label">CGST Rate</div>
-              <input class="editable-input" id="inv_cgst_rate" value="{{ ((invoice_data.get('cgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">CGST Amount</div>
-              <input class="editable-input" id="inv_cgst_amount" value="{{ ((invoice_data.get('cgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">SGST Rate</div>
-              <input class="editable-input" id="inv_sgst_rate" value="{{ ((invoice_data.get('sgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">SGST Amount</div>
-              <input class="editable-input" id="inv_sgst_amount" value="{{ ((invoice_data.get('sgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">IGST Rate</div>
-              <input class="editable-input" id="inv_igst_rate" value="{{ ((invoice_data.get('igst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">IGST Amount</div>
-              <input class="editable-input" id="inv_igst_amount" value="{{ ((invoice_data.get('igst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Total Tax Amount</div>
-              <input class="editable-input" id="inv_total_tax_amount" value="{{ ((invoice_data.get('total_tax_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Grand Total</div>
-              <input class="editable-input" id="inv_grand_total" value="{{ ((invoice_data.get('grand_total') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Amount in Words</div>
-              <input class="editable-input" id="inv_amount_in_words" value="{{ ((invoice_data.get('amount_in_words') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Payment Terms</div>
-              <input class="editable-input" id="inv_payment_terms" value="{{ ((invoice_data.get('payment_terms') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-          </div>
-        </div>
-
-        <!-- HSN Details — editable table
-        <div class="section-card">
-          <div class="section-title">📦 HSN/SAC Details</div>
-          <div style="overflow-x:auto;">
-            <table class="hsn-table-edit" id="invHsnTable">
-              <thead>
-                <tr>
-                  <th>Material Code</th>
-                  <th>HSN/SAC</th>
-                  <th>Description</th>
-                  <th>Quantity</th>
-                  <th>Unit</th>
-                  <th>Rate</th>
-                  <th>Taxable</th>
-                  <th>CGST Amt</th>
-                  <th>SGST Amt</th>
-                  <th>IGST Amt</th>
-                  <th>Total</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="invHsnBody">
-                {% set hsn_list = invoice_data.get('hsn_details') or [] %}
-                {% for hsn in hsn_list %}
-                <tr>
-                  <td><input type="text" value="{{ ((hsn.get('material_code') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('hsn_sac') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('description') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('quantity') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('unit') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('rate') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('taxable_value') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('cgst_amount') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('sgst_amount') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('igst_amount') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" value="{{ ((hsn.get('total') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><button class="btn-row-delete" onclick="deleteInvHsnRow(this)" {% if is_approved %}disabled{% endif %}>×</button></td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
+          </td>
+        </tr>
+      </table>
+      <div class="xd-material-more-row">
+        <span class="xd-material-count" id="materialInfoCountLabel"></span>
+        <span style="display:flex;gap:8px;">
           {% if not is_approved %}
-          <button class="btn-row-add" onclick="addInvHsnRow()">➕ Add HSN Line</button>
+          <button type="button" class="btn-row-add" style="margin-top:0;" onclick="addGoodsRow()">➕ Add Row</button>
           {% endif %}
-        </div> -->
-
-        <!-- Goods Information — editable, one row per invoice line item.
-             Backed by invoice_data.hsn_details (single source of truth, v7).
-             Hidden per-line fields (rate, taxes, total) are preserved on
-             save via ORIGINAL_HSN merge. material_code is now a visible
-             column (previously hidden -- see the Material Code pattern
-             check in the script section below). -->
-        <div class="section-card">
-          <div class="section-title">📦 Goods Information</div>
-          <div style="overflow-x:auto;">
-            <table class="hsn-table-edit" id="invGoodsTable">
-              <thead>
-                <tr>
-                  <th style="width:30px;">#</th>
-                  <th>Material Code</th>
-                  <th>Goods Description</th>
-                  <th>HSN Code</th>
-                  <th>Quantity</th>
-                  <th>UOM</th>
-                  <th>Value of Goods</th>
-                  <th style="width:36px;"></th>
-                </tr>
-              </thead>
-              <tbody id="invGoodsBody">
-                {% set hsn_list = invoice_data.get('hsn_details') or [] %}
-                {% for hsn in hsn_list %}
-                <tr data-orig-idx="{{ loop.index0 }}">
-                  <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                  <td><input type="text" data-field="material_code" value="{{ ((hsn.get('material_code') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="description" value="{{ ((hsn.get('description') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="hsn_sac" value="{{ ((hsn.get('hsn_sac') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="quantity" value="{{ ((hsn.get('quantity') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="unit" value="{{ ((hsn.get('unit') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td><input type="text" data-field="taxable_value" value="{{ ((hsn.get('taxable_value') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-                  <td>{% if not is_approved %}<button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button>{% endif %}</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          {% if not is_approved %}
-          <button type="button" class="btn-row-add" onclick="addGoodsRow()">➕ Add Row</button>
-          {% endif %}
-        </div>
-
-        <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
-          {% if not is_approved %}
-            {% if last_doc == 'invoice' %}
-          <button class="btn-save-section" onclick="saveExtractedInvoice().then(ok => { if (ok) reloadToFreshData('extracted'); })">💾 Save Invoice Changes</button>
-          <span class="save-status" id="invSaveStatus"></span>
-              {% if can_edit_extracted %}
-          <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
-          <button class="btn-approve" onclick="approveRecord()" style="margin-left:6px;">✓ Approve</button>
-              {% endif %}
-            {% else %}
-          <button class="btn-save-section" onclick="saveAndNext('invoice')">💾 Save &amp; Next</button>
-          <span class="save-status" id="invSaveStatus"></span>
-            {% endif %}
-          {% endif %}
-          {% if invoice_data.get('filename') %}
-          <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data['filename']) }}" target="_blank"
-             style="background:#f0f4ff;color:#1e5ca8;border:1px solid #c5d8f8;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
-            📄 View Original Invoice
-          </a>
-          {% endif %}
-        </div>
+          <button type="button" class="btn-view-more" id="materialInfoMoreBtn" hidden onclick="openMaterialInfoModal()">View more line items</button>
+        </span>
       </div>
     </div>
-    {% endif %}
 
-    <!-- ============================ E-WAY BILL DATA ============================ -->
+    <table class="xd-table" style="flex:1;">
+      <tr>
+        <td class="xd-lbl" rowspan="6">Tax info</td>
+        <td><span class="xd-cap">Taxable Amount</span><input id="inv_total_taxable_amount" value="{{ ((invoice_data.get('total_taxable_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Total Tax Amount</span><input id="inv_total_tax_amount" value="{{ ((invoice_data.get('total_tax_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">CGST Rate</span><input id="inv_cgst_rate" value="{{ ((invoice_data.get('cgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">CGST Amount</span><input id="inv_cgst_amount" value="{{ ((invoice_data.get('cgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">SGST Rate</span><input id="inv_sgst_rate" value="{{ ((invoice_data.get('sgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">SGST Amount</span><input id="inv_sgst_amount" value="{{ ((invoice_data.get('sgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">IGST Rate</span><input id="inv_igst_rate" value="{{ ((invoice_data.get('igst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">IGST Amount</span><input id="inv_igst_amount" value="{{ ((invoice_data.get('igst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Grand Total</span><input id="inv_grand_total" style="font-weight:700;" value="{{ ((invoice_data.get('grand_total') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Payment Terms</span><input id="inv_payment_terms" value="{{ ((invoice_data.get('payment_terms') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Amount in Words</span><input id="inv_amount_in_words" value="{{ ((invoice_data.get('amount_in_words') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- ============================ TRANSPORT DETAILS ============================ -->
+  {% if ewaybill_data or lr_data or history.goods_delivery_mode == 'courier' %}
+  {% set lr = lr_data or {} %}
+  <div class="xd-section-title">
+    <span>TRANSPORT DETAILS</span>
+    <span class="xd-orig-links">
+      {% if ewaybill_data and ewaybill_data.get('filename') %}
+      <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) }}" target="_blank">📄 View original E-Way Bill</a>
+      {% endif %}
+      {% if lr.get('filename') %}
+      <a href="{{ url_for('view_document', doctype='lr', filename=lr['filename']) }}" target="_blank">📄 View original LR</a>
+      {% endif %}
+    </span>
+  </div>
+
+  <div class="xd-transport-pair">
     {% if ewaybill_data %}
-    <div id="ewaybillData" class="tab-content {% if not invoice_data %}active{% endif %}">
-      <div class="data-display">
-        <input type="hidden" id="eway_history_id" value="{{ history_id }}">
-
-        <div class="section-card">
-          <div class="section-title">📋 E-Way Bill Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">E-Way Bill Number</div>
-              <input class="editable-input" id="eway_ewaybill_number" value="{{ ((ewaybill_data.get('ewaybill_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Generated Date</div>
-              <input class="editable-input date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('generated_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;font-weight:700;">* Validity Date Expired</span>{% endif %}</div>
-              <input class="editable-input date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('validity_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Invoice Number</div>
-              <input class="editable-input" id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_eway_invoice_number"></div>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Invoice Date</div>
-              <input class="editable-input date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_eway_invoice_date"></div>
-            </div>
-            <!-- CLIENT REQUEST (still-pending items email): PO Number section
-                 removed from the E-Way Bill tab. po_number stays a real column
-                 on ewaybill_data -- OCR still populates it, and it's still read
-                 as a fallback source for PO resolution elsewhere (see
-                 database/migo_operations.py map_ocr_to_migo() and
-                 services/rf_queue_worker.py._process_gate_in()'s po_number
-                 fallback chain) -- this only removes the ability to view/edit
-                 it from this tab, per the client's request. Invoice tab's own
-                 PO Number field (inv_po_number, above) is unaffected. -->
-          </div>
-        </div>
-
-        <!-- v7: Goods Information moved to the Invoice tab (single source
-             of truth = invoice_data.hsn_details). EWB goods columns are
-             deprecated — see schema_migration_v7.sql. -->
-
-        <div class="section-card">
-          <div class="section-title">📍 Dispatch Information</div>
-          <div class="field-row">
-            <div class="field-block field-block-wide">
-              <div class="field-label">Dispatch From</div>
-              <textarea class="editable-input address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_from') if ewaybill_data else '') or '') }}</textarea>
-            </div>
-            <div class="field-block field-block-wide">
-              <div class="field-label">Dispatch To</div>
-              <textarea class="editable-input address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_to') if ewaybill_data else '') or '') }}</textarea>
-            </div>
-          </div>
-        </div>
-
-        <div class="section-card">
-          <div class="section-title">🚚 Transport Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Transport Mode</div>
-              <input class="editable-input" id="eway_transport_mode" value="{{ ((ewaybill_data.get('transport_mode') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Vehicle Number</div>
-              <input class="editable-input" id="eway_vehicle_number" maxlength="10" value="{{ ((ewaybill_data.get('vehicle_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_eway_vehicle_number"></div>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Transporter Name</div>
-              <input class="editable-input" id="eway_transporter_name" value="{{ ((ewaybill_data.get('transporter_name') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Transporter GSTIN</div>
-              <input class="editable-input" id="eway_transporter_gstin" value="{{ ((ewaybill_data.get('transporter_gstin') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_eway_transporter_gstin"></div>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Transport Doc No</div>
-              <input class="editable-input" id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Transport Doc Date</div>
-              <input class="editable-input date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('transport_doc_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-          </div>
-        </div>
-
-        <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
-          {% if not is_approved %}
-            {% if last_doc == 'ewaybill' %}
-          <button class="btn-save-section" onclick="saveExtractedEway().then(ok => { if (ok) reloadToFreshData('extracted'); })">💾 Save E-Way Bill Changes</button>
-          <span class="save-status" id="ewaySaveStatus"></span>
-              {% if can_edit_extracted %}
-          <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
-          <button class="btn-approve" onclick="approveRecord()" style="margin-left:6px;">✓ Approve</button>
-              {% endif %}
-            {% else %}
-          <button class="btn-save-section" onclick="saveAndNext('ewaybill')">💾 Save &amp; Next</button>
-          <span class="save-status" id="ewaySaveStatus"></span>
-            {% endif %}
-          {% endif %}
-          {% if ewaybill_data.get('filename') %}
-          <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) }}" target="_blank"
-             style="background:#f0f4ff;color:#1e5ca8;border:1px solid #c5d8f8;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
-            📄 View Original E-Way Bill
-          </a>
-          {% endif %}
-        </div>
-      </div>
-    </div>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="8">E-way bill details</td>
+        <td colspan="2"><span class="xd-cap">E-Way Bill No.</span><input id="eway_ewaybill_number" value="{{ ((ewaybill_data.get('ewaybill_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Generated Date</span><input class="date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('generated_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;">*expired</span>{% endif %}</span><input class="date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('validity_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Inv. No.</span><input id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_invoice_number"></div></td>
+        <td><span class="xd-cap">Inv. Date</span><input class="date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_invoice_date"></div></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Dispatch From</span><textarea class="address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_from') if ewaybill_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Dispatch To</span><textarea class="address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_to') if ewaybill_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Vehicle No.</span><input id="eway_vehicle_number" maxlength="10" value="{{ ((ewaybill_data.get('vehicle_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_vehicle_number"></div></td>
+        <td><span class="xd-cap">Transport Mode</span><input id="eway_transport_mode" value="{{ ((ewaybill_data.get('transport_mode') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Transporter Name</span><input id="eway_transporter_name" value="{{ ((ewaybill_data.get('transporter_name') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Transporter GSTIN</span><input id="eway_transporter_gstin" value="{{ ((ewaybill_data.get('transporter_gstin') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_transporter_gstin"></div></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Transport Doc No.</span><input id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Transport Doc Date</span><input class="date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('transport_doc_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
     {% endif %}
 
-    <!-- ============================ LR DATA ============================ -->
     {% if lr_data or history.goods_delivery_mode == 'courier' %}
-    {% set lr = lr_data or {} %}
-    <div id="lrData" class="tab-content {% if not invoice_data and not ewaybill_data %}active{% endif %}">
-      <div class="data-display">
-        <input type="hidden" id="lr_history_id" value="{{ history_id }}">
-
-        {% if not lr_data %}
-        <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#4a5568;">
-          ✍️ <strong>Manual Entry</strong> — no LR document was scanned for this record (Courier delivery). Fill in the LR details below from the courier's consignment note.
-        </div>
-        {% endif %}
-
-        <div class="section-card">
-          <div class="section-title">📋 Lorry Receipt Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">LR Number</div>
-              <input class="editable-input" id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">LR Date</div>
-              <input class="editable-input date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((lr.get('lr_date') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Vehicle Number</div>
-              <input class="editable-input" id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-              <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section-card">
-          <div class="section-title">📦 Consignment Information</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">Consignor Name</div>
-              <input class="editable-input" id="lr_consignor_name" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Consignee Name</div>
-              <input class="editable-input" id="lr_consignee_name" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Material Description</div>
-              <input class="editable-input" id="lr_material_description" value="{{ ((lr.get('material_description') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Quantity</div>
-              <input class="editable-input" id="lr_quantity" value="{{ ((lr.get('quantity') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Weight</div>
-              <input class="editable-input" id="lr_weight" value="{{ ((lr.get('weight') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">UOM</div>
-              <input class="editable-input" id="lr_uom" value="{{ ((lr.get('uom') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-          </div>
-        </div>
-
-        <div class="section-card">
-          <div class="section-title">📍 Location & Transport</div>
-          <div class="field-row">
-            <div class="field-block">
-              <div class="field-label">From Location</div>
-              <input class="editable-input" id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block">
-              <div class="field-label">To Location</div>
-              <input class="editable-input" id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-            <div class="field-block field-block-wide">
-              <div class="field-label">Delivery Address</div>
-              <textarea class="editable-input address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea>
-            </div>
-            <div class="field-block">
-              <div class="field-label">Transporter Name</div>
-              <input class="editable-input" id="lr_transporter_name" value="{{ ((lr.get('transporter_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-            </div>
-          </div>
-        </div>
-
-        <div style="margin-top:18px;display:flex;align-items:center;gap:10px;padding-top:14px;border-top:1px solid #f0f0f0;">
-          {% if not is_approved %}
-            {% if last_doc == 'lr' %}
-          <button class="btn-save-section" onclick="saveExtractedLr().then(ok => { if (ok) reloadToFreshData('extracted'); })">💾 Save LR Changes</button>
-          <span class="save-status" id="lrSaveStatus"></span>
-              {% if can_edit_extracted %}
-          <button class="btn-hold" onclick="openHoldModal()" style="margin-left:10px;">⏸ Hold</button>
-          <button class="btn-approve" onclick="approveRecord()" style="margin-left:6px;">✓ Approve</button>
-              {% endif %}
-            {% else %}
-          <button class="btn-save-section" onclick="saveAndNext('lr')">💾 Save &amp; Next</button>
-          <span class="save-status" id="lrSaveStatus"></span>
-            {% endif %}
-          {% endif %}
-          {% if lr.get('filename') %}
-          <a href="{{ url_for('view_document', doctype='lr', filename=lr['filename']) }}" target="_blank"
-             style="background:#f0f4ff;color:#1e5ca8;border:1px solid #c5d8f8;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
-            📄 View Original LR
-          </a>
-          {% endif %}
-        </div>
-      </div>
-    </div>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="9">LR details</td>
+        <td><span class="xd-cap">LR No.</span><input id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">LR Date</span><input class="date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((lr.get('lr_date') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Vehicle No.</span><input id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div></td>
+        <td><span class="xd-cap">UOM</span><input id="lr_uom" value="{{ ((lr.get('uom') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Consignor Name</span><input id="lr_consignor_name" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Consignee Name</span><input id="lr_consignee_name" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Material Description</span><input id="lr_material_description" value="{{ ((lr.get('material_description') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">Quantity</span><input id="lr_quantity" value="{{ ((lr.get('quantity') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">Weight</span><input id="lr_weight" value="{{ ((lr.get('weight') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td><span class="xd-cap">From Location</span><input id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td><span class="xd-cap">To Location</span><input id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Delivery Address</span><textarea class="address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea></td>
+      </tr>
+      <tr>
+        <td colspan="2"><span class="xd-cap">Transporter Name</span><input id="lr_transporter_name" value="{{ ((lr.get('transporter_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
     {% endif %}
+  </div>
 
-  {% else %}
-    <div class="empty-state">
-      <div class="empty-state-icon">📄</div>
-      <h3>No Data Available</h3>
-      <p>Upload documents to extract and view data here</p>
-    </div>
+  {% if not lr_data and history.goods_delivery_mode == 'courier' %}
+  <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin:10px 0 0;font-size:12px;color:#4a5568;">
+    ✍️ <strong>Manual Entry</strong> — no LR document was scanned for this record (Courier delivery). Fill in the LR details above from the courier's consignment note.
+  </div>
+  {% endif %}
   {% endif %}
 
   {% if history_id %}
   {% set remarks_panel_id = 'extracted' %}
   {% include 'tabs/_remarks_panel.html' %}
   {% endif %}
+
+  <!-- Bottom action bar -->
+  <div class="xd-action-bar">
+    {% if not is_approved %}
+    <button type="button" class="btn-hold" onclick="openHoldModal()">⏸ Hold</button>
+    <button type="button" class="btn-save-proceed" id="saveProceedBtn" onclick="saveAndProceed()">Save and Proceed</button>
+    <span class="save-status" id="invSaveStatus"></span>
+    <span class="save-status" id="ewaySaveStatus"></span>
+    <span class="save-status" id="lrSaveStatus"></span>
+    {% endif %}
+  </div>
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">📄</div>
+    <h3>No Data Available</h3>
+    <p>Upload documents to extract and view data here</p>
+  </div>
+  {% endif %}
 </div>
 
 <!-- Approve confirm modal -->
-<div class="approve-modal" id="approveModal">
-  <div class="approve-box">
-    <h3>✓ Approve Record</h3>
-    <p>Approve this record? Editing will be locked.<br>GST Verification must also be completed before Gate In.</p>
-    <div class="approve-box-actions">
-      <button class="approve-box-cancel" onclick="closeApproveModal()">Cancel</button>
-      <button class="approve-box-confirm" onclick="_doApprove()">Yes, Approve</button>
+<div class="xd-modal" id="approveModal">
+  <div class="xd-modal-box">
+    <h3>✓ Save and Proceed</h3>
+    <p>Save all extracted values and approve this record? Editing will be locked.<br>GST Verification is now a separate, on-demand tab and can be run any time after this.</p>
+    <div class="xd-modal-actions">
+      <button class="xd-modal-cancel" onclick="closeApproveModal()">Cancel</button>
+      <button class="xd-modal-confirm" onclick="_doApprove()">Yes, Save and Proceed</button>
     </div>
   </div>
 </div>
 
 <!-- Courier confirm modal (v13) -->
-<div class="courier-modal" id="courierModal">
-  <div class="courier-box">
+<div class="xd-modal" id="courierModal">
+  <div class="xd-modal-box">
     <h3>🚚 Confirm Courier Delivery</h3>
-    <p>Choosing <strong>Courier</strong> will make the LR tab active so you can fill in the courier's consignment note by hand. This choice cannot be changed once saved. Continue?</p>
-    <div class="courier-box-actions">
-      <button class="courier-box-cancel" onclick="closeCourierModal()">Cancel</button>
-      <button class="courier-box-confirm" onclick="_doSaveDeliveryMode('courier')">Yes, Use Courier</button>
+    <p>Choosing <strong>Courier</strong> will open the LR Details section so you can fill in the courier's consignment note by hand. This choice cannot be changed once saved. Continue?</p>
+    <div class="xd-modal-actions">
+      <button class="xd-modal-cancel" onclick="closeCourierModal()">Cancel</button>
+      <button class="xd-modal-confirm" onclick="_doSaveDeliveryMode('courier')">Yes, Use Courier</button>
     </div>
   </div>
 </div>
 
 <!-- Hold modal -->
-<div class="hold-modal" id="holdModal">
-  <div class="hold-box">
+<div class="xd-modal" id="holdModal">
+  <div class="xd-modal-box hold-box">
     <h3>⏸ Place Record on Hold</h3>
-    <p style="color:#666;font-size:13px;">Provide a reason. The record will be paused until someone approves it.</p>
+    <p style="color:#666;font-size:13px;margin-bottom:8px;">Provide a reason. The record will be paused until someone approves it.</p>
     <textarea id="holdReason" placeholder="Reason for hold..."></textarea>
-    <div class="hold-actions">
-      <button class="hold-cancel" onclick="closeHoldModal()">Cancel</button>
-      <button class="hold-confirm" onclick="confirmHold()">Place on Hold</button>
+    <div class="xd-modal-actions">
+      <button class="xd-modal-cancel" onclick="closeHoldModal()">Cancel</button>
+      <button class="xd-modal-confirm" onclick="confirmHold()">Place on Hold</button>
     </div>
+  </div>
+</div>
+
+<!-- Material Info -- "View more line items" modal. Moves the live
+     #invGoodsTable node in/out (see openMaterialInfoModal below) rather
+     than cloning it, so add/delete-row and the save-time collector
+     (_collectInvHsn reads #invGoodsBody by id, wherever it currently
+     lives in the DOM) keep working unchanged either way. -->
+<div class="xd-modal" id="materialInfoModal">
+  <div class="xd-modal-box wide">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="margin:0;">📦 Goods Information — all line items</h3>
+      <button type="button" onclick="closeMaterialInfoModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;">✕</button>
+    </div>
+    <div id="materialInfoModalSlot"></div>
   </div>
 </div>
 
@@ -985,29 +803,22 @@ textarea.address-textarea.editable-input {
 const HISTORY_ID = {{ history_id|tojson }};
 const IS_APPROVED = {{ 'true' if is_approved else 'false' }};
 // v13: partial-document scenario gating -- see scenario-panel above.
-// NEED_* is true only while the corresponding picker hasn't been answered
-// yet (the template hides the picker and shows a locked summary once it
-// has, so these mirror what's actually still outstanding).
 const NEED_DELIVERY_MODE = {{ 'true' if (need_delivery_mode and not history.goods_delivery_mode) else 'false' }};
 const NEED_EWB_EXEMPTION = {{ 'true' if (need_ewb_exemption and not history.ewb_exemption_reasons) else 'false' }};
-// Sequential Invoice -> E-way -> LR flow -- only lists documents that
-// actually exist for this record (see doc_order in the template above).
+// v25: which of Invoice / E-way Bill / LR actually exist for this record
+// -- saveAndProceed() below only calls the save function for sections
+// that are present, same set of documents the old doc_order/last_doc
+// logic used to gate the per-tab Save buttons.
 const DOC_ORDER = {{ doc_order|tojson }};
-function _nextDocStep(current) {
-  const i = DOC_ORDER.indexOf(current);
-  return (i >= 0 && i < DOC_ORDER.length - 1) ? DOC_ORDER[i + 1] : null;
-}
 // v7: original OCR line items — used to preserve per-line fields not shown
-// in the Goods Information table (material_code, unit, rate, taxes, total).
+// in the Goods Information table (rate, taxes, total).
 const ORIGINAL_HSN = {{ ((invoice_data.get('hsn_details') or []) if invoice_data else []) | tojson }};
 
 // ============================================================
 // Address fields: auto-expand textarea height to fit full content, so
 // the complete address is always visible without scrolling (client
-// request). Runs on load and on every keystroke; also re-run whenever a
-// tab becomes active (a textarea hidden by `.tab-content` not being
-// `.active` yet reports scrollHeight 0, so it needs re-measuring once
-// it's actually visible).
+// request). v25: no more tab show/hide, so a single load-time pass is
+// enough -- nothing stays hidden (scrollHeight 0) after this any more.
 // ============================================================
 function _autoGrowTextarea(el) {
   if (!el) return;
@@ -1023,36 +834,26 @@ document.querySelectorAll('.address-textarea').forEach(function (el) {
 _autoGrowAllAddressFields();
 
 // ============================================================
-// Date fields: always DISPLAY/EDIT as dd/mm/yyyy (client request), no
-// matter what format the browser/OS locale would otherwise pick for a
-// native date input. Storage/API format is unchanged (ISO YYYY-MM-DD) --
-// only the on-screen text changes. Converted to display format once on
-// load; converted back to ISO by _isoOrDisplayToIso() at save time (see
-// the save*() functions below).
+// Date fields: always DISPLAY/EDIT as dd/mm/yyyy. Storage/API format is
+// unchanged (ISO YYYY-MM-DD) -- only the on-screen text changes.
 // ============================================================
 function _isoToDisplayDate(iso) {
   if (!iso) return '';
   const m = String(iso).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return m ? (m[3] + '/' + m[2] + '/' + m[1]) : iso;  // leave already-odd values untouched
+  return m ? (m[3] + '/' + m[2] + '/' + m[1]) : iso;
 }
 function _displayDateToIso(disp) {
   if (!disp) return '';
   const m = String(disp).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  return m ? (m[3] + '-' + m[2] + '-' + m[1]) : disp;  // unparseable -- pass through rather than blank it
+  return m ? (m[3] + '-' + m[2] + '-' + m[1]) : disp;
 }
 document.querySelectorAll('.date-field').forEach(function (el) {
   el.value = _isoToDisplayDate(el.value);
 });
 
 // ============================================================
-// No special characters, ever -- client request (2026-08): GST No, PO
-// No, E-Way Bill No, and IRN must never contain anything but letters and
-// digits, neither extracted (handled server-side in extract.py) nor
-// typed in by a reviewer. Strips on every keystroke, live -- registered
-// BEFORE the length/format checks further down so those checks always
-// see the already-cleaned value, not the raw keystroke. Cursor position
-// is preserved so stripping a character elsewhere in the string doesn't
-// jump the caret to the end.
+// No special characters, ever -- GST No, PO No, E-Way Bill No, and IRN
+// must never contain anything but letters and digits.
 // ============================================================
 function _stripSpecialChars(el) {
   const before = el.value;
@@ -1070,51 +871,24 @@ function _stripSpecialChars(el) {
 ].forEach(function (fieldId) {
   const el = document.getElementById(fieldId);
   if (el) {
-    _stripSpecialChars(el);   // clean whatever OCR/DB already has, on load
+    _stripSpecialChars(el);
     el.addEventListener('input', function () { _stripSpecialChars(el); });
   }
 });
 
 // ============================================================
-// Tab switching
-// ============================================================
-function switchDataTab(dataType) {
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.content-tabs .tab-button').forEach(b => b.classList.remove('active'));
-
-  const target = document.getElementById(dataType + 'Data');
-  if (target) target.classList.add('active');
-
-  document.querySelectorAll('.content-tabs .tab-button').forEach(btn => {
-    const t = btn.textContent.toLowerCase();
-    if ((dataType === 'invoice' && t.includes('invoice') && !t.includes('e-way'))
-     || (dataType === 'ewaybill' && t.includes('e-way'))
-     || (dataType === 'lr' && t.includes('lr'))) {
-      btn.classList.add('active');
-    }
-  });
-  // Re-measure this tab's address textareas now that they're visible.
-  setTimeout(_autoGrowAllAddressFields, 0);
-}
-
-// ============================================================
-// Save handlers (per sub-tab)
+// Save handlers -- unchanged from the old per-tab flow, just no longer
+// triggered by their own "Save & Next" buttons. saveAndProceed() below
+// calls whichever of these apply, then approves in one shot.
 // ============================================================
 function _showSaveStatus(elId, ok, msg) {
   const el = document.getElementById(elId);
+  if (!el) return;
   el.className = 'save-status ' + (ok ? 'success' : 'error');
   el.textContent = msg;
   setTimeout(() => { el.textContent = ''; }, 4000);
 }
 
-// Ship To Code was merged into the Ship To State field's display (client
-// request: label "Ship To State", value "CODE - STATE" e.g. "27 -
-// Maharashtra"). The underlying DB columns are still separate
-// (ship_to_state, ship_to_code), so split the combined text back apart
-// here before saving -- "27 - Maharashtra" -> code="27", state="Maharashtra".
-// If it doesn't match that shape (e.g. reviewer typed a plain state name
-// with no code), the whole value is treated as the state and code is left
-// blank rather than guessing.
 function _splitShipToState() {
   const raw = (document.getElementById('inv_ship_to_state').value || '').trim();
   const m = raw.match(/^(\S+)\s*-\s*(.+)$/);
@@ -1162,11 +936,11 @@ async function saveExtractedInvoice() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data.success) { _showSaveStatus('invSaveStatus', true, '✓ Saved'); return true; }
-    _showSaveStatus('invSaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    if (data.success) { _showSaveStatus('invSaveStatus', true, '✓ Invoice saved'); return true; }
+    _showSaveStatus('invSaveStatus', false, '❌ Invoice: ' + (data.error || 'Failed'));
     return false;
   } catch (e) {
-    _showSaveStatus('invSaveStatus', false, '❌ Network error');
+    _showSaveStatus('invSaveStatus', false, '❌ Invoice: network error');
     return false;
   }
 }
@@ -1178,9 +952,6 @@ async function saveExtractedEway() {
     validity_date:   _displayDateToIso(document.getElementById('eway_validity_date').value),
     invoice_number:  document.getElementById('eway_invoice_number').value,
     invoice_date:    _displayDateToIso(document.getElementById('eway_invoice_date').value),
-    // PO Number field removed from this tab (client request) -- po_number
-    // is intentionally left out of this save payload now, so this route
-    // never overwrites whatever OCR originally put in ewaybill_data.po_number.
     dispatch_from:   document.getElementById('eway_dispatch_from').value,
     dispatch_to:     document.getElementById('eway_dispatch_to').value,
     transport_mode:  document.getElementById('eway_transport_mode').value,
@@ -1197,11 +968,11 @@ async function saveExtractedEway() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data.success) { _showSaveStatus('ewaySaveStatus', true, '✓ Saved'); return true; }
-    _showSaveStatus('ewaySaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    if (data.success) { _showSaveStatus('ewaySaveStatus', true, '✓ E-Way Bill saved'); return true; }
+    _showSaveStatus('ewaySaveStatus', false, '❌ E-Way Bill: ' + (data.error || 'Failed'));
     return false;
   } catch (e) {
-    _showSaveStatus('ewaySaveStatus', false, '❌ Network error');
+    _showSaveStatus('ewaySaveStatus', false, '❌ E-Way Bill: network error');
     return false;
   }
 }
@@ -1229,47 +1000,54 @@ async function saveExtractedLr() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (data.success) { _showSaveStatus('lrSaveStatus', true, '✓ Saved'); return true; }
-    _showSaveStatus('lrSaveStatus', false, '❌ ' + (data.error || 'Failed'));
+    if (data.success) { _showSaveStatus('lrSaveStatus', true, '✓ LR saved'); return true; }
+    _showSaveStatus('lrSaveStatus', false, '❌ LR: ' + (data.error || 'Failed'));
     return false;
   } catch (e) {
-    _showSaveStatus('lrSaveStatus', false, '❌ Network error');
+    _showSaveStatus('lrSaveStatus', false, '❌ LR: network error');
     return false;
-  }
-}
-
-// "Save & Next": saves the given section (reusing the same save functions
-// the manual Save buttons already call, so edits are persisted immediately
-// -- not held only in the browser) and, if the save succeeded, advances to
-// the next document tab that actually exists for this record. Nothing is
-// "approved" here -- the one real approval still only happens via
-// approveRecord()/_doApprove() on the last present document.
-async function saveAndNext(step) {
-  let ok = false;
-  if (step === 'invoice') ok = await saveExtractedInvoice();
-  else if (step === 'ewaybill') ok = await saveExtractedEway();
-  else if (step === 'lr') ok = await saveExtractedLr();
-
-  if (ok) {
-    const next = _nextDocStep(step);
-    if (next) {
-      switchDataTab(next);
-    } else {
-      // FIX: last document section in this record's chain -- nothing left
-      // to advance to within Extracted Data, so this is the natural point
-      // to refresh. Other tabs (Gate In/MIGO/MIRO) pre-fill fields from
-      // this data and were staying stale until a manual reload.
-      reloadToFreshData('extracted');
-    }
   }
 }
 
 // ============================================================
-// Goods Information rows add/remove/collect (v7)
-// Same pattern as MIGO 103 addInvoiceRow().
-// Rows are backed by invoice_data.hsn_details — collection merges
-// edits into the original line so hidden fields (rate, taxes, total)
-// are never lost. material_code is a visible column (see below).
+// v25: Save and Proceed -- replaces the old sequential Invoice -> E-way
+// -> LR "Save & Next" flow plus the separate Approve button with one
+// action. Saves whichever of the three documents exist for this record
+// (DOC_ORDER), and only if every save succeeds, opens the same approve
+// confirmation modal/flow as before (_doApprove is unchanged). GST
+// Verification is no longer part of this chain -- it's a standalone,
+// on-demand tab now.
+// ============================================================
+async function saveAndProceed() {
+  if (NEED_DELIVERY_MODE) {
+    showToast('❌ Select a Goods Delivery Mode above before proceeding — LR document is missing.', 'error');
+    return;
+  }
+  if (NEED_EWB_EXEMPTION) {
+    showToast('❌ Select an E-Way Bill Exemption reason above before proceeding — E-Way Bill is missing.', 'error');
+    return;
+  }
+  const btn = document.getElementById('saveProceedBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  let ok = true;
+  if (ok && DOC_ORDER.includes('invoice'))  ok = await saveExtractedInvoice();
+  if (ok && DOC_ORDER.includes('ewaybill')) ok = await saveExtractedEway();
+  if (ok && DOC_ORDER.includes('lr'))       ok = await saveExtractedLr();
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Save and Proceed'; }
+
+  if (!ok) {
+    showToast('❌ Save failed — check the message near the button and try again.', 'error');
+    return;
+  }
+  document.getElementById('approveModal').classList.add('show');
+}
+
+// ============================================================
+// Goods Information rows add/remove/collect (v7), plus (v25) the
+// "Showing X of Y" / "View more" clamp for the compact Material Info
+// card.
 // ============================================================
 function addGoodsRow() {
   const tbody = document.getElementById('invGoodsBody');
@@ -1278,11 +1056,11 @@ function addGoodsRow() {
   tr.innerHTML = `
     <td class="goods-row-num" style="color:#888;font-size:11px;"></td>
     <td><input type="text" data-field="material_code" placeholder="Material Code"></td>
-    <td><input type="text" data-field="description" placeholder="Goods Description"></td>
     <td><input type="text" data-field="hsn_sac" placeholder="HSN Code"></td>
+    <td><input type="text" data-field="description" placeholder="Goods Description"></td>
     <td><input type="text" data-field="quantity" placeholder="Quantity"></td>
     <td><input type="text" data-field="unit" placeholder="UOM"></td>
-    <td><input type="text" data-field="taxable_value" placeholder="Value of Goods"></td>
+    <td><input type="text" data-field="taxable_value" style="text-align:right;" placeholder="Value of Goods"></td>
     <td><button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button></td>
   `;
   tbody.appendChild(tr);
@@ -1296,21 +1074,25 @@ function deleteGoodsRow(btn) {
 }
 
 function _renumberGoodsRows() {
-  document.querySelectorAll('#invGoodsBody tr').forEach((row, i) => {
+  const rows = document.querySelectorAll('#invGoodsBody tr');
+  rows.forEach((row, i) => {
     const numCell = row.querySelector('.goods-row-num');
     if (numCell) numCell.textContent = i + 1;
   });
+  const total = rows.length;
+  const shown = Math.min(total, 3);
+  const label = document.getElementById('materialInfoCountLabel');
+  const moreBtn = document.getElementById('materialInfoMoreBtn');
+  if (label) label.textContent = total ? `Showing ${shown} of ${total}` : 'No line items';
+  if (moreBtn) moreBtn.hidden = total <= 3;
+  if (moreBtn) moreBtn.textContent = `View ${total - 3} more line item${(total - 3) === 1 ? '' : 's'}`;
 }
+_renumberGoodsRows();
 
 function _collectInvHsn() {
   const tbody = document.getElementById('invGoodsBody');
-  if (!tbody) return ORIGINAL_HSN;  // safety: never wipe hsn_details
+  if (!tbody) return ORIGINAL_HSN;
   const items = [];
-  // Read each input by its data-field attribute rather than positional
-  // index -- a positional inputs[0]/[1]/[2]/[3] mapping is fragile: adding,
-  // removing, or reordering a visible column (e.g. UOM) silently shifts
-  // every index after it and writes values into the wrong keys with no
-  // error. data-field is immune to column order/count changes.
   tbody.querySelectorAll('tr').forEach(row => {
     const inputs = row.querySelectorAll('input[data-field]');
     if (inputs.length < 4) return;
@@ -1325,16 +1107,37 @@ function _collectInvHsn() {
   return items;
 }
 
+// v25: "View more line items" moves the LIVE table into the modal
+// (appendChild moves an existing node -- it keeps all input values and
+// listeners intact, nothing is cloned/recreated), and moves it straight
+// back to its original spot on close. #invGoodsBody stays the single
+// source of truth for _collectInvHsn() no matter which container
+// currently holds it.
+let _materialHomeParent = null;
+let _materialHomeNextSibling = null;
+function openMaterialInfoModal() {
+  const card = document.getElementById('materialInfoCard');
+  const slot = document.getElementById('materialInfoModalSlot');
+  if (!card || !slot) return;
+  _materialHomeParent = card.parentNode;
+  _materialHomeNextSibling = card.nextSibling;
+  slot.appendChild(card);
+  card.classList.add('xd-material-expanded');
+  document.getElementById('materialInfoModal').classList.add('show');
+}
+function closeMaterialInfoModal() {
+  const card = document.getElementById('materialInfoCard');
+  if (card && _materialHomeParent) {
+    if (_materialHomeNextSibling) _materialHomeParent.insertBefore(card, _materialHomeNextSibling);
+    else _materialHomeParent.appendChild(card);
+  }
+  if (card) card.classList.remove('xd-material-expanded');
+  document.getElementById('materialInfoModal').classList.remove('show');
+}
+
 // ============================================================
-// Material Code pattern check (client requested: Material Codes are
-// always exactly 8 characters and start with 18/20/21/23 -- flag a
-// value that doesn't match, so a likely OCR misread or wrong-column
-// read gets noticed). Visual only, never blocks Save/Approve. Uses the
-// existing .field-mismatch amber styling plus a title tooltip, since a
-// dedicated message row doesn't fit cleanly inside a table cell. Wired
-// via event delegation on the tbody so it works for both
-// server-rendered rows and rows added later via addGoodsRow(), with no
-// per-row listener setup needed.
+// Material Code pattern check (Material Codes are always exactly 8
+// characters and start with 18/20/21/23). Visual only.
 // ============================================================
 const MATERIAL_CODE_PREFIXES = ['18', '20', '21', '23'];
 
@@ -1363,9 +1166,7 @@ function _checkAllMaterialCodes() {
 
 // ============================================================
 // v13: Partial-document scenario pickers (Goods Delivery Mode / E-Way
-// Bill Exemption Reasons). Selection just highlights an option -- the
-// actual DB write (and Remarks auto-text) happens on Save, since both
-// are permanent/write-once and shouldn't fire on a stray click.
+// Bill Exemption Reasons). Unchanged from the old flow.
 // ============================================================
 (function () {
   function wireOptionGroup(containerId, saveBtnId, multi) {
@@ -1390,6 +1191,47 @@ function _checkAllMaterialCodes() {
   }
   wireOptionGroup('deliveryModeOptions', 'deliveryModeSaveBtn', false);
   wireOptionGroup('ewbExemptionOptions', 'ewbExemptionSaveBtn', true);
+})();
+
+// ============================================================
+// v26: Category picker (Stores / Sales Return / Job Work) in the green
+// banner. Unlike the two pickers above, this is NOT write-once -- every
+// click saves immediately (no separate "Save" button, no page reload).
+// Gate In reads history.category as a PRESELECT default only, mapped via
+// CATEGORY_TO_GATEIN_CODE in app.py -- nothing here touches Gate In.
+// ============================================================
+(function () {
+  const options = document.getElementById('categoryOptions');
+  if (!options) return;
+  const statusEl = document.getElementById('categorySaveStatus');
+
+  options.querySelectorAll('input[name="extractedCategory"]').forEach(function (inp) {
+    inp.addEventListener('change', async function () {
+      options.querySelectorAll('.xd-cat-pill').forEach(function (pill) {
+        pill.classList.toggle('selected', pill.getAttribute('data-value') === inp.value);
+      });
+      if (statusEl) { statusEl.textContent = 'Saving…'; statusEl.className = 'save-status'; }
+      try {
+        const res = await fetch(`/api/save_category/${HISTORY_ID}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: inp.value })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (statusEl) {
+            statusEl.textContent = '✓ Saved';
+            statusEl.className = 'save-status success';
+            setTimeout(function () { statusEl.textContent = ''; }, 3000);
+          }
+        } else {
+          if (statusEl) { statusEl.textContent = '❌ ' + (data.error || 'Failed'); statusEl.className = 'save-status error'; }
+        }
+      } catch (e) {
+        if (statusEl) { statusEl.textContent = '❌ Network error'; statusEl.className = 'save-status error'; }
+      }
+    });
+  });
 })();
 
 function saveDeliveryMode() {
@@ -1420,9 +1262,6 @@ async function _doSaveDeliveryMode(mode) {
     const data = await res.json();
     if (data.success) {
       showToast('✓ Delivery mode saved: ' + data.label, 'success');
-      // Reload so the panel switches to its locked summary, the LR tab
-      // appears if Courier was chosen, and NEED_DELIVERY_MODE clears --
-      // simplest way to keep every dependent piece of the page in sync.
       window.location.reload();
     } else {
       if (status) { status.textContent = '❌ ' + (data.error || 'Save failed'); status.className = 'scenario-status err'; }
@@ -1463,21 +1302,6 @@ async function saveEwbExemption() {
 // ============================================================
 // Approve / Hold / Re-run OCR
 // ============================================================
-function approveRecord() {
-  // v13: block the one real Approve button in the DOM (whichever sub-tab
-  // it's rendered on -- see last_doc) until every outstanding scenario
-  // picker for this record has been answered and saved.
-  if (NEED_DELIVERY_MODE) {
-    showToast('❌ Select a Goods Delivery Mode above before approving — LR document is missing.', 'error');
-    return;
-  }
-  if (NEED_EWB_EXEMPTION) {
-    showToast('❌ Select an E-Way Bill Exemption reason above before approving — E-Way Bill is missing.', 'error');
-    return;
-  }
-  document.getElementById('approveModal').classList.add('show');
-}
-
 function closeApproveModal() {
   document.getElementById('approveModal').classList.remove('show');
 }
@@ -1489,23 +1313,17 @@ async function _doApprove() {
     const data = await res.json();
     if (data.success) {
       showToast('✓ Record approved!', 'success');
-      /* Update banner in-place — no page reload needed */
       var banner = document.querySelector('.approval-banner');
       if (banner) {
         banner.className = 'approval-banner approved';
         banner.innerHTML = '<div>✓ <strong>Approved</strong> — fields locked, Gate In unlocked.</div>';
       }
-      /* Lock all inputs */
-      document.querySelectorAll('.editable-input').forEach(function(el) { el.disabled = true; });
-      /* Hide Save buttons (and the Hold/Approve buttons alongside them) */
-      document.querySelectorAll('.btn-save-section').forEach(function(el) {
-        var row = el.parentElement;
-        if (row) row.style.display = 'none';
-      });
-      /* Chain into GST Approval automatically -- this is the last step of
-         the Invoice -> E-way -> LR -> GST Approval review sequence. Does
-         NOT continue on to Gate In; that stays a separate, manual step for
-         whoever holds the Gate Security role. */
+      document.querySelectorAll('.xd-table input, .xd-table textarea').forEach(function(el) { el.disabled = true; });
+      var actionBar = document.querySelector('.xd-action-bar');
+      if (actionBar) actionBar.style.display = 'none';
+      // Chain into GST Approval automatically -- last step of the
+      // Invoice -> E-way -> LR review sequence. Does NOT continue on to
+      // Gate In; that stays a separate, manual step for Gate Security.
       if (typeof goToTabProgrammatic === 'function') {
         setTimeout(function () { goToTabProgrammatic('gstApproval'); }, 600);
       }
@@ -1541,15 +1359,10 @@ async function confirmHold() {
     if (data.success) {
       showToast('✓ Record placed on hold', 'success');
       closeHoldModal();
-      /* Update banner in-place — no page reload needed */
       var banner = document.querySelector('.approval-banner');
       if (banner) {
         banner.className = 'approval-banner hold';
-        banner.innerHTML =
-          '<div>⏸ <strong>On Hold</strong>: ' + reason + '</div>' +
-          '<div class="approval-actions">' +
-            '<button class="btn-approve" onclick="approveRecord()">✓ Approve</button>' +
-          '</div>';
+        banner.innerHTML = '<div>⏸ <strong>On Hold</strong>: ' + reason + '</div>';
       }
     } else {
       showToast('❌ ' + (data.error || 'Failed'), 'error');
@@ -1564,10 +1377,6 @@ function rerunOCR() {
     'Re-run OCR',
     'Re-run OCR on the failed documents?',
     async function () {
-      // Grey the button out immediately -- without this, users kept
-      // double/triple-clicking while the request was in flight, queuing up
-      // multiple OCR re-runs for the same record. Re-enabled on failure so
-      // they can retry; on success the page reloads anyway.
       const btn = document.getElementById('rerunOcrBtn');
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-running...'; }
       try {
@@ -1589,22 +1398,8 @@ function rerunOCR() {
   );
 }
 
-// E-way Bill validity expiry notice.
-// Server (app.py view_detail) computes ewb_expired fresh on every page load
-// by comparing today's date to the EWB's validity_date. This used to also
-// pop up a confirm dialog once per browser session (sessionStorage) -- that
-// popup was removed per client request; the red field highlight
-// (.field-expired, applied to #eway_validity_date) plus the small red
-// "* Validity Date Expired" note next to the field label (see the Validity
-// Date field-block above) are now the only indicators. Still purely
-// informational -- never blocks approval/workflow.
-
 // ============================================================
-// IRN length check (client requested: highlight if a non-empty IRN is
-// under 64 characters -- a genuine IRN is always exactly 64 characters).
-// Purely visual -- never blocks Save or Approve. Runs once on load (in
-// case a value is already present from OCR or a prior save) and again on
-// every keystroke.
+// IRN length check (a genuine IRN is always exactly 64 characters).
 // ============================================================
 function _checkIrnLength() {
   const el = document.getElementById('inv_irn');
@@ -1626,8 +1421,7 @@ function _checkIrnLength() {
   }
 })();
 
-// PO Number is expected to be 10 digits (client requested visual flag
-// only, never blocks Save/Approve) -- same pattern as _checkIrnLength above.
+// PO Number is expected to be 10 digits.
 function _checkPoNumberLength() {
   const el = document.getElementById('inv_po_number');
   const err = document.getElementById('err_inv_po_number');
@@ -1649,13 +1443,7 @@ function _checkPoNumberLength() {
 })();
 
 // ============================================================
-// Invoice No. is government-mandated to never exceed 16 characters. If
-// OCR (or manual entry) produced more than 16, truncate the field down to
-// the first 16 characters and highlight red -- client request: never
-// silently keep/save a value that's already known to be invalid, always
-// show the reviewer exactly what's wrong. Applies to both the Invoice tab
-// field and the E-way tab's own Invoice Number field (kept in sync via
-// the existing cross-tab mismatch check below).
+// Invoice No. is government-mandated to never exceed 16 characters.
 // ============================================================
 function _enforceInvoiceNumberMaxLength(fieldId, errId) {
   const el = document.getElementById(fieldId);
@@ -1689,16 +1477,7 @@ function _enforceInvoiceNumberMaxLength(fieldId, errId) {
 });
 
 // ============================================================
-// GSTIN format + checksum validation (client requested: visual flag only,
-// never blocks Save/Approve). Applies to Buyer GSTIN / Seller GSTIN
-// (Invoice tab) and Transporter GSTIN (E-way tab).
-//
-// A GSTIN is 15 characters: 2-digit state code, 10-character PAN, 1-digit
-// entity code, the literal letter "Z", and a final checksum character.
-// Format check confirms the shape; checksum recomputes the 15th character
-// from the first 14 (ISO 7064 MOD-36 style check-character scheme used by
-// GSTIN) and compares it against what's actually there -- catches typos
-// that still happen to match the basic shape.
+// GSTIN format + checksum validation.
 // ============================================================
 const GSTIN_FORMAT_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 const GSTIN_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -1748,15 +1527,7 @@ function _validateGstinField(fieldId, errId) {
 });
 
 // ============================================================
-// PAN vs GSTIN cross-check (client requested: a GSTIN's characters 3-12
-// are always that entity's own 10-character PAN by statutory format --
-// e.g. GSTIN 33AAACE1713F1ZD contains PAN AAACE1713F. Company PAN is
-// checked against the PAN embedded in Seller GSTIN, since that's the
-// pair shown together on the Invoice tab. Visual only, never blocks
-// Save/Approve -- reuses the same red field-expired styling as the
-// GSTIN checksum check above, since a mismatch here is a hard error
-// (statutory fact), not just "worth a second look" like the amber
-// cross-tab mismatch checks below.
+// PAN vs GSTIN cross-check.
 // ============================================================
 function _validatePanAgainstGstin() {
   const panEl = document.getElementById('inv_company_pan');
@@ -1787,21 +1558,8 @@ function _validatePanAgainstGstin() {
 })();
 
 // ============================================================
-// Cross-tab mismatch highlighting (client requested, visual only --
-// never disables the field, never blocks Save/Approve, both sides stay
-// fully editable). Compares fields that are duplicated across two tabs:
-//   - Invoice Number / Invoice Date / PO Number: Invoice tab <-> E-Way Bill tab
-//   - Vehicle Number: E-Way Bill tab <-> LR tab
-// Transporter Name deliberately excluded (client decision) -- it's
-// legitimately abbreviated differently doc to doc (e.g. "ABC Logistics"
-// vs "ABC Logistics Pvt Ltd") and would just generate noise.
-//
-// Both fields of a pair already live in the same page (tabs are
-// show/hide, not separate loads -- see switchDataTab), so this reads the
-// sibling input directly, no extra fetch needed. A pair is only ever
-// compared when BOTH inputs exist in the DOM (a tab can be entirely
-// absent for partial-document v13 records) and BOTH already have a
-// non-empty value (an unfilled field is missing data, not a mismatch).
+// Cross-tab mismatch highlighting -- "tab" is now just "section" (all
+// sections render on one page now), logic/pairs unchanged.
 // ============================================================
 function _normMismatchText(v) {
   return (v || '').trim().toUpperCase();
@@ -1820,12 +1578,12 @@ const MISMATCH_PAIRS = [
 function _checkMismatchPair(pair) {
   const elA = document.getElementById(pair.a);
   const elB = document.getElementById(pair.b);
-  if (!elA || !elB) return;  // other tab not present for this record
+  if (!elA || !elB) return;
   const errA = document.getElementById('err_' + pair.a);
   const errB = document.getElementById('err_' + pair.b);
   const rawA = elA.value, rawB = elB.value;
   const mismatch = !!rawA.trim() && !!rawB.trim() && pair.norm(rawA) !== pair.norm(rawB);
-  const msg = mismatch ? `${pair.label} differs from the value on the other tab -- please verify.` : '';
+  const msg = mismatch ? `${pair.label} differs from the value on the other section -- please verify.` : '';
   [[elA, errA], [elB, errB]].forEach(function ([el, err]) {
     el.classList.toggle('field-mismatch', mismatch);
     if (err) {

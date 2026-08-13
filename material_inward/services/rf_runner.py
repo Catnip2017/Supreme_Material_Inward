@@ -1,29 +1,29 @@
 """
 services/rf_runner.py — Robot Framework execution wrapper.
-
+ 
 v4 changes:
 - execute_migo_105_sap now passes ITEMS_JSON_BATCH (base64-encoded JSON of
   per-line batch values) — robot code reads this for per-line batch entry.
 - Global BATCH variable removed (was used incorrectly with single batch for all lines).
 """
-
+ 
 import os
 import time
 import re
 import subprocess
 import json
 import base64
-
+ 
 from datetime import datetime
 from typing import Optional
 from dotenv import dotenv_values
-
+ 
 from config.config import config
 from config.logger import get_logger
 from services.robot_lock import acquire_robot_lock, release_robot_lock
-
+ 
 logger = get_logger(__name__)
-
+ 
 # FIX: same CWD-dependent dotenv issue as config/config.py and
 # dms_upload_runner.py -- dotenv_values() with no path searches upward from
 # the current working directory, which is normally fine for the Flask app
@@ -32,12 +32,12 @@ logger = get_logger(__name__)
 # location so the RF subprocess env is never silently missing .env values.
 _RF_RUNNER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _RF_RUNNER_ENV_PATH = os.path.join(_RF_RUNNER_ROOT, ".env")
-
-
+ 
+ 
 # ============================================================
 # DATA CLEANING
 # ============================================================
-
+ 
 def _clean_value(raw) -> str:
     if not raw:
         return ""
@@ -48,16 +48,16 @@ def _clean_value(raw) -> str:
     parts = cleaned.split()
     cleaned = parts[0] if parts else ""
     return cleaned.strip()
-
-
+ 
+ 
 def _clean_dict(data: dict, keys: list) -> dict:
     result = dict(data)
     for key in keys:
         if key in result:
             result[key] = _clean_value(result.get(key))
     return result
-
-
+ 
+ 
 def _s(value) -> str:
     """
     Coerce None to '' so it never reaches _run_rf_script's `str(value)` and
@@ -71,12 +71,12 @@ def _s(value) -> str:
     .get() happily returns as-is.
     """
     return value if value is not None else ""
-
-
+ 
+ 
 # ============================================================
 # RF SCRIPT EXECUTOR HELPERS
 # ============================================================
-
+ 
 def _wait_for_sap_free(max_wait_seconds: int = 240, check_interval: int = 30) -> bool:
     import subprocess as sp
     start = time.time()
@@ -95,8 +95,8 @@ def _wait_for_sap_free(max_wait_seconds: int = 240, check_interval: int = 30) ->
             return False
         logger.info(f"SAP busy. Waiting {check_interval}s... ({int(elapsed)}s elapsed)")
         time.sleep(check_interval)
-
-
+ 
+ 
 def _force_kill_sap() -> None:
     import subprocess as sp
     logger.info("Clearing existing SAP sessions...")
@@ -106,12 +106,12 @@ def _force_kill_sap() -> None:
         time.sleep(2)
     except Exception as e:
         logger.warning(f"SAP cleanup note: {e}")
-
-
+ 
+ 
 def _wake_sap_session() -> None:
     """
     Wake RDP session and ensure display is active before SAP launches.
-
+ 
     FIX: removed the "PrepareSAPGui" scheduled-task call (schtasks /Run /TN
     PrepareSAPGui) that used to run here. Confirmed via application.log
     (2026-08-05, 16:00-17:10 window) it was failing with "Access is denied"
@@ -130,15 +130,15 @@ def _wake_sap_session() -> None:
     wait, which are unrelated to the scheduled task and still make sense.
     """
     import ctypes
-
+ 
     # Step 1: Prevent sleep
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000003)
-
+ 
     # Step 2: wait for display to fully render
     time.sleep(3)
     logger.info("Session wake sequence complete.")
-
-
+ 
+ 
 def _to_sap_date(date_str: str) -> str:
     if not date_str:
         return ""
@@ -148,8 +148,8 @@ def _to_sap_date(date_str: str) -> str:
         return dt.strftime("%d.%m.%Y")
     except Exception:
         return date_str
-
-
+ 
+ 
 def _run_rf_script(
     script_name: str,
     variables: dict,
@@ -159,7 +159,7 @@ def _run_rf_script(
     if script_name == "po_fetch.robot":
         _force_kill_sap()
     _wake_sap_session()
-
+ 
     sap_free = _wait_for_sap_free(max_wait_seconds=240, check_interval=30)
     if not sap_free:
         return {
@@ -172,14 +172,14 @@ def _run_rf_script(
         msg = f"RF script not found: {script_path}"
         logger.error(msg)
         return {"success": False, "error": msg, "output": ""}
-
+ 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(
         config.RF_OUTPUT_PATH,
         f"{script_name.replace('.robot', '')}_{timestamp}"
     )
     os.makedirs(output_dir, exist_ok=True)
-
+ 
     cmd = [
         "python", "-m", "robot",
         "--outputdir", output_dir,
@@ -206,9 +206,9 @@ def _run_rf_script(
         # reworked, since nothing here needs it.
         cmd += ["--variable", f"{key}:{value}"]
     cmd.append(script_path)
-
+ 
     logger.info(f"Running RF: {script_name} | Variables: {list(variables.keys())}")
-
+ 
     subprocess_env = {**os.environ, **dotenv_values(_RF_RUNNER_ENV_PATH)}
     if extra_env:
         # v16: per-user SAP credential override (LDAP users only) -- see
@@ -221,7 +221,7 @@ def _run_rf_script(
             f"RF: {script_name} using per-user SAP credential override for "
             f"'{extra_env.get('SAP_USER_OVERRIDE')}' (password not logged)."
         )
-
+ 
     acquire_robot_lock(script_name)
     try:
         result = subprocess.run(
@@ -234,11 +234,11 @@ def _run_rf_script(
         stdout = result.stdout or ""
         stderr = result.stderr or ""
         combined = stdout + "\n" + stderr
-
+ 
         logger.debug(f"RF stdout (first 2000 chars): {stdout[:2000]}")
         if stderr:
             logger.warning(f"RF stderr: {stderr[:500]}")
-
+ 
         if result.returncode == 0:
             logger.info(f"RF script '{script_name}' completed successfully.")
             return {"success": True, "output": combined, "error": None, "output_dir": output_dir}
@@ -246,7 +246,7 @@ def _run_rf_script(
             msg = f"RF script failed (exit code {result.returncode}). Logs: {output_dir}"
             logger.error(msg)
             return {"success": False, "output": combined, "error": msg, "output_dir": output_dir}
-
+ 
     except subprocess.TimeoutExpired as timeout_exc:
         msg = f"RF script '{script_name}' timed out after {timeout_seconds}s"
         logger.error(msg)
@@ -292,8 +292,8 @@ def _run_rf_script(
         return {"success": False, "error": msg, "output": ""}
     finally:
         release_robot_lock()
-
-
+ 
+ 
 def _sap_credential_env(data: dict) -> dict:
     """
     v16: extracts this job's per-user SAP override credential, if any (see
@@ -301,7 +301,7 @@ def _sap_credential_env(data: dict) -> dict:
     keys "_sap_username"/"_sap_password", set only for LDAP-authenticated
     users' jobs). Returns {} for local/.env-fallback jobs, which is the
     common case for test accounts and is exactly today's behavior.
-
+ 
     Returned as a dict meant for the RF subprocess's *environment*, not
     as --variable CLI arguments -- passing a password as a command-line
     argument would make it visible to Task Manager/ps on the SAP bot
@@ -316,8 +316,8 @@ def _sap_credential_env(data: dict) -> dict:
     if user and pw:
         return {"SAP_USER_OVERRIDE": user, "SAP_PASS_OVERRIDE": pw}
     return {}
-
-
+ 
+ 
 def _extract_marked_value(output: str, marker: str) -> Optional[str]:
     pattern = rf"RESULT:{re.escape(marker)}:(.+)"
     match = re.search(pattern, output)
@@ -327,15 +327,15 @@ def _extract_marked_value(output: str, marker: str) -> Optional[str]:
         return value
     logger.warning(f"Marker '{marker}' not found in RF output.")
     return None
-
-
+ 
+ 
 def _rf_test_actually_passed(output: str) -> bool:
     """
     FIX: distinguishes a genuine Robot Framework test failure (the script
     errored/crashed before completing -- e.g. "Cannot find element with
     id ...") from a test that ran to completion (including clicking Post)
     but a downstream marker just wasn't found in its output afterward.
-
+ 
     _run_rf_script invokes `robot` with --nostatusrc, which forces the
     subprocess's OS exit code to 0 regardless of whether the actual test
     passed or failed -- so result["success"] alone can't tell these two
@@ -355,17 +355,17 @@ def _rf_test_actually_passed(output: str) -> bool:
         return False
     failed_count = int(match.group(3))
     return failed_count == 0
-
-
+ 
+ 
 # ============================================================
 # GATE IN
 # ============================================================
-
+ 
 def execute_gate_in_sap(data: dict) -> dict:
     cleaned = _clean_dict(data, ["challanQty", "numPersons"])
     challan_raw = cleaned.get("challanNo", "")
     challan_numeric = re.sub(r'[^0-9]', '', challan_raw)
-
+ 
     # Hand delivery (and now Courier -- see gate_in.html's deliveryType radios)
     # sends truckNo/licenseNo as '' since those fields are hidden/inapplicable
     # when there's no truck involved, regardless of whether a PO exists.
@@ -388,12 +388,12 @@ def execute_gate_in_sap(data: dict) -> dict:
     # ("truck"/"hand"/"courier" -- none of which contain an underscore
     # themselves), regardless of which _with_po/_without_po suffix follows.
     delivery_type = po_flow_type.split("_")[0] if po_flow_type else ""
-
+ 
     truck_no_placeholder = "BY COURIER" if delivery_type == "courier" else "BYHAND"
     truck_no_clean       = cleaned.get("truckNo", "") or truck_no_placeholder
     license_no_clean    = cleaned.get("licenseNo", "")
     purchase_order_clean = "" if is_without_po else cleaned.get("purchaseOrder", "")
-
+ 
     variables = {
         # FIX (2026-08-13): Vendor Name / Vendor Code split -- this SAP
         # posting variable is still named VENDOR_NAME (matches
@@ -425,7 +425,7 @@ def execute_gate_in_sap(data: dict) -> dict:
         "GATE_IN_DATE":   _to_sap_date(data.get("gateInDate", "")),
         "GATE_IN_TIME":   _s(data.get("gateInTime", "")),
     }
-
+ 
     # FIX: Gate In is now forced onto the shared spl_rpa .env SAP login
     # for every submitter, regardless of LDAP identity -- explicit client
     # decision. Same pattern as execute_po_fetch_sap's existing exception
@@ -439,11 +439,11 @@ def execute_gate_in_sap(data: dict) -> dict:
     )
     if not result["success"]:
         return {"success": False, "error": result["error"], "gate_in_number": None}
-
+ 
     gin = _extract_marked_value(result["output"], "GATE_IN_NUMBER")
     sap_msg = _extract_marked_value(result["output"], "GATE_IN_STATUS_MSG") or "No status bar message captured"
-
-    
+ 
+   
     if not gin:
         # FIX: same class of misleading message fixed in execute_migo_103_sap
         # -- "posted but not captured" implies SAP posting happened when a
@@ -470,7 +470,7 @@ def execute_gate_in_sap(data: dict) -> dict:
             ),
             "gate_in_number": None
         }
-
+ 
     # ── FIX: MANUAL_CHECK_REQUIRED means SAP didn't return a number ──
     if gin == "MANUAL_CHECK_REQUIRED":
         return {
@@ -483,18 +483,18 @@ def execute_gate_in_sap(data: dict) -> dict:
             "gate_in_number": None
         }
     # ─────────────────────────────────────────────────────────────────
-
+ 
     return {"success": True, "gate_in_number": gin, "error": None}
-
-
+ 
+ 
 # ============================================================
 # MIGO 103
 # ============================================================
-
+ 
 def execute_migo_103_sap(data: dict) -> dict:
     logger.info(f"MIGO 103 payload keys: {list(data.keys())}")
     cleaned = _clean_dict(data, ["challanQty", "migoAmount"])
-
+ 
     items_data = cleaned.get("items_data", [])
     if isinstance(items_data, str):
         try:
@@ -503,7 +503,7 @@ def execute_migo_103_sap(data: dict) -> dict:
             items_data = []
     if not isinstance(items_data, list):
         items_data = []
-
+ 
     # FIX: SAP's item-text field (txtGOITEM-SGTXT, filled once per line from
     # REMARKS today) and header text field are both ~40-char SAP fields, same
     # class of issue as Gate In's Material field -- nothing capped these
@@ -526,10 +526,10 @@ def execute_migo_103_sap(data: dict) -> dict:
                 _item["qty_expected"] = str(_item["qty_expected"])[:13]
             if _item.get("qty_actual") is not None:
                 _item["qty_actual"] = str(_item["qty_actual"])[:13]
-
+ 
     items_json_str = json.dumps(items_data)
     items_json_b64 = base64.b64encode(items_json_str.encode()).decode()
-
+ 
     # v20: strip leading zeros off the Gate In Number before it goes into
     # SAP's header text field -- SAP itself zero-pads GIN (e.g.
     # "0000038656") but the client doesn't want that padding posted.
@@ -539,7 +539,7 @@ def execute_migo_103_sap(data: dict) -> dict:
     # somewhere else.
     header_text_raw = cleaned.get("migoHeaderText", "") or ""
     header_text_clean = header_text_raw.lstrip("0") or header_text_raw
-
+ 
     variables = {
         "PO_NUMBER":      (_s(cleaned.get("purchaseOrder", "")) or _s(cleaned.get("migoPoNumber", "")))[:10],
         "DOC_DATE":       _to_sap_date(cleaned.get("migoDocDate", "")),
@@ -551,16 +551,16 @@ def execute_migo_103_sap(data: dict) -> dict:
         "REMARKS":        (cleaned.get("migoRemarks", "") or "")[:40],
         "ITEMS_JSON_B64": items_json_b64,
     }
-
+ 
     result = _run_rf_script(
         "migo_103.robot", variables, timeout_seconds=300,
         extra_env=_sap_credential_env(data)
     )
     if not result["success"]:
         return {"success": False, "error": result["error"], "material_doc_number": None}
-
+ 
     mat_doc = _extract_marked_value(result["output"], "MATERIAL_DOC_NUMBER")
-
+ 
     # FIX (2026-08-10): capture SAP's own status-bar text (see migo_103.robot's
     # Capture Final SAP Status, which now emits this unconditionally in
     # teardown) and append it to whichever failure message gets returned
@@ -569,7 +569,7 @@ def execute_migo_103_sap(data: dict) -> dict:
     # Empty/None if the marker wasn't found or SAP's status bar was blank.
     sap_status = _extract_marked_value(result["output"], "SAP_STATUS_MSG")
     sap_status_suffix = f' SAP showed: "{sap_status}"' if sap_status else ""
-
+ 
     if not mat_doc:
         # FIX: don't say "posted" when the script actually errored out
         # before ever reaching Post -- see _rf_test_actually_passed's
@@ -599,7 +599,7 @@ def execute_migo_103_sap(data: dict) -> dict:
             ),
             "material_doc_number": None
         }
-
+ 
     # FIX: real bug, confirmed against history_id=39's flow -- migo_103.robot's
     # own Step 6 (Read Status Bar With Retry / regexp match) returns the
     # literal string "MANUAL_CHECK_REQUIRED" when Post was clicked but no
@@ -630,25 +630,25 @@ def execute_migo_103_sap(data: dict) -> dict:
             ),
             "material_doc_number": None
         }
-
+ 
     return {"success": True, "material_doc_number": mat_doc, "error": None}
-
-
+ 
+ 
 # ============================================================
 # MIGO 105 — per-line batch via ITEMS_JSON_BATCH
 # ============================================================
-
+ 
 def execute_migo_105_sap(data: dict) -> dict:
     """
     Pass per-line batch values to robot via ITEMS_JSON_BATCH (base64 of JSON).
-
+ 
     Robot decodes:
       [{"line": 1, "batch": "BATCH001"}, {"line": 2, "batch": ""}, ...]
-
+ 
     Empty batch string = robot must skip Batch tab interaction (SAP auto-generates).
     """
     cleaned = _clean_dict(data, ["migo_105_vendor_invoice"])
-
+ 
     # Build batch list from items_data (set by upsert_migo_entry on save)
     items_data = data.get("items_data") or []
     if isinstance(items_data, str):
@@ -658,17 +658,17 @@ def execute_migo_105_sap(data: dict) -> dict:
             items_data = []
     if not isinstance(items_data, list):
         items_data = []
-
+ 
     batches = []
     for item in items_data:
         batches.append({
             "line":  item.get("line"),
             "batch": (item.get("batch") or "").strip(),
         })
-
+ 
     items_json_str = json.dumps(batches)
     items_json_b64 = base64.b64encode(items_json_str.encode()).decode()
-
+ 
     variables = {
         "MATERIAL_DOC_NUMBER": _s(data.get("material_doc_number", ""))[:10],
         "STORAGE_LOCATION":    _s(data.get("migo_105_storage_loc", "")),
@@ -677,16 +677,16 @@ def execute_migo_105_sap(data: dict) -> dict:
         "POST_DATE":           _to_sap_date(datetime.now().strftime("%Y-%m-%d")),
         "ITEMS_JSON_BATCH":    items_json_b64,
     }
-
+ 
     result = _run_rf_script(
         "migo_105.robot", variables, timeout_seconds=300,
         extra_env=_sap_credential_env(data)
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-
+ 
     miro_doc = _extract_marked_value(result["output"], "MIRO_DOC_NUMBER")
-
+ 
     # ── FIX: MIGO 105 does generate a doc — missing means it didn't post ──
     if not miro_doc:
         # Same crashed-vs-ambiguous distinction as execute_gate_in_sap /
@@ -716,7 +716,7 @@ def execute_migo_105_sap(data: dict) -> dict:
                 "Check SAP manually before retrying."
             )
         }
-
+ 
     # FIX: same class of bug just found and fixed in execute_migo_103_sap
     # above (see that function's comment for the full explanation) --
     # migo_105.robot's own status-bar-not-found branch returns the literal
@@ -736,14 +736,14 @@ def execute_migo_105_sap(data: dict) -> dict:
             )
         }
     # ─────────────────────────────────────────────────────────────────
-
+ 
     return {"success": True, "error": None, "miro_doc_number": miro_doc}
-
-
+ 
+ 
 # ============================================================
 # MIRO
 # ============================================================
-
+ 
 def execute_miro_sap(data: dict) -> dict:
     variables = {
         "REFERENCE_NUMBER": _s(data.get("miroReference", ""))[:16],
@@ -757,9 +757,9 @@ def execute_miro_sap(data: dict) -> dict:
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-
+ 
     fi_doc = _extract_marked_value(result["output"], "FI_DOC_NUMBER")
-
+ 
     # ── FIX: treat missing FI_DOC_NUMBER as failure ──────────────────
     if not fi_doc:
         # Same crashed-vs-ambiguous distinction as the other three bots
@@ -790,18 +790,18 @@ def execute_miro_sap(data: dict) -> dict:
             )
         }
     # ─────────────────────────────────────────────────────────────────
-
+ 
     return {"success": True, "error": None, "fi_doc_number": fi_doc}
 # ============================================================
 # PO FETCH
 # ============================================================
-
+ 
 def execute_po_fetch_sap(data: dict) -> dict:
     po_number = str(data.get("po_number", "") or data.get("purchaseOrder", "") or "").strip()
     if not po_number:
         logger.warning("execute_po_fetch_sap called with empty PO number — skipping.")
         return {"success": False, "error": "PO number is empty", "po_items": []}
-
+ 
     # v16: po_fetch (ME23N line-item read) always uses the shared spl_rpa
     # .env SAP login -- deliberately no extra_env/credential override here.
     # It's a read-only PO lookup used to populate MIGO's line items, not an
@@ -821,8 +821,8 @@ def execute_po_fetch_sap(data: dict) -> dict:
     # nothing left to close it -- see the _force_kill_sap() cleanup now
     # added to _run_rf_script's own TimeoutExpired handler as a backstop,
     # but raising this to a realistic ceiling is the actual fix: no
-    # legitimate PO should need anywhere near 600s.
-    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=600)
+    # legitimate PO should need anywhere near 2700s.
+    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=2700)
     # FIX: real root cause of "bot finished, looped through everything, but
     # SAP was still open at the end" -- po_fetch.robot's own Close SAP
     # Session only killed saplogon.exe, never saplgpad.exe/sapgui.exe (fixed
@@ -836,11 +836,11 @@ def execute_po_fetch_sap(data: dict) -> dict:
     _force_kill_sap()
     if not result["success"]:
         return {"success": False, "error": result["error"], "po_items": []}
-
+ 
     raw_json = _extract_marked_value(result["output"], "PO_DATA")
     if not raw_json:
         return {"success": False, "error": "PO fetch ran but no PO_DATA found.", "po_items": []}
-
+ 
     try:
         po_items = json.loads(raw_json)
         if not isinstance(po_items, list):
@@ -850,28 +850,28 @@ def execute_po_fetch_sap(data: dict) -> dict:
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse PO_DATA JSON for PO={po_number}: {e}")
         return {"success": False, "error": f"PO data JSON parse failed: {e}", "po_items": []}
-
-
+ 
+ 
 # ============================================================
 # PO LIST FETCH
 # ============================================================
-
+ 
 def execute_po_list_fetch_sap(data: dict) -> dict:
     vendor_name = str(data.get("vendor_name", "") or "").strip()
     if not vendor_name:
         return {"success": False, "error": "Vendor name is empty", "po_list": []}
-
+ 
     # v16: po_list_fetch (ME2N open-PO lookup) always uses the shared
     # spl_rpa .env SAP login too -- same reasoning as po_fetch above.
     variables = {"VENDOR_NAME": vendor_name}
     result = _run_rf_script("po_list_fetch.robot", variables, timeout_seconds=120)
     if not result["success"]:
         return {"success": False, "error": result["error"], "po_list": []}
-
+ 
     raw_json = _extract_marked_value(result["output"], "PO_LIST")
     if not raw_json:
         return {"success": False, "error": "No PO_LIST in output.", "po_list": []}
-
+ 
     try:
         po_list = json.loads(raw_json)
         if not isinstance(po_list, list):
@@ -879,7 +879,7 @@ def execute_po_list_fetch_sap(data: dict) -> dict:
         return {"success": True, "po_list": po_list, "error": None}
     except json.JSONDecodeError as e:
         return {"success": False, "error": f"JSON parse failed: {e}", "po_list": []}
-
+ 
 # ============================================================
 # ZGATEIN UPDATE — update PO on an existing gate in entry
 #
@@ -897,7 +897,7 @@ def execute_po_list_fetch_sap(data: dict) -> dict:
 # Element paths in the robot are placeholders — SAP team must
 # provide real paths from a GUI recording of zgatein_update tcode.
 # ============================================================
-
+ 
 def execute_update_gatein_po_sap(data: dict) -> dict:
     """
     Run zgatein_update.robot to backfill the PO number on a
@@ -906,7 +906,7 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
     gin        = str(data.get("gate_in_number", "") or "").strip()
     po_number  = str(data.get("po_number",      "") or "").strip()
     history_id = data.get("history_id", "")
-
+ 
     if not gin or not po_number:
         return {
             "success": False,
@@ -915,13 +915,13 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
                 f"cannot run zgatein_update for history_id={history_id}"
             )
         }
-
+ 
     variables = {
         "GATE_IN_NUMBER": gin,
         "PO_NUMBER":      po_number,
         "HISTORY_ID":     str(history_id),
     }
-
+ 
     result = _run_rf_script(
         # FIX (2026-08-11): bumped 180s -> 300s (matches migo_103's timeout)
         # -- 180s was tight for a full SAP login + navigation + grid update +
@@ -932,7 +932,7 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
         "zgatein_update.robot", variables, timeout_seconds=300,
         extra_env=_sap_credential_env(data)
     )
-
+ 
     # FIX (2026-08-11): check the success marker BEFORE giving up on
     # result["success"] -- confirmed production case: the robot's own log
     # showed RESULT:GATEIN_UPDATE_STATUS:SUCCESS (the SAP update genuinely
@@ -947,7 +947,7 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
     status_val = _extract_marked_value(result.get("output") or "", "GATEIN_UPDATE_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
-
+ 
     if not result["success"]:
         # FIX (2026-08-11): this used to pass result["error"] straight
         # through, which for a timeout/exit-code failure is a raw technical
@@ -967,7 +967,7 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
                 "manually (TCODE: zgatein_update) before retrying again."
             )
         }
-
+ 
     return {
         "success": False,
         "error": (
@@ -975,8 +975,8 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
             "manually (TCODE: zgatein_update) before retrying."
         )
     }
-
-
+ 
+ 
 # ============================================================
 # DMS LINK ATTACH — MIGO 103 / MIGO 105 / MIRO (v18)
 #
@@ -1003,7 +1003,7 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
 #     RESULT:MIGO105_LINK_STATUS:SUCCESS/FAILED,
 #     RESULT:MIRO_LINK_STATUS:SUCCESS/FAILED
 # ============================================================
-
+ 
 def execute_migo103_link_sap(data: dict) -> dict:
     variables = {
         "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
@@ -1015,7 +1015,7 @@ def execute_migo103_link_sap(data: dict) -> dict:
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-
+ 
     status_val = _extract_marked_value(result["output"], "MIGO103_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
@@ -1026,8 +1026,8 @@ def execute_migo103_link_sap(data: dict) -> dict:
             f"attached. Check robot log: {result.get('output_dir')}"
         )
     }
-
-
+ 
+ 
 def execute_migo105_link_sap(data: dict) -> dict:
     variables = {
         "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
@@ -1039,7 +1039,7 @@ def execute_migo105_link_sap(data: dict) -> dict:
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-
+ 
     status_val = _extract_marked_value(result["output"], "MIGO105_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
@@ -1050,8 +1050,8 @@ def execute_migo105_link_sap(data: dict) -> dict:
             f"attached. Check robot log: {result.get('output_dir')}"
         )
     }
-
-
+ 
+ 
 def execute_miro_link_sap(data: dict) -> dict:
     variables = {
         "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
@@ -1063,7 +1063,7 @@ def execute_miro_link_sap(data: dict) -> dict:
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
-
+ 
     status_val = _extract_marked_value(result["output"], "MIRO_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
@@ -1074,8 +1074,8 @@ def execute_miro_link_sap(data: dict) -> dict:
             f"attached. Check robot log: {result.get('output_dir')}"
         )
     }
-
-
+ 
+ 
 # ============================================================
 # DMS UPLOAD (Contentverse) — v18
 #
@@ -1090,4 +1090,3 @@ def execute_miro_link_sap(data: dict) -> dict:
 # right after gate_in, is normally just this one record, but may include
 # older stragglers if a previous run failed) -- see run_dms_upload().
 # ============================================================
-

@@ -46,7 +46,8 @@ from database.db_operations import (
 from database.scenario_operations import (
     get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
     delivery_mode_remark_text, ewb_exemption_remark_text, append_remark,
-    DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS, add_history_extra
+    DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS, add_history_extra,
+    set_category, CATEGORY_LABELS, CATEGORY_TO_GATEIN_CODE
 )
 from database.vehicle_master_operations import get_drivers_by_truck
 from database.supplier_operations import search_suppliers, get_supplier_by_code
@@ -863,6 +864,17 @@ def view_detail(history_id):
         # once a real, verified vendor is known from Gate In.
         resolved_vendor_name = gatein_data.get("vendor_name") or None
 
+        # v26: Gate In's Category dropdown pre-selects from Extracted
+        # Data's simpler 3-option Category (defaults to "stores" if the
+        # record predates this feature/history.category is somehow NULL)
+        # -- but ONLY as a default. If this Gate In already has its own
+        # saved category (a draft in progress, or an already-submitted
+        # one), that real value always wins -- see the template's
+        # fallback logic in templates/tabs/gate_in.html.
+        gatein_category_default = CATEGORY_TO_GATEIN_CODE.get(
+            (history.get("category") or "stores"), "A"
+        )
+
         # v13: files folder_watcher.py couldn't recognize as INV/EWB/LR --
         # shown under the "Extras" banner on Extracted Data (view/download
         # only, see /view_document & /download_document, doctype='extra').
@@ -957,6 +969,7 @@ def view_detail(history_id):
             history_extras=history_extras,
             gatein_data=gatein_data,
             resolved_vendor_name=resolved_vendor_name,
+            gatein_category_default=gatein_category_default,
             migo_data=migo_data,
             invoice_line_items=invoice_line_items,
             miro_data=miro_data,
@@ -1336,6 +1349,37 @@ def api_save_ewb_exemption(history_id):
         "reasons": reasons,
         "labels": [EWB_EXEMPTION_LABELS[r] for r in reasons]
     })
+
+
+@app.route("/api/save_category/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_save_category(history_id):
+    """
+    v26: set history.category -- compulsory (defaults to 'stores' at the
+    DB level too, see schema_migration_v26.sql), but NOT write-once like
+    goods_delivery_mode/ewb_exemption_reasons above. Compliance can change
+    it as often as they like while the record is still editable. Only
+    used to pre-select (not lock) Gate In's own Category dropdown --
+    CATEGORY_TO_GATEIN_CODE.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "pending") == "approved":
+        return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
+
+    body = request.get_json(silent=True) or {}
+    category = (body.get("category") or "").strip()
+    if category not in CATEGORY_LABELS:
+        return jsonify({"success": False, "error": "Invalid category."}), 400
+
+    if not set_category(history_id, category, _current_user()):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "category": category, "label": CATEGORY_LABELS[category]})
 
 
 # ============================================================

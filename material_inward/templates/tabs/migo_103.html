@@ -948,7 +948,7 @@ const AUTO_PAIR_MIN = {{ config.AUTO_PAIR_MIN_MATCHES if config and config.AUTO_
 const AUTO_PAIR_AMT_TOL = {{ config.AUTO_PAIR_AMOUNT_TOLERANCE if config and config.AUTO_PAIR_AMOUNT_TOLERANCE else 5 }};
 
 
-function autoPair() {
+function autoPair(silent) {
   resetAllMatches();
 
   const invRows = document.querySelectorAll('#invoiceItemsBody tr[data-idx]');
@@ -1050,7 +1050,13 @@ function autoPair() {
     });
 
     msg += '\nUse manual pairing if values differ.';
-    showToast(msg, 'warning');
+    // FIX (2026-08-13): this Auto-Pair result toast used to fire on every
+    // page load too (see the DOMContentLoaded block below, which calls
+    // autoPair(true)) -- meaning a user just landing on the "View" page
+    // (default tab = Documents) would see a pairing popup for a tab they
+    // hadn't even opened yet. Now only shown for a user-initiated click
+    // on the "Auto-Pair" button itself (silent is unset/false there).
+    if (!silent) showToast(msg, 'warning');
   } else {
     const hint = document.getElementById('matchHint');
     if (hint) {
@@ -1435,10 +1441,14 @@ document.addEventListener('DOMContentLoaded', function() {
       _highlightPairMismatches(0, 0);
       _updateMatchHint();
       confirmMatches();
-      showToast('✓ Single invoice/PO line auto-matched and ready for posting.', 'success');
+      // FIX (2026-08-13): dropped the auto-match success toast here too --
+      // same reasoning as the silent flag on autoPair() below. The pairing
+      // itself still happens automatically; only the popup on page load
+      // is removed. Confirmed pairs are still visible once the user opens
+      // the MIGO 103 tab.
     }
   } else {
-    autoPair();
+    autoPair(true);
   }
 });
 {% endif %}

@@ -103,6 +103,97 @@ Get Firstline Path
  
     Fail    Neither SAPLMIGO:0003 nor SAPLMIGO:0007 firstline subscreen found -- MIGO screen state unrecognized.
  
+Ensure Header And Detail Open
+
+    # Header Data and Item Detail sections each toggle open/closed, and the
+
+    # screen number shifts depending on the OTHER section's current state.
+
+    # Only the "open" button name is searched for -- btnOK_HEADER (header)
+
+    # and btnBUTTON_DETAIL (detail). If found, click it once. If not found,
+
+    # the section is already open, so do nothing and move on. The "close"
+
+    # button names (btnBUTTON_HEADER_TOGGLE, btnBUTTON_ITEMDETAIL) are
+
+    # deliberately never searched for -- we only ever open, never close.
+ 
+    # --- Header: open button = btnOK_HEADER ---
+
+    ${header_open_path}=    Set Variable    ${EMPTY}
+
+    FOR    ${scr}    IN    0002    0003    0004    0005
+
+        ${candidate}=    Set Variable
+
+        ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:${scr}/subSUB_HEADER:SAPLMIGO:0102/btnOK_HEADER
+
+        ${found}=    Run Keyword And Return Status    Element Should Be Present    ${candidate}
+
+        IF    ${found}
+
+            ${header_open_path}=    Set Variable    ${candidate}
+
+            BREAK
+
+        END
+
+    END
+ 
+    IF    '${header_open_path}' != '${EMPTY}'
+
+        Run Keyword And Ignore Error
+
+        ...    Evaluate    $session.findById('${header_open_path}').press()
+
+        Sleep    1s
+
+        Log To Console    Header data was closed -- opened it (${header_open_path}).
+
+    ELSE
+
+        Log To Console    Header data already open -- leaving as is.
+
+    END
+ 
+    # --- Item Detail: open button = btnBUTTON_DETAIL ---
+
+    ${detail_open_path}=    Set Variable    ${EMPTY}
+
+    FOR    ${scr}    IN    0002    0003    0004    0005
+
+        ${candidate}=    Set Variable
+
+        ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:${scr}/subSUB_ITEMDETAIL:SAPLMIGO:0302/btnBUTTON_DETAIL
+
+        ${found}=    Run Keyword And Return Status    Element Should Be Present    ${candidate}
+
+        IF    ${found}
+
+            ${detail_open_path}=    Set Variable    ${candidate}
+
+            BREAK
+
+        END
+
+    END
+ 
+    IF    '${detail_open_path}' != '${EMPTY}'
+
+        Run Keyword And Ignore Error
+
+        ...    Evaluate    $session.findById('${detail_open_path}').press()
+
+        Sleep    1s
+
+        Log To Console    Item detail was closed -- opened it (${detail_open_path}).
+
+    ELSE
+
+        Log To Console    Item detail already open -- leaving as is.
+
+    END
  
 Connect To Sap Session
     # Attaches to the same live SAP GUI Scripting session SapGuiLibrary is
@@ -144,6 +235,8 @@ Fill MIGO 105 And Post
     Sleep    3s
     Dismiss Any Popup
     Dismiss Overview Tree Sidebar
+    Ensure Header And Detail Open
+
  
     ${firstline}=    Get Firstline Path
  

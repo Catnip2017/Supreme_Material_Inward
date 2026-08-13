@@ -350,15 +350,25 @@
     <div class="form-row">
       <div class="form-group">
         <label>Category <span class="req">*</span></label>
-        <select id="category" class="form-select" {% if gate_in_locked %}disabled{% endif %}>
+        {# v26: preselect from Extracted Data's simplified Category
+           (gatein_category_default, mapped stores->A / sales_return->E /
+           job_work->F in app.py's view_detail()) -- but ONLY when this
+           Gate In hasn't already saved its own category (a draft in
+           progress, or an already-submitted record). A real saved value
+           always wins over the default. All 7 options stay selectable --
+           this only changes which one starts selected. See the
+           data-preselected attribute + confirm-on-change JS below. #}
+        {% set _existing_cat = (gatein_data.get('category') if gatein_data else '') or '' %}
+        {% set _effective_cat = _existing_cat or gatein_category_default or '' %}
+        <select id="category" class="form-select" data-preselected="{{ _effective_cat }}" {% if gate_in_locked %}disabled{% endif %}>
           <option value="">Select category</option>
-          <option value="A" {% if gatein_data and gatein_data.get('category')=='A' %}selected{% endif %}>A — Stores</option>
-          <option value="B" {% if gatein_data and gatein_data.get('category')=='B' %}selected{% endif %}>B — Tankfarm</option>
-          <option value="C" {% if gatein_data and gatein_data.get('category')=='C' %}selected{% endif %}>C — Scrap</option>
-          <option value="D" {% if gatein_data and gatein_data.get('category')=='D' %}selected{% endif %}>D — Despatch</option>
-          <option value="E" {% if gatein_data and gatein_data.get('category')=='E' %}selected{% endif %}>E — Sales Return</option>
-          <option value="F" {% if gatein_data and gatein_data.get('category')=='F' %}selected{% endif %}>F — Job Work</option>
-          <option value="G" {% if gatein_data and gatein_data.get('category')=='G' %}selected{% endif %}>G — Despatch Scrap</option>
+          <option value="A" {% if _effective_cat=='A' %}selected{% endif %}>A — Stores</option>
+          <option value="B" {% if _effective_cat=='B' %}selected{% endif %}>B — Tankfarm</option>
+          <option value="C" {% if _effective_cat=='C' %}selected{% endif %}>C — Scrap</option>
+          <option value="D" {% if _effective_cat=='D' %}selected{% endif %}>D — Despatch</option>
+          <option value="E" {% if _effective_cat=='E' %}selected{% endif %}>E — Sales Return</option>
+          <option value="F" {% if _effective_cat=='F' %}selected{% endif %}>F — Job Work</option>
+          <option value="G" {% if _effective_cat=='G' %}selected{% endif %}>G — Despatch Scrap</option>
         </select>
         <div class="field-error-msg" id="err_category">Required</div>
       </div>
@@ -894,6 +904,38 @@ function clearGateInForm() {
   const dd = document.getElementById('driverDropdown');
   if (dd) dd.classList.remove('show');
 }
+
+// ============================================================
+// v26: Category dropdown confirm-on-change. The field loads preselected
+// (see data-preselected on the <select> above, either a real saved
+// category or the Extracted-Data-derived default) but stays a normal,
+// fully editable dropdown with all 7 options. Any manual change reverts
+// immediately (no visible flicker -- happens synchronously inside this
+// same change event, before the user perceives the new value) and asks
+// for confirmation via the app's existing showConfirm() modal; only
+// applying the change if the user confirms. Re-confirms on every
+// subsequent change too, not just the first one away from the default.
+// ============================================================
+(function () {
+  const catEl = document.getElementById('category');
+  if (!catEl) return;
+  let _confirmedCategoryValue = catEl.value;
+
+  catEl.addEventListener('change', function () {
+    const pendingValue = catEl.value;
+    if (pendingValue === _confirmedCategoryValue) return;
+    catEl.value = _confirmedCategoryValue;  // revert first, so Cancel is a no-op
+    showConfirm(
+      'Change Category?',
+      'This category was pre-filled based on the Extracted Data review. Are you sure you want to change it?',
+      function () {
+        catEl.value = pendingValue;
+        _confirmedCategoryValue = pendingValue;
+      },
+      'Yes, Change It'
+    );
+  });
+})();
 
 // ============================================================
 // VEHICLE MASTER LOOKUP
