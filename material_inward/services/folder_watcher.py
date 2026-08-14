@@ -258,6 +258,20 @@ def claim_matching_incoming_file(original_filename: str, success: bool):
 
         src_path = next((c for c in candidates if os.path.isfile(c)), None)
         if not src_path:
+            # FIX (2026-08-13): this used to return silently here -- made
+            # it impossible to tell, after the fact, whether a manual
+            # upload's dedup attempt ran and legitimately found nothing
+            # (no matching filename in WATCH_FOLDER/GROUPED_FOLDER at all
+            # -- e.g. staff uploaded a locally-renamed copy rather than
+            # the literal scanner-dropped file) versus never running at
+            # all. Logged at INFO (not WARNING) since a non-match is an
+            # expected, common outcome, not an error -- most manual
+            # uploads aren't the scanner file at all.
+            logger.info(
+                f"Manual-upload dedup: no match for {original_filename!r} "
+                f"in WATCH_FOLDER or GROUPED_FOLDER/{group_key}/ -- "
+                f"nothing to claim (checked: {candidates})"
+            )
             return None
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

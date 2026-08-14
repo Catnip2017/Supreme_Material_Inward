@@ -154,6 +154,48 @@ def set_ewb_exemption_reasons(history_id: int, reasons: list, username: str) -> 
         return False
 
 
+def delete_history_extras_by_doctype(history_id: int, doc_type: str) -> list:
+    """
+    ADDED (2026-08-13): "Others" is meant to be at most one file per record
+    (see folder_watcher.py's module docstring -- "_OTH ... at most one per
+    group like the other 3" [invoice/ewaybill/lr]). Unlike those 3, which
+    upsert a single DB row per history_id and so can never accumulate
+    duplicates no matter how many times they're re-uploaded,
+    history_extras has no such constraint -- add_history_extra() is a pure
+    INSERT, so uploading "Others" more than once for the same record (via
+    /process_all, then again later via the Documents tab's Add/Replace
+    panel, for example) just piles up additional rows instead of replacing
+    the old one.
+
+    Call this BEFORE add_history_extra() for doc_type='others' to enforce
+    the "only one at a time" rule -- deletes any existing row(s) of that
+    doc_type for this history_id and returns their `filename` values so
+    the caller (app.py, which owns all UPLOAD_FOLDER file operations) can
+    also remove the now-orphaned physical file(s) from disk. Only ever
+    called with doc_type='others' in practice -- 'extra' (genuinely
+    unrecognized filenames from folder_watcher.py) is deliberately left
+    alone, since multiple unrelated unrecognized files attaching to the
+    same record is normal, not a duplicate of the same slot.
+    """
+    select_sql = "SELECT filename FROM history_extras WHERE history_id = %s AND doc_type = %s"
+    delete_sql = "DELETE FROM history_extras WHERE history_id = %s AND doc_type = %s"
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(select_sql, (history_id, doc_type))
+                filenames = [r[0] for r in cur.fetchall()]
+                if filenames:
+                    cur.execute(delete_sql, (history_id, doc_type))
+            conn.commit()
+        return filenames
+    except Exception as e:
+        logger.error(
+            f"[scenario_ops] delete_history_extras_by_doctype failed for "
+            f"history_id={history_id} doc_type={doc_type}: {e}"
+        )
+        return []
+
+
 def add_history_extra(
     history_id: int,
     filename: str,

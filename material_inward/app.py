@@ -46,7 +46,8 @@ from database.db_operations import (
 from database.scenario_operations import (
     get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
     delivery_mode_remark_text, ewb_exemption_remark_text, append_remark,
-    DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS, add_history_extra
+    DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS, add_history_extra,
+    delete_history_extras_by_doctype
 )
 from database.vehicle_master_operations import get_drivers_by_truck
 from database.supplier_operations import search_suppliers, get_supplier_by_code
@@ -611,6 +612,37 @@ def _dedupe_watch_folder(original_filename: str, success: bool) -> None:
         logger.warning(f"WATCH_FOLDER dedup skipped for {original_filename!r}: {e}")
 
 
+def _attach_others_document(history_id: int, safe_name: str, original_filename: str) -> None:
+    """
+    ADDED (2026-08-13): "Others" is meant to be at most one file per record
+    (see folder_watcher.py's own "_OTH ... at most one per group like the
+    other 3" [invoice/ewaybill/lr] rule) -- unlike those 3, which upsert a
+    single DB row per history_id, history_extras had no equivalent
+    protection: add_history_extra() is a pure INSERT, so re-uploading
+    "Others" for a record that already has one (e.g. via /process_all,
+    then again later via the Documents tab's Add/Replace panel) just piled
+    up a second row instead of replacing the first -- confirmed as the
+    cause of a record showing 2 attached Others files after what the user
+    experienced as a single upload.
+
+    Deletes any existing 'others' row(s) for this history_id (and their
+    now-orphaned physical files under UPLOAD_FOLDER) before attaching the
+    new one, so there's only ever one at a time -- true "replace", not
+    "add". File deletion is best-effort/non-fatal: the DB row is the
+    source of truth for what's attached, a leftover unreferenced file on
+    disk is harmless clutter, not a correctness problem.
+    """
+    old_filenames = delete_history_extras_by_doctype(history_id, "others")
+    for old_filename in old_filenames:
+        try:
+            old_path = os.path.join(config.UPLOAD_FOLDER, old_filename)
+            if os.path.isfile(old_path):
+                os.remove(old_path)
+        except Exception as e:
+            logger.warning(f"Could not remove superseded Others file {old_filename!r}: {e}")
+    add_history_extra(history_id, safe_name, original_filename, doc_type="others")
+
+
 def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: int, original_filename: str = None) -> bool:
     original_filename = original_filename or filename
     try:
@@ -810,6 +842,25 @@ def view_detail(history_id):
         migo_data   = get_migo_entry(history_id)   or {}
         miro_data   = get_miro_entry(history_id)   or {}
 
+        # FIX (2026-08-13): legacy fallback for gate_in_entries rows saved
+        # before the Vendor Name / Vendor Code split (schema_migration_v25) --
+        # those rows have vendor_code = NULL, with vendor_name still holding
+        # the bare SAP code from the old overloaded-field design (Fetch used
+        # to overwrite Vendor Name itself). Same reverse-lookup pattern MIGO
+        # 103 already uses (see resolved_vendor_name below) so old records
+        # display a real name instead of a bare code, without a data
+        # migration/backfill script. Only kicks in when vendor_code is
+        # genuinely empty -- any record saved through the new split already
+        # has both fields populated correctly.
+        if gatein_data and not gatein_data.get("vendor_code") and gatein_data.get("vendor_name"):
+            _legacy_supplier = get_supplier_by_code(gatein_data["vendor_name"]) or {}
+            if _legacy_supplier:
+                gatein_data["vendor_code"] = gatein_data["vendor_name"]
+                gatein_data["vendor_name"] = (
+                    _legacy_supplier.get("name_1") or _legacy_supplier.get("name")
+                    or gatein_data["vendor_name"]
+                )
+
         if history.get("gate_in_number") and not migo_data.get("migo_header_text"):
             migo_data["migo_header_text"] = history["gate_in_number"]
         if history.get("material_doc_number"):
@@ -829,22 +880,20 @@ def view_detail(history_id):
 
         po_data = get_po_line_items(history_id)
 
-        # v20: MIGO 103 wants a view-only vendor NAME field once Gate In has
-        # happened -- gatein_data.vendor_name is the resolved SAP vendor
-        # CODE (not a name, see get_history_search()'s own comment on this
-        # same fact), so it needs the same supplier_master lookup that
-        # already resolves it for the History page listing. View-only,
-        # deliberately not fed back into any SAP posting payload -- purely
-        # informational so the user isn't stuck reading the OCR seller_name
-        # fallback (invoice_data.seller_name) once a real, verified vendor
-        # is known from Gate In.
-        resolved_vendor_name = None
-        if gatein_data.get("vendor_name"):
-            _supplier = get_supplier_by_code(gatein_data["vendor_name"]) or {}
-            resolved_vendor_name = (
-                _supplier.get("name_1") or _supplier.get("name")
-                or gatein_data.get("vendor_name")
-            )
+        # v20, simplified 2026-08-13: MIGO 103 wants a view-only vendor NAME
+        # field once Gate In has happened. This used to need a
+        # supplier_master re-lookup here because gatein_data.vendor_name
+        # held the resolved SAP vendor CODE, not a name (Fetch overwrote the
+        # one shared field). Now that Vendor Name/Vendor Code are separate
+        # columns (schema_migration_v25), gatein_data.vendor_name is always
+        # already the real name by the time this runs -- either saved
+        # directly as one under the new split, or resolved by the legacy
+        # fallback right after get_gatein_entry() above for older rows. No
+        # lookup needed any more. View-only, deliberately not fed back into
+        # any SAP posting payload -- purely informational so the user isn't
+        # stuck reading the OCR seller_name fallback (invoice_data.seller_name)
+        # once a real, verified vendor is known from Gate In.
+        resolved_vendor_name = gatein_data.get("vendor_name") or None
 
         # v13: files folder_watcher.py couldn't recognize as INV/EWB/LR --
         # shown under the "Extras" banner on Extracted Data (view/download
@@ -1619,7 +1668,7 @@ def upload_document(doctype):
             others_path = os.path.join(config.UPLOAD_FOLDER, safe_name)
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             file.save(others_path)
-            add_history_extra(history_id, safe_name, filename, doc_type="others")
+            _attach_others_document(history_id, safe_name, filename)
             # v22: Others has no OCR to succeed/fail -- same as
             # folder_watcher.py's own Others handling, "attached" is the
             # only outcome, so always claim as success.
@@ -1687,13 +1736,25 @@ def process_all():
     # doc_consolidator.py picks it up into the DMS-bound consolidated PDF the
     # same way a G-drive-dropped Others file would be. Doesn't touch `results`
     # / the ocr_status logic below, which only concerns invoice/ewaybill/lr.
+    #
+    # FIX (2026-08-13): this block used to appear TWICE in a row here (a
+    # copy-paste artifact from wiring in _dedupe_watch_folder on 2026-08-12)
+    # -- every /process_all submission with an Others file ran this entire
+    # save-and-attach sequence twice, saving the same file to the same path
+    # twice (harmless) but calling add_history_extra() twice, so a single
+    # uploaded Others file always produced TWO history_extras rows for it.
+    # Confirmed as the cause of a record showing 2 attached "Others"
+    # documents from what the user experienced as one upload. Removed the
+    # duplicate; also switched to _attach_others_document() (new
+    # 2026-08-13) so re-submitting Others for the same record now replaces
+    # the previous one instead of ever accumulating extras at all.
     if others_file and others_file.filename:
         safe_others_name = f"h{history_id}_{others_file.filename}"
         others_path = os.path.join(config.UPLOAD_FOLDER, safe_others_name)
         try:
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             others_file.save(others_path)
-            add_history_extra(history_id, safe_others_name, others_file.filename, doc_type="others")
+            _attach_others_document(history_id, safe_others_name, others_file.filename)
             _dedupe_watch_folder(others_file.filename, success=True)
         except Exception as e:
             logger.error(f"Failed to attach Others document for history_id={history_id}: {e}")
@@ -1766,7 +1827,7 @@ def api_upload_missing_document(history_id, doctype):
             others_path = os.path.join(config.UPLOAD_FOLDER, safe_name)
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             file.save(others_path)
-            add_history_extra(history_id, safe_name, filename, doc_type="others")
+            _attach_others_document(history_id, safe_name, filename)
             _dedupe_watch_folder(filename, success=True)
             return jsonify({"success": True, "history_id": history_id, "message": "Others document attached"})
 
@@ -1847,6 +1908,11 @@ def save_gatein():
         ("gateInDate", "Gate In Date"),
         ("gateInTime", "Gate In Time"),
         ("vendorName", "Vendor Name"),
+        # FIX (2026-08-13): Vendor Name / Vendor Code split -- Vendor Code is
+        # the field that actually posts to SAP now (see the max-10-char
+        # check below and execute_gate_in_sap()), so it's required
+        # independently of Vendor Name, not just a max-length constraint on it.
+        ("vendorCode", "Vendor Code"),
         ("driverName", "Person Name" if is_hand else "Driver Name"),
         ("category",   "Category"),
         ("material",   "Material"),
@@ -1862,13 +1928,15 @@ def save_gatein():
     if err:
         return jsonify({"success": False, "error": err}), 400
 
-    # Same 10-char SAP vendor-code limit validateGateIn() enforces client-side
-    # (LIFNR field length) -- Vendor Name must hold the resolved code by the
-    # time it's posted, not a free-text OCR'd name.
-    if len(str(data.get("vendorName") or "").strip()) > 10:
+    # FIX (2026-08-13): Same 10-char SAP vendor-code limit validateGateIn()
+    # enforces client-side (LIFNR field length) -- now checked on Vendor
+    # Code, not Vendor Name (see the gate_in_entries.vendor_code split).
+    # Vendor Name stays free-text now; Vendor Code is what has to fit the
+    # SAP code format by the time it's posted.
+    if len(str(data.get("vendorCode") or "").strip()) > 10:
         return jsonify({
             "success": False,
-            "error": "Vendor Name must be the 10-character (or fewer) SAP vendor code, not a free-text name. Use Fetch to resolve it."
+            "error": "Vendor Code must be 10 characters or fewer -- it should be the SAP vendor code. Use Fetch to resolve it."
         }), 400
 
     upsert_gatein_entry(history_id, data)
