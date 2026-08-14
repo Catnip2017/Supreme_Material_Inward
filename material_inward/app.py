@@ -944,19 +944,47 @@ def view_detail(history_id):
         # to mark the initial active nav button/pane so a downstream-only
         # role (e.g. Gate Security) doesn't land on a blank "Documents"
         # pane they can't view.
+        # FIX (2026-08-13): this used to check "documents" first -- but
+        # can_view_documents is unconditionally True for every logged-in
+        # user (v14), so it always won and the whole role-based landing
+        # tab was dead code; everyone landed on Documents regardless of
+        # role. Now: land on the first tab, in pipeline order, that this
+        # user's role(s) cover AND that isn't already done for this
+        # record yet -- e.g. a Compliance+Gate Security+Stores user whose
+        # Extracted Data review is already approved skips straight to
+        # Gate In, and once Gate In is posted, to MIGO 103. GST Approval
+        # is deliberately excluded from this "next pending step" chain --
+        # it's a standalone, on-demand tab now, not a pipeline gate (see
+        # the Extracted Data redesign notes). Falls through to a second
+        # pass (any tab they can at least view, same order, Documents
+        # last) for a user with nothing left pending in any role they
+        # hold -- e.g. every one of their steps is already done, or they
+        # hold no operational role at all.
         default_tab_id = None
-        for _tab_id, _visible in (
-            ("documents",   can_view_documents),
-            ("extracted",   can_view_extracted),
-            ("gstApproval", can_view_gst),
-            ("gateIn",      can_view_gate_in),
-            ("migo103",     can_view_migo_103),
-            ("migo105",     can_view_migo_105),
-            ("miro",        can_view_miro),
+        for _tab_id, _visible, _pending in (
+            ("extracted", can_view_extracted, (history.get("approval_status") or "pending") != "approved"),
+            ("gateIn",    can_view_gate_in,   not history.get("gate_in")),
+            ("migo103",   can_view_migo_103,  not history.get("migo_103")),
+            ("migo105",   can_view_migo_105,  not history.get("migo_105")),
+            ("miro",      can_view_miro,      not history.get("miro")),
         ):
-            if _visible:
+            if _visible and _pending:
                 default_tab_id = _tab_id
                 break
+
+        if not default_tab_id:
+            for _tab_id, _visible in (
+                ("extracted",   can_view_extracted),
+                ("gstApproval", can_view_gst),
+                ("gateIn",      can_view_gate_in),
+                ("migo103",     can_view_migo_103),
+                ("migo105",     can_view_migo_105),
+                ("miro",        can_view_miro),
+                ("documents",   can_view_documents),
+            ):
+                if _visible:
+                    default_tab_id = _tab_id
+                    break
 
         return render_template(
             "index.html",

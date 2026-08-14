@@ -1,8 +1,8 @@
 <style>
 .approval-banner {
-  border-radius:10px; padding:14px 20px;
+  border-radius:10px; padding:9px 18px;
   display:flex; justify-content:space-between; align-items:center;
-  font-weight:500; font-size:14px;
+  font-weight:500; font-size:13px;
 }
 .approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
 .approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
@@ -88,6 +88,16 @@
   display:block; font-size:10.5px; color:#5a6472; font-weight:700;
   text-transform:uppercase; letter-spacing:0.3px; margin-bottom:1px;
 }
+/* v26-follow-up: strict 2-cell "Attribute Name | Value" row format
+   (client hand-sketch, 2026-08-13) replaces the old single-cell
+   caption-above-input layout across every Invoice Data / Transport
+   Details band. Attribute-label column stays a fixed width sized to its
+   own content; value column takes the rest of the row. */
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:1%;
+}
+.xd-table td.xd-attr-val { width:auto; }
 .xd-table input, .xd-table textarea {
   width:100%; border:1px solid transparent; background:transparent;
   padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
@@ -201,6 +211,25 @@
 #remarksPanel-extracted .remarks-chevron { display:none; }
 #remarksPanel-extracted .remarks-toggle { cursor:default; }
 
+/* v26-follow-up: 2-column restructure (client request, 2026-08-13, per
+   reference image) -- Comments list on the left, composer on the right.
+   The shared partial's DOM order is unchanged (title, then
+   [data-role="comments-list"], then .remarks-comment-composer, all
+   direct children of .remarks-comments-section) -- this is pure CSS grid
+   placement scoped to this one tab's panel, nothing added/removed from
+   the markup, so the other 5 tabs keep the original single-column stack. */
+#remarksPanel-extracted .remarks-comments-section {
+  display:grid; grid-template-columns:1.1fr 0.9fr; column-gap:24px; align-items:start;
+}
+#remarksPanel-extracted .remarks-comments-section-title { grid-column:1 / -1; }
+#remarksPanel-extracted [data-role="comments-list"] {
+  grid-column:1; max-height:360px; overflow-y:auto; padding-right:6px;
+}
+#remarksPanel-extracted .remarks-comment-composer {
+  grid-column:2; margin-top:0; padding-top:0; border-top:none;
+  border-left:1px solid #f0f0f0; padding-left:20px;
+}
+
 .hold-box textarea {
   width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:8px;
   font-family:inherit; font-size:14px; min-height:90px; margin:10px 0 18px;
@@ -256,21 +285,7 @@
 </style>
 
 <div class="content-card">
-  {% if invoice_data or ewaybill_data or lr_data %}
-<div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#4a5568;display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
-  <span style="font-weight:700;color:#1e5ca8;">📎 Source Files:</span>
-  {% if invoice_data and invoice_data.get('filename') %}
-  <span>📄 {{ invoice_data['filename'] }}</span>
-  {% endif %}
-  {% if ewaybill_data and ewaybill_data.get('filename') %}
-  <span>🚚 {{ ewaybill_data['filename'] }}</span>
-  {% endif %}
-  {% if lr_data and lr_data.get('filename') %}
-  <span>📦 {{ lr_data['filename'] }}</span>
-  {% endif %}
-</div>
-{% endif %}
-  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
     <h3 style="margin:0;">📊 Extracted Data — Verify &amp; Approve</h3>
     <span style="font-size:11px;color:#999;">Click any value below to edit</span>
   </div>
@@ -298,9 +313,32 @@
 
   {% set need_delivery_mode = invoice_data and not lr_data %}
   {% set need_ewb_exemption = invoice_data and not ewaybill_data %}
+  {# GDM/EWB info only ever has something to show once goods_delivery_mode
+     is actually set (LR-missing scenario) -- stays false forever for a
+     normal full-3-document record, which is exactly the "Category alone"
+     1:3 ratio case below. #}
+  {% set _gdm_ewb_ready = history and history.goods_delivery_mode and not need_delivery_mode and not need_ewb_exemption %}
 
-  <!-- Status banners row -->
-  <div class="xd-banners-row">
+  {# v26-follow-up: Status line takes the spot the "Source Files" banner
+     used to occupy -- Source Files was dropped entirely (client request,
+     2026-08-13). #}
+  {% if history %}
+  <div style="background:#f0f4ff;border-radius:8px;padding:10px 16px;margin-bottom:14px;font-size:13px;color:#4a5568;">
+    <strong>Status:</strong>
+    Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp;
+    MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp;
+    MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp;
+    MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Status banners row -- ratio 1:3 (Category alone) or 2:3 (Category +
+       Goods Delivery Mode + E-Way Bill Exemption together), client
+       request 2026-08-13. -->
+  <div class="xd-banners-row" style="grid-template-columns:{% if _gdm_ewb_ready %}2fr 3fr{% else %}1fr 3fr{% endif %};">
     {% if status == 'pending' %}
     <div class="approval-banner pending">
       <div>⏳ <strong>Pending Verification</strong> — review all extracted values below, then Save and Proceed.</div>
@@ -323,19 +361,27 @@
 
     {% if history %}
     {% set _category = history.category or 'stores' %}
+    {% set _category_labels = {'stores':'Stores','sales_return':'Sales Return','job_work':'Job Work'} %}
     <div class="xd-lock-banner">
+      {% if is_approved %}
+      {# v26-follow-up: Category collapses to the same locked-text style
+         as Goods Delivery Mode/EWB Exemption once the record is
+         approved -- no more editable pills at that point. #}
+      <div class="xd-lock-title">✓ Category: {{ _category_labels.get(_category, _category) }}</div>
+      {% else %}
       <div class="xd-lock-title">Category</div>
       <div class="xd-category-options" id="categoryOptions">
         {% for _val, _label in [('stores','Stores'), ('sales_return','Sales Return'), ('job_work','Job Work')] %}
         <label class="xd-cat-pill{% if _category == _val %} selected{% endif %}" data-value="{{ _val }}">
-          <input type="radio" name="extractedCategory" value="{{ _val }}"
-                 {% if _category == _val %}checked{% endif %}
-                 {% if is_approved %}disabled{% endif %}>{{ _label }}
+          <input type="radio" name="extractedCategory" value="{{ _val }}" {% if _category == _val %}checked{% endif %}>{{ _label }}
         </label>
         {% endfor %}
         <span class="save-status" id="categorySaveStatus"></span>
       </div>
-      {% if history.goods_delivery_mode and not need_delivery_mode and not need_ewb_exemption %}
+      {% endif %}
+      {% if _gdm_ewb_ready %}
+      {# "Locked" wording dropped (client request, 2026-08-13) -- the ✓
+         plus the merged-container placement already communicate that. #}
       <div class="xd-lock-sub">
         ✓ {{ {'utility_van':'Utility Van','vendor_vehicle':'Vendor Own Vehicle','hand_delivery':'Hand Delivery','courier':'Courier'}.get(history.goods_delivery_mode, history.goods_delivery_mode) }}
         · E-Way Bill exemption:
@@ -349,7 +395,6 @@
         {% else %}
           not applicable
         {% endif %}
-        — locked
       </div>
       {% endif %}
     </div>
@@ -427,19 +472,6 @@
   </div>
   {% endif %}
 
-  {% if history %}
-<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#4a5568;">
-  <strong>Status:</strong>
-  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
-  &nbsp;|&nbsp;
-  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
-  &nbsp;|&nbsp;
-  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
-  &nbsp;|&nbsp;
-  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
-</div>
-{% endif %}
-
   <!-- OCR Failure & Retry -->
   {% if history and history.ocr_status == 'failed' %}
   <div style="background:#fee;border:1px solid #e74c3c;border-radius:10px;padding:14px 20px;margin-bottom:20px;">
@@ -476,41 +508,55 @@
   <div class="xd-band-pair">
     <table class="xd-table">
       <tr>
-        <td class="xd-lbl" rowspan="3">Doc details</td>
-        <td><span class="xd-cap">Invoice No.</span><input id="inv_invoice_number" value="{{ ((invoice_data.get('invoice_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Invoice Date</span><input class="date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((invoice_data.get('invoice_date') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">PO No.</span><input id="inv_po_number" value="{{ (invoice_data.get('po_number') if invoice_data else '') or '' }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-lbl" rowspan="5">Doc details</td>
+        <td class="xd-attr-lbl">Invoice No.</td>
+        <td class="xd-attr-val"><input id="inv_invoice_number" value="{{ ((invoice_data.get('invoice_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Invoice Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((invoice_data.get('invoice_date') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">PO No.</td>
+        <td class="xd-attr-val"><input id="inv_po_number" value="{{ (invoice_data.get('po_number') if invoice_data else '') or '' }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_inv_po_number"></div></td>
       </tr>
       <tr>
-        <td colspan="3"><span class="xd-cap">IRN</span><input id="inv_irn" value="{{ ((invoice_data.get('irn') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-lbl">IRN</td>
+        <td class="xd-attr-val"><input id="inv_irn" value="{{ ((invoice_data.get('irn') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_inv_irn"></div></td>
       </tr>
       <tr>
-        <td colspan="3"><span class="xd-cap">Out Bound Delivery No.</span><input id="inv_outbound_delivery_number" value="{{ ((invoice_data.get('outbound_delivery_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Out Bound Delivery No.</td>
+        <td class="xd-attr-val"><input id="inv_outbound_delivery_number" value="{{ ((invoice_data.get('outbound_delivery_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
     </table>
 
     <table class="xd-table">
       <tr>
-        <td class="xd-lbl" rowspan="3">Buyer info</td>
-        <td colspan="3"><span class="xd-cap">Buyer Name</span><input id="inv_buyer_name" value="{{ ((invoice_data.get('buyer_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-lbl" rowspan="4">Buyer info</td>
+        <td class="xd-attr-lbl">Buyer Name</td>
+        <td class="xd-attr-val"><input id="inv_buyer_name" value="{{ ((invoice_data.get('buyer_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="3"><span class="xd-cap">Buyer Address</span><textarea class="address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('buyer_address') if invoice_data else '') or '') }}</textarea></td>
+        <td class="xd-attr-lbl">Buyer Address</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('buyer_address') if invoice_data else '') or '') }}</textarea></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Buyer GSTIN</span><input id="inv_buyer_gstin" value="{{ ((invoice_data.get('buyer_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-lbl">Buyer GSTIN</td>
+        <td class="xd-attr-val"><input id="inv_buyer_gstin" value="{{ ((invoice_data.get('buyer_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_inv_buyer_gstin"></div></td>
-        <!-- Ship To Code merged into "Ship To State" display (client
-             request): value shown as "CODE - STATE". Bill To Code shown
-             here as its own real field -- has no home in the mockup's row
-             pairing but is a genuinely saved column (invoice_data.
-             bill_to_code); dropping the input would also break
-             saveExtractedInvoice()'s payload (document.getElementById(...)
-             .value on a null element). -->
-        <td><span class="xd-cap">Bill To State</span><input id="inv_bill_to_state" value="{{ ((invoice_data.get('bill_to_state') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Bill To Code</span><input id="inv_bill_to_code" value="{{ ((invoice_data.get('bill_to_code') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <!-- Bill To Code merged into "Bill To State" display, same
+             "CODE - STATE" pattern as Ship To State below (client
+             request, 2026-08-13). -->
+        {% set _bts = ((invoice_data.get('bill_to_state') if invoice_data else '') or '') %}
+        {% set _btc = ((invoice_data.get('bill_to_code') if invoice_data else '') or '') %}
+        <td class="xd-attr-lbl">Bill To State</td>
+        <td class="xd-attr-val"><input id="inv_bill_to_state"
+               value="{% if _btc and _bts %}{{ _btc }} - {{ _bts }}{% else %}{{ _btc or _bts }}{% endif %}"
+               {% if is_approved %}disabled{% endif %}></td>
       </tr>
     </table>
   </div>
@@ -520,15 +566,18 @@
     <table class="xd-table">
       <tr>
         <td class="xd-lbl" rowspan="3">Shipping info</td>
-        <td colspan="3"><span class="xd-cap">Ship To Name</span><input id="inv_ship_to_name" value="{{ ((invoice_data.get('ship_to_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Ship To Name</td>
+        <td class="xd-attr-val"><input id="inv_ship_to_name" value="{{ ((invoice_data.get('ship_to_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="3"><span class="xd-cap">Ship To Address</span><textarea class="address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('ship_to_address') if invoice_data else '') or '') }}</textarea></td>
+        <td class="xd-attr-lbl">Ship To Address</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('ship_to_address') if invoice_data else '') or '') }}</textarea></td>
       </tr>
       <tr>
         {% set _sts = ((invoice_data.get('ship_to_state') if invoice_data else '') or '') %}
         {% set _stc = ((invoice_data.get('ship_to_code') if invoice_data else '') or '') %}
-        <td colspan="3"><span class="xd-cap">Ship To State</span>
+        <td class="xd-attr-lbl">Ship To State</td>
+        <td class="xd-attr-val">
           <input id="inv_ship_to_state"
                  value="{% if _stc and _sts %}{{ _stc }} - {{ _sts }}{% else %}{{ _stc or _sts }}{% endif %}"
                  {% if is_approved %}disabled{% endif %}></td>
@@ -537,16 +586,25 @@
 
     <table class="xd-table">
       <tr>
-        <td class="xd-lbl" rowspan="3">Seller info</td>
-        <td colspan="3"><span class="xd-cap">Seller Name</span><input id="inv_seller_name" value="{{ ((invoice_data.get('seller_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-lbl" rowspan="4">Seller info</td>
+        <td class="xd-attr-lbl">Seller Name</td>
+        <td class="xd-attr-val"><input id="inv_seller_name" value="{{ ((invoice_data.get('seller_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="3"><span class="xd-cap">Seller Address</span><textarea class="address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('seller_address') if invoice_data else '') or '') }}</textarea></td>
+        <td class="xd-attr-lbl">Seller Address</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('seller_address') if invoice_data else '') or '') }}</textarea></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Seller GSTIN</span><input id="inv_seller_gstin" value="{{ ((invoice_data.get('seller_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-lbl">Seller GSTIN</td>
+        <td class="xd-attr-val"><input id="inv_seller_gstin" value="{{ ((invoice_data.get('seller_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_inv_seller_gstin"></div></td>
-        <td colspan="2"><span class="xd-cap">Company PAN</span><input id="inv_company_pan" value="{{ ((invoice_data.get('company_pan') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+      </tr>
+      <tr>
+        <!-- "Company PAN" -> "Seller Company PAN" label rename (client
+             request, 2026-08-13); element id inv_company_pan unchanged so
+             the PAN-vs-GSTIN cross-check JS keeps working untouched. -->
+        <td class="xd-attr-lbl">Seller Company PAN</td>
+        <td class="xd-attr-val"><input id="inv_company_pan" value="{{ ((invoice_data.get('company_pan') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_inv_company_pan"></div></td>
       </tr>
     </table>
@@ -555,6 +613,7 @@
   <!-- Band 3: Material Info | Tax Info -->
   <div class="xd-band-pair">
     <div class="xd-material-card" style="flex:1;flex-direction:column;" id="materialInfoCard">
+      <div style="font-size:10.5px;color:#8a6100;background:#fff8e6;border:1px solid #f0d58c;border-radius:4px;padding:2px 8px;display:inline-block;margin-bottom:4px;font-weight:700;letter-spacing:0.3px;">📄 Based on Invoice</div>
       <table class="xd-table" style="margin-bottom:0;">
         <tr>
           <td class="xd-lbl" rowspan="1" style="width:22px;">Material info</td>
@@ -604,30 +663,31 @@
       </div>
     </div>
 
+    <!-- Tax Info: trimmed from 8 fields to 5 -- CGST/SGST/IGST rate+amount
+         (6 fields) removed entirely, and the whole band is permanently
+         non-editable regardless of approval state (client request,
+         2026-08-13: "this entire container must be not editable"). -->
     <table class="xd-table" style="flex:1;">
       <tr>
-        <td class="xd-lbl" rowspan="6">Tax info</td>
-        <td><span class="xd-cap">Taxable Amount</span><input id="inv_total_taxable_amount" value="{{ ((invoice_data.get('total_taxable_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Total Tax Amount</span><input id="inv_total_tax_amount" value="{{ ((invoice_data.get('total_tax_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-lbl" rowspan="5">Tax info</td>
+        <td class="xd-attr-lbl">Taxable Amount</td>
+        <td class="xd-attr-val"><input id="inv_total_taxable_amount" value="{{ ((invoice_data.get('total_taxable_amount') if invoice_data else '') or '') }}" disabled></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">CGST Rate</span><input id="inv_cgst_rate" value="{{ ((invoice_data.get('cgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">CGST Amount</span><input id="inv_cgst_amount" value="{{ ((invoice_data.get('cgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Total Tax Amount</td>
+        <td class="xd-attr-val"><input id="inv_total_tax_amount" value="{{ ((invoice_data.get('total_tax_amount') if invoice_data else '') or '') }}" disabled></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">SGST Rate</span><input id="inv_sgst_rate" value="{{ ((invoice_data.get('sgst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">SGST Amount</span><input id="inv_sgst_amount" value="{{ ((invoice_data.get('sgst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Grand Total</td>
+        <td class="xd-attr-val"><input id="inv_grand_total" style="font-weight:700;" value="{{ ((invoice_data.get('grand_total') if invoice_data else '') or '') }}" disabled></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">IGST Rate</span><input id="inv_igst_rate" value="{{ ((invoice_data.get('igst_rate') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">IGST Amount</span><input id="inv_igst_amount" value="{{ ((invoice_data.get('igst_amount') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Payment Terms</td>
+        <td class="xd-attr-val"><input id="inv_payment_terms" value="{{ ((invoice_data.get('payment_terms') if invoice_data else '') or '') }}" disabled></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Grand Total</span><input id="inv_grand_total" style="font-weight:700;" value="{{ ((invoice_data.get('grand_total') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Payment Terms</span><input id="inv_payment_terms" value="{{ ((invoice_data.get('payment_terms') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-      </tr>
-      <tr>
-        <td colspan="2"><span class="xd-cap">Amount in Words</span><input id="inv_amount_in_words" value="{{ ((invoice_data.get('amount_in_words') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Amount in Words</td>
+        <td class="xd-attr-val"><input id="inv_amount_in_words" value="{{ ((invoice_data.get('amount_in_words') if invoice_data else '') or '') }}" disabled></td>
       </tr>
     </table>
   </div>
@@ -652,38 +712,61 @@
     {% if ewaybill_data %}
     <table class="xd-table">
       <tr>
-        <td class="xd-lbl" rowspan="8">E-way bill details</td>
-        <td colspan="2"><span class="xd-cap">E-Way Bill No.</span><input id="eway_ewaybill_number" value="{{ ((ewaybill_data.get('ewaybill_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-lbl" rowspan="13">E-way bill details</td>
+        <td class="xd-attr-lbl">E-Way Bill No.</td>
+        <td class="xd-attr-val"><input id="eway_ewaybill_number" value="{{ ((ewaybill_data.get('ewaybill_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Generated Date</span><input class="date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('generated_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;">*expired</span>{% endif %}</span><input class="date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('validity_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Generated Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('generated_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Inv. No.</span><input id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-lbl">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;">*expired</span>{% endif %}</td>
+        <td class="xd-attr-val"><input class="date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('validity_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Inv. No.</td>
+        <td class="xd-attr-val"><input id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_eway_invoice_number"></div></td>
-        <td><span class="xd-cap">Inv. Date</span><input class="date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Inv. Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_eway_invoice_date"></div></td>
       </tr>
       <tr>
-        <td colspan="2"><span class="xd-cap">Dispatch From</span><textarea class="address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_from') if ewaybill_data else '') or '') }}</textarea></td>
+        <td class="xd-attr-lbl">Dispatch From</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_from') if ewaybill_data else '') or '') }}</textarea></td>
       </tr>
       <tr>
-        <td colspan="2"><span class="xd-cap">Dispatch To</span><textarea class="address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_to') if ewaybill_data else '') or '') }}</textarea></td>
+        <td class="xd-attr-lbl">Dispatch To</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_to') if ewaybill_data else '') or '') }}</textarea></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Vehicle No.</span><input id="eway_vehicle_number" maxlength="10" value="{{ ((ewaybill_data.get('vehicle_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-lbl">Vehicle No.</td>
+        <td class="xd-attr-val"><input id="eway_vehicle_number" maxlength="10" value="{{ ((ewaybill_data.get('vehicle_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_eway_vehicle_number"></div></td>
-        <td><span class="xd-cap">Transport Mode</span><input id="eway_transport_mode" value="{{ ((ewaybill_data.get('transport_mode') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Transporter Name</span><input id="eway_transporter_name" value="{{ ((ewaybill_data.get('transporter_name') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Transporter GSTIN</span><input id="eway_transporter_gstin" value="{{ ((ewaybill_data.get('transporter_gstin') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-lbl">Transport Mode</td>
+        <td class="xd-attr-val"><input id="eway_transport_mode" value="{{ ((ewaybill_data.get('transport_mode') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transporter Name</td>
+        <td class="xd-attr-val"><input id="eway_transporter_name" value="{{ ((ewaybill_data.get('transporter_name') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transporter GSTIN</td>
+        <td class="xd-attr-val"><input id="eway_transporter_gstin" value="{{ ((ewaybill_data.get('transporter_gstin') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_eway_transporter_gstin"></div></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Transport Doc No.</span><input id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Transport Doc Date</span><input class="date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('transport_doc_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Transport Doc No.</td>
+        <td class="xd-attr-val"><input id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transport Doc Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('transport_doc_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
     </table>
     {% endif %}
@@ -691,37 +774,58 @@
     {% if lr_data or history.goods_delivery_mode == 'courier' %}
     <table class="xd-table">
       <tr>
-        <td class="xd-lbl" rowspan="9">LR details</td>
-        <td><span class="xd-cap">LR No.</span><input id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">LR Date</span><input class="date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((lr.get('lr_date') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-lbl" rowspan="13">LR details</td>
+        <td class="xd-attr-lbl">LR No.</td>
+        <td class="xd-attr-val"><input id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Vehicle No.</span><input id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-lbl">LR Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((lr.get('lr_date') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Vehicle No.</td>
+        <td class="xd-attr-val"><input id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
           <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div></td>
-        <td><span class="xd-cap">UOM</span><input id="lr_uom" value="{{ ((lr.get('uom') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="2"><span class="xd-cap">Consignor Name</span><input id="lr_consignor_name" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">UOM</td>
+        <td class="xd-attr-val"><input id="lr_uom" value="{{ ((lr.get('uom') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="2"><span class="xd-cap">Consignee Name</span><input id="lr_consignee_name" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Consignor Name</td>
+        <td class="xd-attr-val"><input id="lr_consignor_name" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="2"><span class="xd-cap">Material Description</span><input id="lr_material_description" value="{{ ((lr.get('material_description') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Consignee Name</td>
+        <td class="xd-attr-val"><input id="lr_consignee_name" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">Quantity</span><input id="lr_quantity" value="{{ ((lr.get('quantity') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">Weight</span><input id="lr_weight" value="{{ ((lr.get('weight') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Material Description</td>
+        <td class="xd-attr-val"><input id="lr_material_description" value="{{ ((lr.get('material_description') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td><span class="xd-cap">From Location</span><input id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
-        <td><span class="xd-cap">To Location</span><input id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">Quantity</td>
+        <td class="xd-attr-val"><input id="lr_quantity" value="{{ ((lr.get('quantity') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="2"><span class="xd-cap">Delivery Address</span><textarea class="address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea></td>
+        <td class="xd-attr-lbl">Weight</td>
+        <td class="xd-attr-val"><input id="lr_weight" value="{{ ((lr.get('weight') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
       <tr>
-        <td colspan="2"><span class="xd-cap">Transporter Name</span><input id="lr_transporter_name" value="{{ ((lr.get('transporter_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-lbl">From Location</td>
+        <td class="xd-attr-val"><input id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">To Location</td>
+        <td class="xd-attr-val"><input id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Delivery Address</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transporter Name</td>
+        <td class="xd-attr-val"><input id="lr_transporter_name" value="{{ ((lr.get('transporter_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
       </tr>
     </table>
     {% endif %}
@@ -829,8 +933,20 @@ const ORIGINAL_HSN = {{ ((invoice_data.get('hsn_details') or []) if invoice_data
 // ============================================================
 // Address fields: auto-expand textarea height to fit full content, so
 // the complete address is always visible without scrolling (client
-// request). v25: no more tab show/hide, so a single load-time pass is
-// enough -- nothing stays hidden (scrollHeight 0) after this any more.
+// request).
+//
+// FIX (2026-08-13): this used to run once, synchronously, the moment the
+// script tag executed -- but at that instant the excel-grid <table>'s
+// column widths haven't necessarily been laid out/committed by the
+// browser yet (this script runs during initial parse, before layout is
+// guaranteed final). scrollHeight read against a not-yet-finalized
+// (often narrower) column width could compute a tiny/zero height, and
+// since nothing re-ran it afterward, an address box could stay
+// visually collapsed even though the value was genuinely in the DOM.
+// Now also re-runs on requestAnimationFrame (next paint, layout settled)
+// and on window 'load' (covers webfonts/images still shifting layout at
+// parse time) -- belt and braces, since this only recomputes a CSS
+// height and is cheap to call more than once.
 // ============================================================
 function _autoGrowTextarea(el) {
   if (!el) return;
@@ -844,6 +960,8 @@ document.querySelectorAll('.address-textarea').forEach(function (el) {
   el.addEventListener('input', function () { _autoGrowTextarea(el); });
 });
 _autoGrowAllAddressFields();
+requestAnimationFrame(_autoGrowAllAddressFields);
+window.addEventListener('load', _autoGrowAllAddressFields);
 
 // ============================================================
 // Date fields: always DISPLAY/EDIT as dd/mm/yyyy. Storage/API format is
@@ -907,8 +1025,18 @@ function _splitShipToState() {
   return m ? { code: m[1], state: m[2] } : { code: '', state: raw };
 }
 
+// v26-follow-up: Bill To State merges Bill To Code the same way Ship To
+// State already does -- single "CODE - STATE" field, split back apart
+// on save (client request, 2026-08-13).
+function _splitBillToState() {
+  const raw = (document.getElementById('inv_bill_to_state').value || '').trim();
+  const m = raw.match(/^(\S+)\s*-\s*(.+)$/);
+  return m ? { code: m[1], state: m[2] } : { code: '', state: raw };
+}
+
 async function saveExtractedInvoice() {
   const _shipTo = _splitShipToState();
+  const _billTo = _splitBillToState();
   const payload = {
     invoice_number: document.getElementById('inv_invoice_number').value,
     invoice_date:   _displayDateToIso(document.getElementById('inv_invoice_date').value),
@@ -926,15 +1054,13 @@ async function saveExtractedInvoice() {
     ship_to_address:document.getElementById('inv_ship_to_address').value,
     ship_to_state:  _shipTo.state,
     ship_to_code:   _shipTo.code,
-    bill_to_state:  document.getElementById('inv_bill_to_state').value,
-    bill_to_code:   document.getElementById('inv_bill_to_code').value,
+    bill_to_state:  _billTo.state,
+    bill_to_code:   _billTo.code,
+    // v26-follow-up: CGST/SGST/IGST rate+amount (6 fields) removed from
+    // the UI entirely and no longer saved from here -- Tax Info is now a
+    // permanently read-only display of whatever OCR/extraction set
+    // (client request, 2026-08-13).
     total_taxable_amount: document.getElementById('inv_total_taxable_amount').value,
-    cgst_rate:      document.getElementById('inv_cgst_rate').value,
-    cgst_amount:    document.getElementById('inv_cgst_amount').value,
-    sgst_rate:      document.getElementById('inv_sgst_rate').value,
-    sgst_amount:    document.getElementById('inv_sgst_amount').value,
-    igst_rate:      document.getElementById('inv_igst_rate').value,
-    igst_amount:    document.getElementById('inv_igst_amount').value,
     total_tax_amount: document.getElementById('inv_total_tax_amount').value,
     grand_total:    document.getElementById('inv_grand_total').value,
     amount_in_words:document.getElementById('inv_amount_in_words').value,
