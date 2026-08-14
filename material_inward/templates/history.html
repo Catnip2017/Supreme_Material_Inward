@@ -216,6 +216,9 @@
             {% if has_role('record_admin') %}
             <a href="/admin/records"><i class="fas fa-database"></i> Record Admin</a>
             {% endif %}
+            {% if is_superadmin or has_role('compliance') %}
+            <a href="/gst_verification"><i class="fas fa-file-invoice"></i> GST Verification</a>
+            {% endif %}
             <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
         </div>
     </div>
@@ -301,8 +304,7 @@
                 <option value="">All Status</option>
                 <option value="pending">Pending</option>
                 <option value="data_approved">Data Approved</option>
-                <option value="gst_approved">GST Approved</option>
-                <option value="gate_in_done">Gate In Done</option>
+                <option value="gate_in_done">Gate In Approved</option>
                 <option value="migo_103_done">MIGO 103 Done</option>
                 <option value="migo_105_done">MIGO 105 Done</option>
                 <option value="in_progress">In Progress</option>
@@ -342,13 +344,16 @@
                     <th>Vehicle Number</th>
                     <th>LR No</th>
                     <th>Status</th>
+                    {% if is_superadmin or has_role('compliance') %}
+                    <th>GST Verified</th>
+                    {% endif %}
                     <th>Date</th>
                     <th>Times</th>
                     <th>Action</th>
                 </tr>
             </thead>
             <tbody id="historyTableBody">
-                <tr class="loading-row"><td colspan="9">Loading...</td></tr>
+                <tr class="loading-row"><td colspan="{{ 10 if (is_superadmin or has_role('compliance')) else 9 }}">Loading...</td></tr>
             </tbody>
         </table>
         <div class="pagination" id="paginationBar"></div>
@@ -358,6 +363,14 @@
 
 <script>
 let currentPage = 1;
+// FIX (2026-08-14, client request): compliance-only "GST Verified" Yes/No
+// column -- GST is no longer a pipeline stage (see getStatusBadge/the
+// status filter below), just an independent fact Compliance cares about.
+// Server-rendered <thead> above already gates the header the same way;
+// this JS-side flag keeps the row template and every colspan in this
+// file in sync with it.
+const SHOW_GST_VERIFIED = {{ 'true' if (is_superadmin or has_role('compliance')) else 'false' }};
+const HISTORY_COLSPAN = SHOW_GST_VERIFIED ? 10 : 9;
 let searchTimer = null;
 
 // FIX (2026-08-10): statusFilter/dateFrom/dateTo's onchange handlers used to
@@ -517,7 +530,7 @@ function loadHistory(page) {
     window.history.replaceState(null, '', newUrl);
 
     const tbody = document.getElementById('historyTableBody');
-    tbody.innerHTML = '<tr class="loading-row"><td colspan="9">⏳ Loading...</td></tr>';
+    tbody.innerHTML = `<tr class="loading-row"><td colspan="${HISTORY_COLSPAN}">⏳ Loading...</td></tr>`;
 
     const requestId = ++_historyRequestSeq;
 
@@ -534,7 +547,7 @@ function loadHistory(page) {
         })
         .catch(err => {
             if (requestId !== _historyRequestSeq) return;
-            tbody.innerHTML = '<tr class="loading-row"><td colspan="9">Error loading records.</td></tr>';
+            tbody.innerHTML = `<tr class="loading-row"><td colspan="${HISTORY_COLSPAN}">Error loading records.</td></tr>`;
         });
 }
 
@@ -542,7 +555,7 @@ function renderTable(records) {
     const tbody = document.getElementById('historyTableBody');
     if (!records || records.length === 0) {
         tbody.innerHTML = `
-            <tr><td colspan="9">
+            <tr><td colspan="${HISTORY_COLSPAN}">
                 <div class="empty-state">
                     <div class="empty-state-icon">📂</div>
                     <p>No records found</p>
@@ -566,6 +579,9 @@ function renderTable(records) {
         const cell = (val) => isProcessing
             ? '<i class="fas fa-spinner fa-spin" style="color:#aaa;"></i>'
             : (val || '-');
+        const gstVerifiedCell = SHOW_GST_VERIFIED
+            ? `<td>${r.gst_check ? '<span class="status-badge status-data-approved">Yes</span>' : '<span class="status-badge status-pending">No</span>'}</td>`
+            : '';
         return `
         <tr${isProcessing ? ' class="history-row-processing" data-history-id="' + r.id + '"' : ''}>
             <td>${r.id}</td>
@@ -574,6 +590,7 @@ function renderTable(records) {
             <td>${cell(r.vehicle_number)}</td>
             <td>${cell(r.lr_number)}</td>
             <td>${statusBadge}</td>
+            ${gstVerifiedCell}
             <td>${date}</td>
             <td>
                 <button class="times-toggle-btn" onclick="toggleStepTimes('${rowId}', this)" title="Show step times">
@@ -583,7 +600,7 @@ function renderTable(records) {
             <td><a href="/view/${r.id}" class="view-btn"><i class="fas fa-eye"></i> View</a></td>
         </tr>
         <tr id="${rowId}" class="step-times-row" style="display:none;">
-            <td colspan="9">${renderStepTimes(r)}</td>
+            <td colspan="${HISTORY_COLSPAN}">${renderStepTimes(r)}</td>
         </tr>`;
     }).join('');
 
@@ -660,8 +677,7 @@ function getStatusBadge(status) {
         'MIRO Done':     '<span class="status-badge status-miro">✓ MIRO Done</span>',
         'MIGO 105 Done': '<span class="status-badge status-migo">✓ MIGO 105 Done</span>',
         'MIGO 103 Done': '<span class="status-badge status-migo">✓ MIGO 103 Done</span>',
-        'Gate In Done':  '<span class="status-badge status-gate-in">✓ Gate In Done</span>',
-        'GST Approved':  '<span class="status-badge status-gst-approved">✓ GST Approved</span>',
+        'Gate In Done':  '<span class="status-badge status-gate-in">✓ Gate In Approved</span>',
         'Data Approved': '<span class="status-badge status-data-approved">✓ Data Approved</span>',
         'Pending':       '<span class="status-badge status-pending">⏳ Pending</span>',
     };

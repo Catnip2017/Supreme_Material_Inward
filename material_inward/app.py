@@ -428,16 +428,22 @@ def _extracted_data_view_state(history: dict) -> tuple:
 
     Downstream roles get a staggered read-only reveal, one stage at a
     time, matching the SAP process order already enforced by
-    _check_step_allowed(): Gate Security sees it once GST is approved;
-    Stores Officer (103) once Gate In is done; Quality/Release (105)
-    once MIGO 103 is done; Accounts Payable (MIRO) once MIGO 105 is
-    done. None of these roles can ever edit it -- view only.
+    _check_step_allowed(): Gate Security sees it once Data Approval is
+    done; Stores Officer (103) once Gate In is done; Quality/Release
+    (105) once MIGO 103 is done; Accounts Payable (MIRO) once MIGO 105
+    is done. None of these roles can ever edit it -- view only.
+
+    FIX (2026-08-14, client request): Gate Security's reveal used to wait
+    on history.gst_check instead of approval_status -- that was the same
+    Gate-In/GST coupling removed from _check_step_allowed() below. GST
+    Verification is now fully independent and on-demand; it has no
+    bearing on what Gate Security can see or do.
     """
     if _is_superadmin() or "compliance" in _current_roles():
         return True, _admin_can_edit() if _is_superadmin() else True
 
     roles = _current_roles()
-    if "gate_in" in roles and history.get("gst_check"):
+    if "gate_in" in roles and (history.get("approval_status") or "") == "approved":
         return True, False
     if "migo_103" in roles and history.get("gate_in"):
         return True, False
@@ -469,10 +475,13 @@ def _check_step_allowed(history: dict, step: str) -> tuple:
     if not step_locks:
         return True, ""
     if step == "gate_in":
+        # FIX (2026-08-14, client request): Gate In no longer waits on GST
+        # Verification -- that dependency (history.gst_check required
+        # here) is removed. GST Verification is now a fully independent,
+        # on-demand tab; it can be run before, during, or after Gate In
+        # and has no bearing on whether Gate In is allowed.
         if (history.get("approval_status") or "pending") != "approved":
             return False, "Documents pending verification & approval."
-        if not history.get("gst_check"):
-            return False, "GST verification pending — approve on the GST Approval tab first."
     elif step == "migo_103":
         if not history.get("gate_in"):
             return False, "Awaiting Gate In completion."
@@ -3084,12 +3093,13 @@ def api_gst_verification_list():
     if not _has_role("compliance"):
         return jsonify({"success": False, "error": "Permission denied."}), 403
     search = request.args.get("q", "").strip()
+    status_filter = request.args.get("status", "").strip().lower()
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (TypeError, ValueError):
         page = 1
 
-    result = list_gst_verification_status(search=search, page=page, per_page=50)
+    result = list_gst_verification_status(search=search, status=status_filter, page=page, per_page=20)
 
     records = []
     for r in result["records"]:

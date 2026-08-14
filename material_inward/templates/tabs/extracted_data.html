@@ -97,11 +97,21 @@
 /* v26-follow-up: strict 2-cell "Attribute Name | Value" row format
    (client hand-sketch, 2026-08-13) replaces the old single-cell
    caption-above-input layout across every Invoice Data / Transport
-   Details band. Attribute-label column stays a fixed width sized to its
-   own content; value column takes the rest of the row. */
+   Details band.
+   FIX (2026-08-14, client request): label column used to be width:1%
+   (shrink-to-fit ITS OWN content) -- since each band is a separate
+   <table>, that meant a table with a short longest label (e.g. Doc
+   details' "Invoice No.") ended up with a narrower label column, and
+   therefore a value column starting further left, than a table with a
+   longer longest label (e.g. Buyer info's "Buyer Address") -- values
+   didn't line up between left/right tables in a row, or across bands.
+   A fixed px width shared by every .xd-table makes every label column
+   (and therefore every value column's start position) identical. Sized
+   to fit "Out Bound Delivery No." (the longest label anywhere in this
+   file) with room to spare. */
 .xd-table td.xd-attr-lbl {
   font-weight:700; color:#37424d; font-size:11.5px;
-  background:#f7f9fc; white-space:nowrap; width:1%;
+  background:#f7f9fc; white-space:nowrap; width:175px;
 }
 .xd-table td.xd-attr-val { width:auto; }
 .xd-table input, .xd-table textarea {

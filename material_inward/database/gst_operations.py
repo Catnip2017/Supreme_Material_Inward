@@ -135,13 +135,29 @@ def get_gst_approval(history_id: int) -> Optional[dict]:
 # "does a gst_approval row exist" -- no new column needed, see the design
 # discussion this was built from. is_running() is checked separately by the
 # caller (app.py), in-memory, since that's not something SQL can see.
-def list_gst_verification_status(search: str = "", page: int = 1, per_page: int = 50) -> dict:
+#
+# v28 (2026-08-14, client request): added the status param -- the admin
+# page's filter dropdown (Not Run / Approved / All, default Not Run) has to
+# be applied HERE, in the WHERE clause, rather than after the fact in
+# app.py -- app.py's per-record status derivation (not_run/pending_review/
+# needs_rerun/approved/checking) runs on whatever page of rows comes back,
+# so filtering after that point would paginate over the wrong row set
+# (e.g. page 1 of "Not Run" could come back mostly empty because the SQL
+# LIMIT/OFFSET already sliced off a different 20 rows before filtering).
+# "checking" can't be expressed in SQL at all (it's in-memory, see above)
+# -- not a problem here since it isn't one of the 3 filter values; a row
+# that happens to be actively running when fetched under "All" or "Not
+# Run" still gets the correct live "checking" label from app.py, same as
+# before, just computed after this already-correct page of rows returns.
+def list_gst_verification_status(search: str = "", status: str = "", page: int = 1, per_page: int = 50) -> dict:
     """
     Returns {"total": int, "records": [ {id, invoice_number, seller_name,
     seller_gstin, created_at, gst_row: {...} or None}, ... ]}, newest
     first. gst_row is the full gst_approval row (or None) so the caller
     can derive not_run/pending_review/needs_re_run/approved without a
-    second query per record.
+    second query per record. status: "" or "all" (no filter), "not_run"
+    (no gst_approval row at all), "approved" (gst_approval.approval_status
+    = 'approved').
     """
     conditions = ["inv.id IS NOT NULL"]
     params: list = []
@@ -152,6 +168,10 @@ def list_gst_verification_status(search: str = "", page: int = 1, per_page: int 
         )
         like = f"%{search}%"
         params.extend([like, like, like, like])
+    if status == "not_run":
+        conditions.append("ga.history_id IS NULL")
+    elif status == "approved":
+        conditions.append("ga.approval_status = 'approved'")
     where_clause = "WHERE " + " AND ".join(conditions)
 
     base_sql = f"""

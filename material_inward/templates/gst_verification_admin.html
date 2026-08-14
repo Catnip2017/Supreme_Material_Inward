@@ -14,8 +14,11 @@
             align-items:center; box-shadow:0 2px 10px rgba(0,0,0,0.1);
         }
         .header h1 { font-size:20px; color:#1e5ca8; }
+        .header-links { display:flex; align-items:center; gap:18px; }
         .header a.back-link { color:#1e5ca8; text-decoration:none; font-size:14px; }
         .header a.back-link:hover { text-decoration:underline; }
+        .header a.nav-link { color:#666; text-decoration:none; font-size:13px; }
+        .header a.nav-link:hover { color:#1e5ca8; text-decoration:underline; }
 
         .container { max-width:1100px; margin:30px auto; padding:0 20px 100px; }
 
@@ -32,6 +35,10 @@
         .search-row { display:flex; gap:10px; }
         .search-row input {
             flex:1; padding:10px 14px; border:1px solid #ddd; border-radius:8px; font-size:14px;
+        }
+        .search-row select {
+            flex:0 0 160px; padding:10px 14px; border:1px solid #ddd; border-radius:8px;
+            font-size:14px; background:white; cursor:pointer;
         }
         .search-row button {
             padding:10px 20px; border:none; border-radius:8px; background:#1e5ca8; color:white;
@@ -100,7 +107,15 @@
 <body>
     <div class="header">
         <h1><i class="fas fa-file-invoice"></i> GST Verification</h1>
-        <a href="/history" class="back-link"><i class="fas fa-arrow-left"></i> Back to History</a>
+        <div class="header-links">
+            {% if is_superadmin %}
+            <a href="/user_management" class="nav-link"><i class="fas fa-users-cog"></i> User Management</a>
+            {% endif %}
+            {% if has_role('record_admin') %}
+            <a href="/admin/records" class="nav-link"><i class="fas fa-database"></i> Record Admin</a>
+            {% endif %}
+            <a href="/history" class="back-link"><i class="fas fa-arrow-left"></i> Back to History</a>
+        </div>
     </div>
 
     <div class="container">
@@ -117,6 +132,11 @@
         <div class="search-card">
             <div class="search-row">
                 <input type="text" id="searchInput" placeholder="History ID, seller GSTIN, seller name, or invoice number" onkeydown="if(event.key==='Enter'){_page=1;loadList();}">
+                <select id="statusFilter" onchange="_page=1;loadList();">
+                    <option value="not_run" selected>Not Run</option>
+                    <option value="approved">Approved</option>
+                    <option value="all">All</option>
+                </select>
                 <button onclick="_page=1;loadList();"><i class="fas fa-search"></i> Search</button>
             </div>
             <div class="search-hint">Leave blank to see every GST-eligible record, newest first.</div>
@@ -156,7 +176,7 @@
 
     <script>
     let _page = 1;
-    let _perPage = 50;
+    let _perPage = 20;
     let _total = 0;
     let _selected = new Set();       // history_ids checked (persists across a page's re-render)
     let _statusById = {};            // history_id -> current status, so the bulk bar can skip approved rows
@@ -176,10 +196,11 @@
 
     async function loadList() {
         const q = document.getElementById('searchInput').value.trim();
+        const status = document.getElementById('statusFilter').value;
         const body = document.getElementById('tableBody');
         body.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
         try {
-            const res = await fetch('/api/gst/verification_list?q=' + encodeURIComponent(q) + '&page=' + _page);
+            const res = await fetch('/api/gst/verification_list?q=' + encodeURIComponent(q) + '&status=' + encodeURIComponent(status) + '&page=' + _page);
             const data = await res.json();
             if (!data.success) {
                 body.innerHTML = '<tr><td colspan="8" class="empty-state">' + (data.error || 'Failed to load') + '</td></tr>';

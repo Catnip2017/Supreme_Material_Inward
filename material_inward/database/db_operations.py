@@ -584,23 +584,22 @@ def get_history_search(
         params.extend([like, like, like, like, like, like, like])
 
     if status == "pending":
-        # FIX: was just "h.gate_in = 0" -- left broad on purpose back when
-        # data_approved/gst_approved were added (see the v20 note this
-        # replaces), but that means it overlapped with those two: a record
-        # that's already Data Approved or GST Approved (just not yet gated
-        # in) still matched "Pending" too, so picking that filter showed
-        # other statuses mixed in. The status badge's CASE below already
-        # defines "Pending" narrowly as none-of-the-above (its ELSE
-        # branch) -- this now matches that exact definition instead of a
-        # broader one, so the filter and the badge agree.
+        # FIX (2026-08-14, client request): dropped the gst_check clause --
+        # GST Verification is now fully independent/on-demand and no
+        # longer gates or orders anything here, so it can finish before,
+        # during, or after Data Approval. A record's "Pending" vs. "Data
+        # Approved" bucket is decided by approval_status alone now; see
+        # the matching CASE change below and the removed "gst_approved"
+        # bucket just below this one.
         conditions.append(
-            "h.gate_in = 0 AND COALESCE(h.approval_status, '') != 'approved' "
-            "AND COALESCE(h.gst_check, 0) = 0"
+            "h.gate_in = 0 AND COALESCE(h.approval_status, '') != 'approved'"
         )
     elif status == "data_approved":
-        conditions.append("h.approval_status = 'approved' AND COALESCE(h.gst_check, 0) = 0")
-    elif status == "gst_approved":
-        conditions.append("COALESCE(h.gst_check, 0) = 1 AND h.gate_in = 0")
+        # FIX (2026-08-14, client request): used to require gst_check = 0
+        # too (an "approved but GST not yet checked" exclusive stage) --
+        # since Gate In no longer waits on GST, "Data Approved" now just
+        # means "approved, not yet gated in," regardless of GST state.
+        conditions.append("h.approval_status = 'approved' AND h.gate_in = 0")
     elif status == "gate_in_done":
         # Added alongside data_approved/gst_approved above -- same v20
         # pattern, splitting a specific, commonly-wanted state (Gate In
@@ -679,20 +678,20 @@ def get_history_search(
             -- column, so this doesn't add clutter to the main table.
             gatein.submitted_by AS gate_in_submitted_by,
             -- v20: "Data Approved" (Extracted Data tab approval,
-            -- history.approval_status) and "GST Approved"
-            -- (history.gst_check, already the same column
-            -- services/gst_operations.py._mark_gst_check_done sets, no
-            -- migration needed) slotted in before Gate In Done, matching
-            -- the actual order a record has to clear both gates before
-            -- Gate In is allowed (see the Extracted Data approve modal's
-            -- own "GST Verification must also be completed before Gate
-            -- In" text).
+            -- history.approval_status) slotted in before Gate In Done.
+            -- FIX (2026-08-14, client request): "GST Approved" removed as
+            -- a pipeline stage -- GST Verification is independent/
+            -- on-demand now and no longer gates Gate In (see app.py's
+            -- _check_step_allowed), so it has no fixed place in this
+            -- ordered CASE anymore. GST's own state is now surfaced
+            -- separately as the compliance-only "GST Verified" Yes/No
+            -- column instead (see get_history_search's SELECT / the
+            -- caller in app.py), not as a step in this status badge.
             CASE
                 WHEN h.miro = 1     THEN 'MIRO Done'
                 WHEN h.migo_105 = 1 THEN 'MIGO 105 Done'
                 WHEN h.migo_103 = 1 THEN 'MIGO 103 Done'
                 WHEN h.gate_in = 1  THEN 'Gate In Done'
-                WHEN COALESCE(h.gst_check, 0) = 1 AND h.approval_status = 'approved' THEN 'GST Approved'
                 WHEN h.approval_status = 'approved' THEN 'Data Approved'
                 ELSE 'Pending'
             END AS status
