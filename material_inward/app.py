@@ -47,7 +47,8 @@ from database.scenario_operations import (
     get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
     delivery_mode_remark_text, ewb_exemption_remark_text, append_remark,
     DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS, add_history_extra,
-    set_category, CATEGORY_LABELS, CATEGORY_TO_GATEIN_CODE
+    set_category, CATEGORY_LABELS, CATEGORY_TO_GATEIN_CODE,
+    delete_history_extras_by_doctype
 )
 from database.vehicle_master_operations import get_drivers_by_truck
 from database.supplier_operations import search_suppliers, get_supplier_by_code
@@ -610,6 +611,37 @@ def _dedupe_watch_folder(original_filename: str, success: bool) -> None:
         claim_matching_incoming_file(original_filename, success)
     except Exception as e:
         logger.warning(f"WATCH_FOLDER dedup skipped for {original_filename!r}: {e}")
+
+
+def _attach_others_document(history_id: int, safe_name: str, original_filename: str) -> None:
+    """
+    ADDED (2026-08-13): "Others" is meant to be at most one file per record
+    (see folder_watcher.py's own "_OTH ... at most one per group like the
+    other 3" [invoice/ewaybill/lr] rule) -- unlike those 3, which upsert a
+    single DB row per history_id, history_extras had no equivalent
+    protection: add_history_extra() is a pure INSERT, so re-uploading
+    "Others" for a record that already has one (e.g. via /process_all,
+    then again later via the Documents tab's Add/Replace panel) just piled
+    up a second row instead of replacing the first -- confirmed as the
+    cause of a record showing 2 attached Others files after what the user
+    experienced as a single upload.
+
+    Deletes any existing 'others' row(s) for this history_id (and their
+    now-orphaned physical files under UPLOAD_FOLDER) before attaching the
+    new one, so there's only ever one at a time -- true "replace", not
+    "add". File deletion is best-effort/non-fatal: the DB row is the
+    source of truth for what's attached, a leftover unreferenced file on
+    disk is harmless clutter, not a correctness problem.
+    """
+    old_filenames = delete_history_extras_by_doctype(history_id, "others")
+    for old_filename in old_filenames:
+        try:
+            old_path = os.path.join(config.UPLOAD_FOLDER, old_filename)
+            if os.path.isfile(old_path):
+                os.remove(old_path)
+        except Exception as e:
+            logger.warning(f"Could not remove superseded Others file {old_filename!r}: {e}")
+    add_history_extra(history_id, safe_name, original_filename, doc_type="others")
 
 
 def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: int, original_filename: str = None) -> bool:
@@ -1708,7 +1740,7 @@ def upload_document(doctype):
             others_path = os.path.join(config.UPLOAD_FOLDER, safe_name)
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             file.save(others_path)
-            add_history_extra(history_id, safe_name, filename, doc_type="others")
+            _attach_others_document(history_id, safe_name, filename)
             # v22: Others has no OCR to succeed/fail -- same as
             # folder_watcher.py's own Others handling, "attached" is the
             # only outcome, so always claim as success.
@@ -1776,13 +1808,25 @@ def process_all():
     # doc_consolidator.py picks it up into the DMS-bound consolidated PDF the
     # same way a G-drive-dropped Others file would be. Doesn't touch `results`
     # / the ocr_status logic below, which only concerns invoice/ewaybill/lr.
+    #
+    # FIX (2026-08-13): this block used to appear TWICE in a row here (a
+    # copy-paste artifact from wiring in _dedupe_watch_folder on 2026-08-12)
+    # -- every /process_all submission with an Others file ran this entire
+    # save-and-attach sequence twice, saving the same file to the same path
+    # twice (harmless) but calling add_history_extra() twice, so a single
+    # uploaded Others file always produced TWO history_extras rows for it.
+    # Confirmed as the cause of a record showing 2 attached "Others"
+    # documents from what the user experienced as one upload. Removed the
+    # duplicate; also switched to _attach_others_document() (new
+    # 2026-08-13) so re-submitting Others for the same record now replaces
+    # the previous one instead of ever accumulating extras at all.
     if others_file and others_file.filename:
         safe_others_name = f"h{history_id}_{others_file.filename}"
         others_path = os.path.join(config.UPLOAD_FOLDER, safe_others_name)
         try:
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             others_file.save(others_path)
-            add_history_extra(history_id, safe_others_name, others_file.filename, doc_type="others")
+            _attach_others_document(history_id, safe_others_name, others_file.filename)
             _dedupe_watch_folder(others_file.filename, success=True)
         except Exception as e:
             logger.error(f"Failed to attach Others document for history_id={history_id}: {e}")
@@ -1870,7 +1914,7 @@ def api_upload_missing_document(history_id, doctype):
             others_path = os.path.join(config.UPLOAD_FOLDER, safe_name)
             os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
             file.save(others_path)
-            add_history_extra(history_id, safe_name, filename, doc_type="others")
+            _attach_others_document(history_id, safe_name, filename)
             _dedupe_watch_folder(filename, success=True)
             return jsonify({"success": True, "history_id": history_id, "message": "Others document attached"})
 
