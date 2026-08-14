@@ -142,7 +142,7 @@
 <div class="content-card">
   <h3>🔍 GST Verification</h3>
   <p style="color:#666; font-size:13px; margin-bottom:12px;">
-    Automatically verifies seller GSTIN on government portals.
+    Verifies seller GSTIN on government portals -- run on demand below.
     Approve to unlock <strong>Gate In</strong>.
   </p>
 
@@ -180,6 +180,16 @@
 
   <!-- ── Action buttons (bottom-left style, consistent with other tabs) ── -->
 
+  <!-- ── Not yet run (client request, 2026-08-14: GST verification is
+       strictly on-demand now -- this is the default state until someone
+       clicks "Run GST Verification" below) ─────────────────────────── -->
+  <div id="gstNotRunWrap" style="display:none;">
+    <div class="gst-spin-wrap" style="padding:30px 20px;">
+      <p style="color:#666; font-weight:500;">GST verification has not been run for this record yet.</p>
+      <p style="color:#999; font-size:12px; margin-top:6px;">Click "Run GST Verification" below to check the seller GSTIN on government portals.</p>
+    </div>
+  </div>
+
   <!-- ── Checking / Spinner ──────────────────────────────────────────── -->
   <div id="gstCheckingWrap" style="display:none;">
     <div class="gst-spin-wrap">
@@ -196,7 +206,7 @@
     <div class="gst-error-box">
       <strong style="color:#c0392b;">⚠ Bot error</strong>
       <div id="gstErrorText" style="margin-top:6px; font-size:13px; color:#333;"></div>
-      <button class="gst-retry-btn" onclick="gstRetry()">🔄 Retry</button>
+      <button class="gst-retry-btn" onclick="gstRerun()">↺ Re-run</button>
     </div>
   </div>
 
@@ -280,16 +290,11 @@
 
   </div>
 
-  <!-- ── Bottom action buttons (left-aligned, consistent with other tabs) ── -->
+  <!-- ── Bottom action button -- single, state-driven (client request,
+       2026-08-14: "just 1 button based on scenarios", GST verification is
+       now strictly on-demand -- nothing on this tab auto-starts it). ── -->
   <div style="display:flex;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #f0f0f0;">
-    <button class="gst-retry-btn" onclick="gstRetry()"
-            title="Refresh status if the spinner is stuck — does not restart the bot">
-      🔄 Refresh Status
-    </button>
-    <button class="gst-retry-btn" id="gstRerunBtn" onclick="gstRerun()"
-            title="Restart full verification — use after correcting the GSTIN in Extracted Data tab">
-      ↺ Re-run Verification
-    </button>
+    <button class="gst-retry-btn" id="gstActionBtn" disabled>…</button>
   </div>
 
   {% if history_id %}
@@ -338,7 +343,6 @@
   /* ── State ───────────────────────────────────────────────────────────── */
   const HISTORY_ID = parseInt(document.getElementById('gst_history_id').value, 10);
   let _pollTimer   = null;
-  let _initialized = false;
   let _currentData = null;
 
   /* ── Inline notification (replaces browser alert()) ─────────────────── */
@@ -373,6 +377,11 @@
   }
 
   /* ── Poll ────────────────────────────────────────────────────────────── */
+  /* v27 (2026-08-14, client request): GST verification is now strictly
+     on-demand -- /api/gst/status/<id> is pure read-only, it never starts
+     the bot anymore. This function just reflects whatever state it
+     reports: 'not_run' (nothing has ever been triggered), 'checking' (a
+     run is actively in progress), or a full result payload otherwise. */
   function _gstPoll() {
     fetch('/api/gst/status/' + HISTORY_ID)
       .then(function (r) {
@@ -381,23 +390,23 @@
       })
       .then(function (d) {
         if (d.status === 'checking') {
+          _hide('gstNotRunWrap');
           _show('gstCheckingWrap');
-          /* A bot run is actively in progress -- disable Re-run so it can't
-             be clicked again mid-run (see api_gst_rerun()'s matching
-             is_running() guard in app.py, which now refuses a second
-             reset+trigger while one is already running; this just stops the
-             user from hitting that refusal in the first place). Re-enabled
-             in _renderResults() below, which only ever runs once status
-             is no longer 'checking'. */
-          var rerunBtn = document.getElementById('gstRerunBtn');
-          if (rerunBtn) {
-            rerunBtn.disabled = true;
-            rerunBtn.title = 'A GST check is already in progress — please wait for it to finish.';
-          }
+          _setActionButton('checking');
           _pollTimer = setTimeout(_gstPoll, 5000);
           return;
         }
+        if (d.status === 'not_run') {
+          clearTimeout(_pollTimer);
+          _hide('gstCheckingWrap');
+          _hide('gstErrorWrap');
+          _hide('gstResultsWrap');
+          _show('gstNotRunWrap');
+          _setActionButton('not_run');
+          return;
+        }
         clearTimeout(_pollTimer);
+        _hide('gstNotRunWrap');
         _currentData = d;
         _renderResults(d);
       })
@@ -407,21 +416,45 @@
       });
   }
 
+  /* Single action button, state-driven (client request, 2026-08-14: "just
+     1 button based on scenarios") -- replaces the old separate "Refresh
+     Status" + "Re-run Verification" buttons entirely. */
+  function _setActionButton(state) {
+    var btn = document.getElementById('gstActionBtn');
+    if (!btn) return;
+    if (state === 'not_run') {
+      btn.textContent = '▶ Run GST Verification';
+      btn.disabled = false;
+      btn.title = 'Check the seller GSTIN on government portals';
+      btn.onclick = window.gstRun;
+    } else if (state === 'checking') {
+      btn.textContent = '⏳ Verifying…';
+      btn.disabled = true;
+      btn.title = 'A GST check is already in progress — please wait for it to finish.';
+    } else if (state === 'rerun-disabled') {
+      btn.textContent = '↺ Re-run Verification';
+      btn.disabled = true;
+      btn.title = 'Record is approved -- re-run is permanently disabled.';
+      btn.onclick = window.gstRerun;
+    } else {
+      btn.textContent = '↺ Re-run Verification';
+      btn.disabled = false;
+      btn.title = 'Restart full verification — use after correcting the GSTIN in Extracted Data tab';
+      btn.onclick = window.gstRerun;
+    }
+  }
+
   /* ── Render ──────────────────────────────────────────────────────────── */
   function _renderResults(d) {
     _hide('gstCheckingWrap');
 
-    /* Re-enable Re-run unconditionally as soon as a run is no longer in
-       progress -- done here, before the hard-error early return below, so a
-       full bot failure (which returns early and never reaches
-       _renderBanner()'s own disable/enable logic) doesn't leave the button
-       stuck disabled forever. _renderBanner() below will still override this
-       back to disabled if the record turns out to be approved. */
-    var rerunBtn = document.getElementById('gstRerunBtn');
-    if (rerunBtn) {
-      rerunBtn.disabled = false;
-      rerunBtn.title = 'Restart full verification — use after correcting the GSTIN in Extracted Data tab';
-    }
+    /* Set the action button to Re-run (enabled) unconditionally as soon as
+       a run is no longer in progress -- done here, before the hard-error
+       early return below, so a full bot failure (which returns early and
+       never reaches _renderBanner()'s own state-setting) doesn't leave the
+       button stuck on "Verifying..." forever. _renderBanner() below will
+       still override this to rerun-disabled if the record is approved. */
+    _setActionButton('rerun-enabled');
 
     /* Hard error — both bots failed and no data at all */
     if (d.bot_error && !d.einvoice_status && !d.gstin_status) {
@@ -491,17 +524,11 @@
 
     /* Re-run is permanently blocked server-side once approved (see
        trigger_async()'s human-decision gate and api_gst_rerun()'s own check
-       in app.py) -- disable the button here too so it doesn't sit there
-       looking clickable only to be rejected. Safe to set on every poll
-       cycle regardless of status, same pattern as every other status-driven
-       UI toggle in this file. */
-    var rerunBtn = document.getElementById('gstRerunBtn');
-    if (rerunBtn) {
-      rerunBtn.disabled = (status === 'approved');
-      rerunBtn.title = (status === 'approved')
-        ? 'Record is approved -- re-run is permanently disabled.'
-        : 'Restart full verification — use after correcting the GSTIN in Extracted Data tab';
-    }
+       in app.py) -- reflect that on the action button too so it doesn't
+       sit there looking clickable only to be rejected. Safe to call on
+       every poll cycle regardless of status, same pattern as every other
+       status-driven UI toggle in this file. */
+    _setActionButton(status === 'approved' ? 'rerun-disabled' : 'rerun-enabled');
 
     if (status === 'approved') {
       wrap.innerHTML =
@@ -585,12 +612,35 @@
     document.getElementById('gstLightboxImg').src = '';
   };
 
-  window.gstRetry = function () {
-    _hide('gstErrorWrap');
-    _hide('gstResultsWrap');
+  /* v27 (2026-08-14, client request): GST verification only ever starts
+     from an explicit user action now -- this is the "▶ Run GST
+     Verification" first-time trigger (no gst_approval row exists yet).
+     Re-running an EXISTING result still goes through the confirm modal
+     below (gstRerun/gstConfirmRerun, unchanged) since that one resets a
+     result that already exists; a first run has nothing to reset, so no
+     confirmation needed. */
+  window.gstRun = function () {
+    _hide('gstNotRunWrap');
     _show('gstCheckingWrap');
-    _initialized = false;
-    _gstInit();
+    _setActionButton('checking');
+    fetch('/api/gst/run/' + HISTORY_ID, { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.success) {
+          _gstPoll();
+        } else {
+          _hide('gstCheckingWrap');
+          _show('gstNotRunWrap');
+          _setActionButton('not_run');
+          _showMsg(d.error || 'Run failed', 'error');
+        }
+      })
+      .catch(function (e) {
+        _hide('gstCheckingWrap');
+        _show('gstNotRunWrap');
+        _setActionButton('not_run');
+        _showMsg('Request failed: ' + e.message, 'error');
+      });
   };
 
   window.gstRerun = function () {
@@ -605,9 +655,11 @@
     gstCloseRerunModal();
     clearTimeout(_pollTimer);
     _currentData = null;
+    _hide('gstNotRunWrap');
     _hide('gstResultsWrap');
     _hide('gstErrorWrap');
     _show('gstCheckingWrap');
+    _setActionButton('checking');
     fetch('/api/gst/rerun/' + HISTORY_ID, { method: 'POST' })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -616,11 +668,13 @@
           _gstPoll();
         } else {
           _hide('gstCheckingWrap');
+          _setActionButton('rerun-enabled');
           _showMsg(d.error || 'Re-run failed', 'error');
         }
       })
       .catch(function (e) {
         _hide('gstCheckingWrap');
+        _setActionButton('rerun-enabled');
         _showMsg('Request failed: ' + e.message, 'error');
       });
   };

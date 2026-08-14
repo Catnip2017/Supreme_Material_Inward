@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GST Verification - SPL</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:whitesmoke; min-height:100vh; }
+
+        .header {
+            background:white; padding:15px 40px; display:flex; justify-content:space-between;
+            align-items:center; box-shadow:0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header h1 { font-size:20px; color:#1e5ca8; }
+        .header a.back-link { color:#1e5ca8; text-decoration:none; font-size:14px; }
+        .header a.back-link:hover { text-decoration:underline; }
+
+        .container { max-width:1100px; margin:30px auto; padding:0 20px 100px; }
+
+        .info-banner {
+            background:#f0f4ff; border:1px solid #c5d8f8; border-radius:8px; padding:14px 18px;
+            margin-bottom:24px; font-size:13px; color:#1e5ca8; display:flex; gap:10px; align-items:flex-start;
+        }
+        .info-banner i { margin-top:2px; }
+
+        .search-card {
+            background:white; border-radius:12px; padding:20px 24px; box-shadow:0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom:24px;
+        }
+        .search-row { display:flex; gap:10px; }
+        .search-row input {
+            flex:1; padding:10px 14px; border:1px solid #ddd; border-radius:8px; font-size:14px;
+        }
+        .search-row button {
+            padding:10px 20px; border:none; border-radius:8px; background:#1e5ca8; color:white;
+            font-size:14px; cursor:pointer; font-weight:600;
+        }
+        .search-row button:hover { background:#164a8a; }
+        .search-hint { font-size:12px; color:#888; margin-top:8px; }
+
+        .table-card {
+            background:white; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,0.08); overflow:hidden;
+        }
+        table.gst-table { width:100%; border-collapse:collapse; font-size:13px; }
+        table.gst-table th, table.gst-table td { text-align:left; padding:11px 14px; border-bottom:1px solid #f0f0f0; }
+        table.gst-table th { color:#888; font-weight:600; font-size:11px; text-transform:uppercase; background:#fafbfc; }
+        table.gst-table td.num { color:#1e5ca8; font-weight:700; }
+        table.gst-table input[type="checkbox"] { width:16px; height:16px; cursor:pointer; }
+        table.gst-table tr:hover { background:#f8f9fb; }
+
+        .status-pill {
+            display:inline-block; padding:4px 12px; border-radius:14px; font-size:11.5px; font-weight:700;
+        }
+        .status-pill.not_run       { background:#eef1f5; color:#666; }
+        .status-pill.pending_review{ background:#fff3cd; color:#856404; }
+        .status-pill.needs_rerun   { background:#fee; color:#c0392b; }
+        .status-pill.approved      { background:#ecfdf5; color:#1a7a3c; }
+        .status-pill.checking      { background:#e8f0fe; color:#1e5ca8; }
+
+        .row-action-btn {
+            background:none; border:1px solid #c5d8f8; color:#1e5ca8; padding:4px 10px; border-radius:6px;
+            font-size:11.5px; font-weight:600; cursor:pointer;
+        }
+        .row-action-btn:hover { background:#f0f4ff; }
+        .row-action-btn:disabled { opacity:0.4; cursor:not-allowed; }
+
+        .empty-state { text-align:center; color:#999; padding:30px; font-size:13px; }
+
+        .pager { display:flex; justify-content:center; align-items:center; gap:14px; padding:16px; font-size:13px; color:#555; }
+        .pager button {
+            padding:6px 14px; border-radius:6px; border:1px solid #ddd; background:white; cursor:pointer; font-size:13px;
+        }
+        .pager button:disabled { opacity:0.4; cursor:not-allowed; }
+
+        .bulk-bar {
+            position:sticky; bottom:16px; margin-top:20px; z-index:50;
+            background:#1e2a3a; color:white; border-radius:12px; padding:14px 20px;
+            display:none; align-items:center; justify-content:space-between; gap:16px;
+            box-shadow:0 6px 20px rgba(0,0,0,0.25);
+        }
+        .bulk-bar .bulk-summary { font-size:14px; }
+        .bulk-bar .bulk-buttons { display:flex; gap:10px; }
+        .bulk-bar button {
+            padding:9px 18px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer;
+        }
+        .bulk-bar .apply-btn { background:#00b894; color:white; }
+        .bulk-bar .apply-btn:disabled { opacity:0.5; cursor:not-allowed; }
+        .bulk-bar .clear-btn { background:transparent; color:#cfd8e3; border:1px solid #445269; }
+
+        .toast {
+            position:fixed; bottom:24px; right:24px; padding:12px 20px; border-radius:8px;
+            color:white; font-size:14px; z-index:999; display:none;
+        }
+        .toast.success { background:#00875a; }
+        .toast.error { background:#c0392b; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><i class="fas fa-file-invoice"></i> GST Verification</h1>
+        <a href="/history" class="back-link"><i class="fas fa-arrow-left"></i> Back to History</a>
+    </div>
+
+    <div class="container">
+        <div class="info-banner">
+            <i class="fas fa-circle-info"></i>
+            <div>
+                GST verification is on-demand -- it never starts automatically. Select one or more records below
+                and click "Run Selected" to check/re-check seller GSTINs on government portals. Actual browser
+                automation is capped by a small slot pool, so a large batch queues automatically rather than all
+                running at once.
+            </div>
+        </div>
+
+        <div class="search-card">
+            <div class="search-row">
+                <input type="text" id="searchInput" placeholder="History ID, seller GSTIN, seller name, or invoice number" onkeydown="if(event.key==='Enter'){_page=1;loadList();}">
+                <button onclick="_page=1;loadList();"><i class="fas fa-search"></i> Search</button>
+            </div>
+            <div class="search-hint">Leave blank to see every GST-eligible record, newest first.</div>
+        </div>
+
+        <div class="table-card">
+            <table class="gst-table">
+                <thead>
+                    <tr>
+                        <th style="width:34px;"><input type="checkbox" id="selectAllCheck" onchange="toggleSelectAll(this.checked)"></th>
+                        <th>History ID</th>
+                        <th>Invoice No.</th>
+                        <th>Seller Name</th>
+                        <th>Seller GSTIN</th>
+                        <th>Status</th>
+                        <th>Last Checked</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    <tr><td colspan="8" class="empty-state">Loading…</td></tr>
+                </tbody>
+            </table>
+            <div class="pager" id="pager" style="display:none;"></div>
+        </div>
+
+        <div class="bulk-bar" id="bulkBar">
+            <div class="bulk-summary" id="bulkSummary"></div>
+            <div class="bulk-buttons">
+                <button class="clear-btn" onclick="clearSelection()">Clear</button>
+                <button class="apply-btn" id="runSelectedBtn" onclick="runSelected()">▶ Run Selected</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    let _page = 1;
+    let _perPage = 50;
+    let _total = 0;
+    let _selected = new Set();       // history_ids checked (persists across a page's re-render)
+    let _statusById = {};            // history_id -> current status, so the bulk bar can skip approved rows
+
+    function showToast(message, isError) {
+        const t = document.getElementById('toast');
+        t.textContent = message;
+        t.className = 'toast ' + (isError ? 'error' : 'success');
+        t.style.display = 'block';
+        setTimeout(() => { t.style.display = 'none'; }, 4000);
+    }
+
+    const STATUS_LABELS = {
+        not_run: 'Not Run', pending_review: 'Pending Review', needs_rerun: 'Needs Re-run',
+        approved: 'Approved', checking: 'Checking…'
+    };
+
+    async function loadList() {
+        const q = document.getElementById('searchInput').value.trim();
+        const body = document.getElementById('tableBody');
+        body.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
+        try {
+            const res = await fetch('/api/gst/verification_list?q=' + encodeURIComponent(q) + '&page=' + _page);
+            const data = await res.json();
+            if (!data.success) {
+                body.innerHTML = '<tr><td colspan="8" class="empty-state">' + (data.error || 'Failed to load') + '</td></tr>';
+                return;
+            }
+            _total = data.total;
+            renderTable(data.records);
+            renderPager();
+        } catch (e) {
+            body.innerHTML = '<tr><td colspan="8" class="empty-state">Failed to load -- check connection.</td></tr>';
+        }
+    }
+
+    function renderTable(records) {
+        const body = document.getElementById('tableBody');
+        if (!records.length) {
+            body.innerHTML = '<tr><td colspan="8" class="empty-state">No GST-eligible records found.</td></tr>';
+            return;
+        }
+        body.innerHTML = records.map(function (r) {
+            _statusById[r.id] = r.status;
+            const checked = _selected.has(r.id) ? 'checked' : '';
+            const eligible = (r.status !== 'approved' && r.status !== 'checking');
+            const disabled = eligible ? '' : 'disabled';
+            const actionLabel = r.status === 'not_run' ? '▶ Run' : (r.status === 'checking' ? '…' : '↺ Re-run');
+            return '<tr>' +
+                '<td><input type="checkbox" data-id="' + r.id + '" ' + checked + ' ' + disabled +
+                  ' onchange="toggleOne(' + r.id + ', this.checked)"></td>' +
+                '<td class="num">' + r.id + '</td>' +
+                '<td>' + (r.invoice_number || '—') + '</td>' +
+                '<td>' + (r.seller_name || '—') + '</td>' +
+                '<td>' + (r.seller_gstin || '—') + '</td>' +
+                '<td><span class="status-pill ' + r.status + '">' + STATUS_LABELS[r.status] + '</span></td>' +
+                '<td>' + (r.checked_at || '—') + '</td>' +
+                '<td><button class="row-action-btn" ' + (eligible ? '' : 'disabled') +
+                  ' onclick="runOne(' + r.id + ')">' + actionLabel + '</button></td>' +
+            '</tr>';
+        }).join('');
+        document.getElementById('selectAllCheck').checked = false;
+    }
+
+    function renderPager() {
+        const pager = document.getElementById('pager');
+        const totalPages = Math.max(1, Math.ceil(_total / _perPage));
+        if (totalPages <= 1) { pager.style.display = 'none'; return; }
+        pager.style.display = 'flex';
+        pager.innerHTML =
+            '<button ' + (_page <= 1 ? 'disabled' : '') + ' onclick="_page--;loadList();">‹ Prev</button>' +
+            '<span>Page ' + _page + ' of ' + totalPages + ' (' + _total + ' records)</span>' +
+            '<button ' + (_page >= totalPages ? 'disabled' : '') + ' onclick="_page++;loadList();">Next ›</button>';
+    }
+
+    function toggleOne(id, checked) {
+        if (checked) _selected.add(id); else _selected.delete(id);
+        _updateBulkBar();
+    }
+
+    function toggleSelectAll(checked) {
+        document.querySelectorAll('#tableBody input[type="checkbox"]:not(:disabled)').forEach(function (cb) {
+            cb.checked = checked;
+            const id = parseInt(cb.dataset.id, 10);
+            if (checked) _selected.add(id); else _selected.delete(id);
+        });
+        _updateBulkBar();
+    }
+
+    function clearSelection() {
+        _selected.clear();
+        document.querySelectorAll('#tableBody input[type="checkbox"]').forEach(function (cb) { cb.checked = false; });
+        document.getElementById('selectAllCheck').checked = false;
+        _updateBulkBar();
+    }
+
+    function _updateBulkBar() {
+        const bar = document.getElementById('bulkBar');
+        const n = _selected.size;
+        if (n === 0) { bar.style.display = 'none'; return; }
+        bar.style.display = 'flex';
+        document.getElementById('bulkSummary').textContent = n + ' record' + (n === 1 ? '' : 's') + ' selected';
+    }
+
+    async function runOne(id) {
+        try {
+            const res = await fetch('/api/gst/bulk_run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ history_ids: [id] })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Started for record ' + id);
+                loadList();
+            } else {
+                showToast(data.error || 'Failed to start', true);
+            }
+        } catch (e) {
+            showToast('Request failed: ' + e.message, true);
+        }
+    }
+
+    async function runSelected() {
+        if (_selected.size === 0) return;
+        const ids = Array.from(_selected);
+        const btn = document.getElementById('runSelectedBtn');
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/gst/bulk_run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ history_ids: ids })
+            });
+            const data = await res.json();
+            btn.disabled = false;
+            if (data.success) {
+                const results = data.results || {};
+                const started = Object.values(results).filter(function (v) { return v === 'run_started' || v === 'rerun_started'; }).length;
+                const skipped = ids.length - started;
+                showToast(started + ' started' + (skipped ? ', ' + skipped + ' skipped (already running or approved)' : ''));
+                clearSelection();
+                loadList();
+            } else {
+                showToast(data.error || 'Bulk run failed', true);
+            }
+        } catch (e) {
+            btn.disabled = false;
+            showToast('Request failed: ' + e.message, true);
+        }
+    }
+
+    loadList();
+    </script>
+</body>
+</html>

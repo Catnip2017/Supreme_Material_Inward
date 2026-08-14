@@ -276,6 +276,9 @@
             {% if has_role('record_admin') %}
             <a href="/admin/records"><i class="fas fa-database"></i> Record Admin</a>
             {% endif %}
+            {% if is_superadmin or has_role('compliance') %}
+            <a href="/gst_verification"><i class="fas fa-file-invoice"></i> GST Verification</a>
+            {% endif %}
             <a href="/logout" style="color:#e74c3c;"><i class="fas fa-sign-out-alt"></i> Logout</a>
           </div>
         </div>

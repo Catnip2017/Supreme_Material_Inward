@@ -128,6 +128,63 @@ def get_gst_approval(history_id: int) -> Optional[dict]:
         return None
 
 
+# v27 (2026-08-14): backs the new GST Verification admin page -- lists every
+# record that HAS invoice data (only those are GST-eligible at all, since
+# there's no seller GSTIN to check without one) alongside whatever
+# gst_approval result exists for it, if any. "Was it run" here is exactly
+# "does a gst_approval row exist" -- no new column needed, see the design
+# discussion this was built from. is_running() is checked separately by the
+# caller (app.py), in-memory, since that's not something SQL can see.
+def list_gst_verification_status(search: str = "", page: int = 1, per_page: int = 50) -> dict:
+    """
+    Returns {"total": int, "records": [ {id, invoice_number, seller_name,
+    seller_gstin, created_at, gst_row: {...} or None}, ... ]}, newest
+    first. gst_row is the full gst_approval row (or None) so the caller
+    can derive not_run/pending_review/needs_re_run/approved without a
+    second query per record.
+    """
+    conditions = ["inv.id IS NOT NULL"]
+    params: list = []
+    if search:
+        conditions.append(
+            "(CAST(h.id AS TEXT) ILIKE %s OR inv.seller_gstin ILIKE %s "
+            "OR inv.seller_name ILIKE %s OR inv.invoice_number ILIKE %s)"
+        )
+        like = f"%{search}%"
+        params.extend([like, like, like, like])
+    where_clause = "WHERE " + " AND ".join(conditions)
+
+    base_sql = f"""
+        FROM history h
+        JOIN invoice_data inv ON inv.id = h.id
+        LEFT JOIN gst_approval ga ON ga.history_id = h.id
+        {where_clause}
+    """
+    count_sql = f"SELECT COUNT(*) {base_sql}"
+    data_sql = f"""
+        SELECT
+            h.id, h.created_at,
+            inv.invoice_number, inv.seller_name, inv.seller_gstin,
+            ga.approval_status AS gst_approval_status,
+            ga.bot_error, ga.checked_at
+        {base_sql}
+        ORDER BY h.created_at DESC
+        LIMIT %s OFFSET %s
+    """
+    offset = (page - 1) * per_page
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(count_sql, params)
+                total = cur.fetchone()["count"]
+                cur.execute(data_sql, params + [per_page, offset])
+                records = [dict(r) for r in cur.fetchall()]
+        return {"total": total, "records": records}
+    except Exception as e:
+        logger.error(f"[gst_ops] list_gst_verification_status failed: {e}")
+        return {"total": 0, "records": []}
+
+
 # ── Approve ───────────────────────────────────────────────────────────────────
 
 def approve_gst(history_id: int, approved_by: str) -> bool:
