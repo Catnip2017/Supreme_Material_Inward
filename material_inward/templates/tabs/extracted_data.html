@@ -126,6 +126,19 @@
 .xd-table input.field-expired, .xd-table textarea.field-expired { border-color:#e74c3c; background:#fee; }
 .xd-table input.field-mismatch, .xd-table textarea.field-mismatch { border-color:#e08e0b; background:#fff8e6; }
 .xd-table td.xd-num { text-align:right; }
+
+/* v29 (2026-08-14, client request): "Copy from Invoice" / "Copy from
+   E-Way Bill" quick-fill buttons -- input + button share the cell via a
+   small flex row instead of the input alone taking the full width. */
+.xd-val-with-copy { display:flex; align-items:center; gap:6px; }
+.xd-val-with-copy input { flex:1; width:auto; }
+.copy-field-btn {
+  flex:0 0 auto; font-size:10px; font-weight:600; padding:3px 9px;
+  border:1px solid #c5d8f8; background:#f0f4ff; color:#1e5ca8;
+  border-radius:5px; cursor:pointer; white-space:nowrap;
+}
+.copy-field-btn:hover:not(:disabled) { background:#e0eaff; }
+.copy-field-btn:disabled { opacity:0.4; cursor:not-allowed; }
 .field-error-msg-inline { color:#e74c3c; font-size:10.5px; margin-top:2px; display:none; }
 .field-error-msg-inline.show { display:block; }
 .field-error-msg-inline.mismatch { color:#b8720a; }
@@ -706,12 +719,18 @@
       </tr>
       <tr>
         <td class="xd-attr-lbl">Inv. No.</td>
-        <td class="xd-attr-val"><input id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_invoice_number','eway_invoice_number','Invoice No.')">📋 Copy from Invoice</button>
+          </div>
           <div class="field-error-msg-inline" id="err_eway_invoice_number"></div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">Inv. Date</td>
-        <td class="xd-attr-val"><input class="date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input class="date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_invoice_date','eway_invoice_date','Invoice Date')">📋 Copy from Invoice</button>
+          </div>
           <div class="field-error-msg-inline" id="err_eway_invoice_date"></div></td>
       </tr>
       <tr>
@@ -760,7 +779,10 @@
       </tr>
       <tr>
         <td class="xd-attr-lbl">Vehicle No.</td>
-        <td class="xd-attr-val"><input id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('eway_vehicle_number','lr_vehicle_number','Vehicle No.')">📋 Copy from E-Way Bill</button>
+          </div>
           <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div></td>
       </tr>
       <tr>
@@ -773,11 +795,17 @@
       </tr>
       <tr>
         <td class="xd-attr-lbl">From Location</td>
-        <td class="xd-attr-val"><input id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_bill_to_state','lr_from_location','Bill To State')">📋 Copy from Invoice</button>
+          </div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">To Location</td>
-        <td class="xd-attr-val"><input id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_ship_to_state','lr_to_location','Ship To State')">📋 Copy from Invoice</button>
+          </div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">Delivery Address</td>
@@ -1111,6 +1139,26 @@ async function saveExtractedEway() {
     _showSaveStatus('ewaySaveStatus', false, '❌ E-Way Bill: network error');
     return false;
   }
+}
+
+// v29 (2026-08-14, client request): quick-fill buttons that copy a value
+// from one already-extracted field into another instead of retyping --
+// E-Way Bill's Inv. No./Inv. Date from Invoice Data, LR's From/To
+// Location from Invoice's Bill To/Ship To State, LR's Vehicle No. from
+// E-Way Bill's. Silent overwrite by design (client confirmed) -- no
+// confirm dialog even if the target already has a value.
+function copyFieldValue(sourceId, targetId, sourceLabel) {
+  const src = document.getElementById(sourceId);
+  const tgt = document.getElementById(targetId);
+  if (!src || !tgt) return;
+  const val = src.value.trim();
+  if (!val) {
+    showToast('⚠ ' + (sourceLabel || 'Source field') + ' is empty — nothing to copy.', 'error');
+    return;
+  }
+  tgt.value = val;
+  tgt.dispatchEvent(new Event('input', { bubbles: true }));
+  tgt.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 async function saveExtractedLr() {
