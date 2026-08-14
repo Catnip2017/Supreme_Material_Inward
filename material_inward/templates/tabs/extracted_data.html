@@ -65,9 +65,11 @@
 .xd-section-title:first-of-type { margin-top:0; }
 .xd-section-title .xd-orig-links a {
   color:#8a6100; font-size:11px; font-weight:600; text-decoration:none;
-  margin-left:14px; letter-spacing:normal;
+  letter-spacing:normal; margin-left:8px; display:inline-block;
+  background:#fff; border:1.5px solid #f0a500; border-radius:6px;
+  padding:4px 10px;
 }
-.xd-section-title .xd-orig-links a:hover { text-decoration:underline; }
+.xd-section-title .xd-orig-links a:hover { background:#fff2cf; text-decoration:none; }
 
 /* Excel-style grid tables -- straight, continuous 1px borders throughout
    a row-band (client request, 2026-08-13: "the line in between must be
@@ -239,20 +241,7 @@
   font-family:inherit; font-size:14px; min-height:90px; margin:10px 0 18px;
 }
 
-/* v13: Extras banner + partial-document scenario panel. */
-.extras-banner {
-  background:#fff8e6; border:1px solid #f0d58c; border-radius:8px;
-  padding:10px 16px; margin-bottom:16px; font-size:12px; color:#7a5c00;
-}
-.extras-banner-title { font-weight:700; margin-bottom:6px; }
-.extras-file-list { display:flex; flex-wrap:wrap; gap:8px; }
-.extras-file-chip {
-  background:white; border:1px solid #f0d58c; border-radius:6px;
-  padding:5px 10px; display:inline-flex; gap:8px; align-items:center;
-}
-.extras-file-chip a { color:#1e5ca8; text-decoration:none; font-weight:600; }
-.extras-file-chip a:hover { text-decoration:underline; }
-
+/* v13: partial-document scenario panel. */
 .scenario-panel {
   background:#f7f9ff; border:1.5px solid #c5d8f8; border-radius:10px;
   padding:16px 20px; margin-bottom:16px;
@@ -281,11 +270,6 @@
 .scenario-status { font-size:12px; font-weight:600; margin-left:10px; }
 .scenario-status.ok { color:#1a7a3c; }
 .scenario-status.err { color:#c0392b; }
-.scenario-locked {
-  background:#ecfdf5; border:1px solid #00b894; border-radius:8px;
-  padding:10px 14px; font-size:12px; color:#1a7a3c; display:flex;
-  align-items:center; gap:8px;
-}
 </style>
 
 <div class="content-card">
@@ -415,31 +399,19 @@
   </div>
   {% endif %}
 
-  <!-- v13: Extras banner -->
-  {% if history_extras %}
-  <div class="extras-banner">
-    <div class="extras-banner-title">📎 Extras — {{ history_extras|length }} unrecognized file{{ 's' if history_extras|length != 1 else '' }} from intake</div>
-    <div class="extras-file-list">
-      {% for extra in history_extras %}
-      <span class="extras-file-chip">
-        📄 {{ extra.original_filename or extra.filename }}
-        <a href="{{ url_for('view_document', doctype='extra', filename=extra.filename) }}" target="_blank">View</a>
-        <a href="{{ url_for('download_document', doctype='extra', filename=extra.filename) }}">Download</a>
-      </span>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- v13: partial-document scenario panel -->
-  {% if (need_delivery_mode or need_ewb_exemption) and can_edit_extracted %}
+  <!-- v13: partial-document scenario panel.
+       FIX (2026-08-14): only render a block here while the value is still
+       UNRESOLVED (the actual picker). Once history.goods_delivery_mode /
+       ewb_exemption_reasons is set, that info is already shown as its own
+       box in the top .xd-banners-row (_show_gdm/_show_ewb above) -- showing
+       a second "— locked" copy of the same fact here was pure duplication. -->
+  {% set _need_gdm_picker = need_delivery_mode and not history.goods_delivery_mode %}
+  {% set _need_ewb_picker = need_ewb_exemption and not history.ewb_exemption_reasons %}
+  {% if (_need_gdm_picker or _need_ewb_picker) and can_edit_extracted %}
   <div class="scenario-panel" id="scenarioPanel">
 
-    {% if need_delivery_mode %}
+    {% if _need_gdm_picker %}
     <div class="scenario-block">
-      {% if history.goods_delivery_mode %}
-      <div class="scenario-locked">✓ <strong>Goods Delivery Mode:</strong> {{ {'utility_van':'Utility Van','vendor_vehicle':"Vendor Own Vehicle",'hand_delivery':'Hand Delivery','courier':'Courier'}.get(history.goods_delivery_mode, history.goods_delivery_mode) }} — locked</div>
-      {% else %}
       <div class="scenario-title">🚚 Goods Delivery Mode Required</div>
       <div class="scenario-subtitle">No LR (Lorry Receipt) was received for this record. Select how the goods actually arrived — this cannot be changed once saved.</div>
       <div class="scenario-options" id="deliveryModeOptions">
@@ -450,20 +422,11 @@
       </div>
       <button type="button" class="scenario-save-btn" id="deliveryModeSaveBtn" onclick="saveDeliveryMode()" disabled>💾 Save Delivery Mode</button>
       <span class="scenario-status" id="deliveryModeStatus"></span>
-      {% endif %}
     </div>
     {% endif %}
 
-    {% if need_ewb_exemption %}
+    {% if _need_ewb_picker %}
     <div class="scenario-block">
-      {% if history.ewb_exemption_reasons %}
-      {% set _labels = {'value_exemption':'Value Exemption','distance_exemption':'Distance Exemption','other_exemption':'Other Exemptions'} %}
-      {% set _parts = [] %}
-      {% for _r in history.ewb_exemption_reasons.split(',') %}
-        {% set _ = _parts.append(_labels.get(_r.strip(), _r.strip())) %}
-      {% endfor %}
-      <div class="scenario-locked">✓ <strong>E-Way Bill Exemption:</strong> {{ _parts|join(', ') }} — locked</div>
-      {% else %}
       <div class="scenario-title">📋 E-Way Bill Exemption Reason Required</div>
       <div class="scenario-subtitle">No E-Way Bill was received for this record. Select why — one or more may apply. This cannot be changed once saved.</div>
       <div class="scenario-options" id="ewbExemptionOptions">
@@ -473,7 +436,6 @@
       </div>
       <button type="button" class="scenario-save-btn" id="ewbExemptionSaveBtn" onclick="saveEwbExemption()" disabled>💾 Save Exemption Reason(s)</button>
       <span class="scenario-status" id="ewbExemptionStatus"></span>
-      {% endif %}
     </div>
     {% endif %}
 
@@ -1447,30 +1409,35 @@ async function _doSaveDeliveryMode(mode) {
   }
 }
 
-// Swaps #deliveryModeOptions' whole .scenario-block for the same
-// ".scenario-locked" markup the server renders once goods_delivery_mode
-// is set, and adds the matching box to the top xd-banners-row -- keeps
-// the page visually in sync with a fresh page load without actually
-// reloading it.
+// FIX (2026-08-14): used to swap #deliveryModeOptions' whole .scenario-block
+// for a "— locked" copy of the same text -- but that duplicated the box
+// _addTopBannerBox already adds up top. Now it just removes the picker
+// block entirely (and the whole panel if that was the only block left),
+// same as a fresh page load would (server no longer renders it once
+// history.goods_delivery_mode is set -- see the Jinja above).
 function _applyDeliveryModeLocked(label) {
-  var optionsEl = document.getElementById('deliveryModeOptions');
-  var block = optionsEl ? optionsEl.closest('.scenario-block') : null;
-  if (block) {
-    block.innerHTML = '<div class="scenario-locked">✓ <strong>Goods Delivery Mode:</strong> ' + label + ' — locked</div>';
-  }
+  _removeScenarioBlock('deliveryModeOptions');
   _addTopBannerBox('✓ Goods Delivery Mode: ' + label);
 }
 
 // Same purpose as _addTopBannerBox's caller above, for the E-Way Bill
 // Exemption picker.
 function _applyEwbExemptionLocked(labels) {
-  var optionsEl = document.getElementById('ewbExemptionOptions');
+  _removeScenarioBlock('ewbExemptionOptions');
+  _addTopBannerBox('✓ E-Way Bill Exemption: ' + labels.join(', '));
+}
+
+// Removes the .scenario-block containing optionsElId, then removes the
+// whole #scenarioPanel too if that was the last block inside it.
+function _removeScenarioBlock(optionsElId) {
+  var optionsEl = document.getElementById(optionsElId);
   var block = optionsEl ? optionsEl.closest('.scenario-block') : null;
-  var joined = labels.join(', ');
-  if (block) {
-    block.innerHTML = '<div class="scenario-locked">✓ <strong>E-Way Bill Exemption:</strong> ' + joined + ' — locked</div>';
+  if (!block) return;
+  var panel = block.closest('#scenarioPanel');
+  block.remove();
+  if (panel && !panel.querySelector('.scenario-block')) {
+    panel.remove();
   }
-  _addTopBannerBox('✓ E-Way Bill Exemption: ' + joined);
 }
 
 // Appends a new box to the top status-banners row (Approved-by / Category
