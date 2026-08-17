@@ -292,6 +292,18 @@ class Config:
     GST_SCREENSHOTS_ROOT: str   = os.path.join(APP_ROOT, "gst_screenshots")
     GST_EDGE_PROFILE_ROOT: str  = os.path.join(APP_ROOT, "gst_edge_profile")
 
+    # --- ZGRN print bot (robot_scripts/zgrn.robot) ---
+    # ADDED (2026-08-14): where zgrn.robot's "Microsoft Print to PDF" saves
+    # the GRN/CGD PDFs it produces, before services/rf_queue_worker.py
+    # copies them into UPLOAD_FOLDER for the app to serve. Was hardcoded in
+    # the uploaded script to a specific individual's own Downloads folder
+    # (C:\Users\ctn_ravi\Downloads\migo_print) -- not appropriate for a
+    # shared bot machine, so this follows the same APP_ROOT-derived,
+    # environment-aware pattern as GST_SCREENSHOTS_ROOT/GST_EDGE_PROFILE_ROOT
+    # above instead. Passed to the robot via --variable OUTPUT_FOLDER:...
+    # (see execute_zgrn_print_sap()), overriding the script's own default.
+    ZGRN_PRINT_FOLDER: str = os.path.join(APP_ROOT, "zgrn_print")
+
     # --- Document keyword detection ---
     # Filenames arrive as INVOICENO_<KEYWORD>.pdf (any case) -- e.g.
     # 4500012345_INV.pdf / 4500012345_EWB.pdf / 4500012345_LR.pdf.
@@ -349,6 +361,7 @@ for _dir in (
     os.path.join(config.GST_SCREENSHOTS_ROOT, "taxpayer"),
     os.path.join(config.GST_EDGE_PROFILE_ROOT, "einvoice"),
     os.path.join(config.GST_EDGE_PROFILE_ROOT, "taxpayer"),
+    config.ZGRN_PRINT_FOLDER,
     os.path.join(config.APP_ROOT, "logs"),
 ):
     try:

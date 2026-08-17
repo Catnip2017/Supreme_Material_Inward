@@ -338,34 +338,45 @@ function cancelDelete(btn) {
 function retryDmsUpload(historyId) {
   const btn = document.getElementById('dmsRetryBtn');
   const statusEl = document.getElementById('dmsRetryStatus');
+  if (btn) btn.disabled = true;
   if (statusEl) {
     statusEl.style.display = 'block';
     statusEl.style.color = '#555';
-    statusEl.textContent = 'Queuing DMS upload retry...';
+    statusEl.textContent = 'Starting DMS upload retry...';
   }
-  // Reuses the shared submitAndPoll()/pollRFJob() from rf_poller.js --
-  // same pattern Gate In/MIGO 103/MIGO 105/MIRO submit buttons use.
-  submitAndPoll(`/api/dms_upload/retry/${historyId}`, {}, btn, {
-    onSuccess: () => {
-      if (statusEl) {
-        statusEl.style.color = '#00b894';
-        statusEl.textContent = '✓ DMS upload retried successfully. Reloading...';
+  // CHANGED (2026-08-14): dms_upload no longer runs through rf_queue (see
+  // app.py's api_dms_upload_retry() and dms_upload_runner.py's
+  // trigger_dms_upload_for()) -- it's a fire-and-forget background thread
+  // now, no job_id/poll_url, so this is a plain fetch like syncDmsLink()
+  // below rather than submitAndPoll()/pollRFJob(). There's no "done" event
+  // to wait for here; the reload after a short delay just gives the batch
+  // a head start before showing this record's (hopefully now updated)
+  // dms_status -- if it's still not uploaded, the button reappears and can
+  // be clicked again.
+  fetch(`/api/dms_upload/retry/${historyId}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        if (statusEl) {
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✓ ' + (data.message || 'DMS upload retry started.') + ' Reloading...';
+        }
+        setTimeout(() => window.location.reload(), 4000);
+      } else {
+        if (btn) btn.disabled = false;
+        if (statusEl) {
+          statusEl.style.color = '#e17055';
+          statusEl.textContent = '❌ ' + (data.error || 'Failed to start DMS upload retry.');
+        }
       }
-      setTimeout(() => window.location.reload(), 1500);
-    },
-    onFailure: (error) => {
+    })
+    .catch(err => {
+      if (btn) btn.disabled = false;
       if (statusEl) {
         statusEl.style.color = '#e17055';
-        statusEl.textContent = '❌ ' + error;
+        statusEl.textContent = '❌ Network error: ' + err.message;
       }
-    },
-    onError: (error) => {
-      if (statusEl) {
-        statusEl.style.color = '#e17055';
-        statusEl.textContent = '❌ ' + error;
-      }
-    }
-  });
+    });
 }
 
 // Companion to retryDmsUpload() above, for the "already uploaded, link just

@@ -66,6 +66,7 @@ from database.miro_operations import (
 )
 from database.po_operations import get_po_line_items
 from database.rf_queue_operations import enqueue_rf_job, get_job_status
+from services.dms_upload_runner import trigger_dms_upload_for
 from database.user_operations import (
     verify_user, get_all_users, add_user, update_user, delete_user
 )
@@ -316,15 +317,29 @@ def _enqueue_sap_job(history_id, step: str, payload: dict):
     username  = session.get("username")
     auth_type = session.get("auth_type", "local")
 
-    # v20: Gate In (and update_gatein_po — the zgatein_update PO-backfill
-    # flow, same underlying GIN entry as Gate In, just triggered later) are
-    # always posted by the shared spl_rpa/.env account, regardless of the
-    # submitting user's own account auth_type — client decision. Only
-    # MIGO 103 / MIGO 105 / MIRO still route through an LDAP user's own
-    # cached SAP credential. This mirrors the same carve-out po_fetch
-    # already had (see its own call site further down) — it just never
-    # went through this shared wrapper in the first place.
-    FORCE_LOCAL_STEPS = {"gate_in", "update_gatein_po"}
+    # FIX (2026-08-14): "gate_in" REMOVED from this set -- client decision
+    # reversed, Gate In now uses each submitter's own per-user SAP login
+    # again, matching MIGO 103/105/MIRO. See rf_runner.py's
+    # execute_gate_in_sap() for the matching extra_env= change that was
+    # needed alongside this one (both had to change together, or this
+    # alone would've been a no-op).
+    #
+    # update_gatein_po (the zgatein_update PO-backfill flow, same
+    # underlying GIN entry as Gate In, just triggered later) STAYS forced
+    # to the shared spl_rpa/.env account -- unchanged, client decision.
+    # It can also run fully unattended via the v21 auto-trigger (MIGO 103
+    # capturing a PO for a without_po record), with no live user session
+    # to pull a credential from at all, so per-user routing doesn't apply
+    # to it the same way. This only actually affects the MANUAL "Retry"/
+    # "Update PO" click path (/api/pending_po_updates/<id>/run) -- the
+    # auto-trigger enqueues directly via enqueue_rf_job() and never goes
+    # through this wrapper regardless of what's in this set.
+    #
+    # zgrn_print ADDED (2026-08-14): new MIGO 103 "Print" button -- client
+    # decision, always spl_rpa (see execute_zgrn_print_sap()'s own
+    # docstring; the robot itself has no per-user override wiring active
+    # either, that branch is a dead no-op left in for pattern consistency).
+    FORCE_LOCAL_STEPS = {"update_gatein_po", "zgrn_print"}
     if step in FORCE_LOCAL_STEPS:
         auth_type = "local"
 
@@ -2061,6 +2076,59 @@ def run_migo_103():
         return jsonify({"success": False, "error": "MIGO 103 already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
+
+@app.route("/api/zgrn_print/<int:history_id>", methods=["POST"])
+@api_login_required
+def run_zgrn_print(history_id):
+    """
+    ADDED (2026-08-14): MIGO 103 tab's "Print" button -- runs zgrn.robot
+    (always spl_rpa, see FORCE_LOCAL_STEPS above) to print the posted
+    MIGO document's GR Certificate (+ Certificate of Goods Delivery) to
+    PDF, then attaches the result(s) via history_extras so the frontend
+    can offer a "View" link. Gated on the same "migo_103" role as the
+    Post button itself -- this is an action against an already-posted
+    MIGO 103 record, not a separate step in the sequential flow, so it
+    deliberately does NOT go through _check_step_allowed() the way
+    migo_103/migo_105/miro do.
+    """
+    blocked = _require_role_edit("migo_103")
+    if blocked:
+        return blocked
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+
+    # Same "UI override, then migo_entries, then history" precedence as
+    # run_migo_105() above -- whatever mat doc MIGO 103 actually posted.
+    migo_entry = get_migo_entry(history_id)
+    mat_doc = (
+        (migo_entry or {}).get("material_doc_number", "").strip()
+        or (history.get("material_doc_number") or "").strip()
+        or ""
+    )
+    if not mat_doc:
+        return jsonify({
+            "success": False,
+            "error": "Material Doc Number missing — ensure MIGO 103 has been posted before printing."
+        }), 400
+
+    payload = {
+        "material_doc_number": mat_doc,
+        "history_id": history_id,
+        "print_twice": bool(data.get("print_twice", True)),
+    }
+
+    job_id, err = _enqueue_sap_job(history_id, "zgrn_print", payload)
+    if err:
+        return err
+    if not job_id:
+        return jsonify({"success": False, "error": "ZGRN print already processing."}), 409
+    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+
+
 @app.route("/api/run_migo_105", methods=["POST"])
 @api_login_required
 def run_migo_105():
@@ -2733,15 +2801,18 @@ def api_dms_upload_retry(history_id):
     """
     Manual retry for a record whose consolidated PDF didn't make it to DMS
     on its own (dms_status stuck at 'staged'/'pending', or the earlier
-    automatic dms_upload RF job simply failed/timed out). Enqueues the
-    exact same "dms_upload" RF-queue step _enqueue_dms_upload() uses
-    automatically after Gate In (for without_po flows) or PO Fetch (for
-    with_po flows, itself chained off Gate In) -- run_dms_upload() (see
-    _process_dms_upload in rf_queue_worker.py) always processes the WHOLE
-    staging folder and skips files already uploaded, so re-running it here
-    is safe and can't double-upload or disturb any other pending record.
-    enqueue_rf_job() itself blocks duplicate submission if a dms_upload
-    job for this history_id is already pending/running.
+    automatic dms_upload trigger simply failed/timed out).
+
+    CHANGED (2026-08-14): dms_upload no longer goes through rf_queue (see
+    rf_queue_worker.py's _enqueue_dms_upload() and dms_upload_runner.py's
+    trigger_dms_upload_for()), so this no longer returns a job_id/poll_url
+    -- same pattern as /api/gst/rerun/<id> (also a fire-and-forget
+    background-thread trigger, no queue, no poll). run_dms_upload() always
+    processes the WHOLE staging folder and skips files already uploaded,
+    so re-running it here is safe and can't double-upload or disturb any
+    other pending record; trigger_dms_upload_for()'s own non-blocking
+    _batch_lock silently no-ops a second trigger while one is already
+    running rather than erroring the user.
 
     FIX: this used to gate on history.migo_103, a stale carryover from
     before v18 moved the DMS staging+upload trigger to right after Gate In
@@ -2762,10 +2833,8 @@ def api_dms_upload_retry(history_id):
     if history.get("dms_status") == "uploaded":
         return jsonify({"success": False, "error": "This record's document is already uploaded to DMS."}), 400
 
-    job_id = enqueue_rf_job(history_id, "dms_upload", {"history_id": history_id})
-    if not job_id:
-        return jsonify({"success": False, "error": "A DMS upload is already queued or running for this record."}), 409
-    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+    trigger_dms_upload_for(history_id)
+    return jsonify({"success": True, "message": "DMS upload retry started — check back shortly."})
 
 
 @app.route("/api/dms/sync_link/<int:history_id>", methods=["POST"])

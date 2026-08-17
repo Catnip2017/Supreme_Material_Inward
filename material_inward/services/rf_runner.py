@@ -426,16 +426,29 @@ def execute_gate_in_sap(data: dict) -> dict:
         "GATE_IN_TIME":   _s(data.get("gateInTime", "")),
     }
  
-    # FIX: Gate In is now forced onto the shared spl_rpa .env SAP login
-    # for every submitter, regardless of LDAP identity -- explicit client
-    # decision. Same pattern as execute_po_fetch_sap's existing exception
-    # to the v16 per-user credential mechanism (see credential_cache.py):
-    # deliberately no extra_env override passed here, so _run_rf_script's
-    # subprocess always falls through to .env's SAP_USERNAME/SAP_PASSWORD.
-    # MIGO 103/105 and MIRO are UNCHANGED -- they still use each LDAP
-    # user's own SAP login as before; this exception is Gate In only.
+    # FIX (2026-08-14): REVERTED the spl_rpa force from below -- client now
+    # wants Gate In back on each submitter's own per-user SAP login, same
+    # as MIGO 103/105/MIRO. gate_in.robot itself never needed any change --
+    # it's had the SAP_USER_OVERRIDE/SAP_PASS_OVERRIDE env-var check
+    # (falling back to shared .env when neither is set) since v16, it just
+    # never actually received one, because (a) app.py's _enqueue_sap_job()
+    # forced auth_type to "local" for the "gate_in" step specifically, and
+    # (b) this call never passed extra_env even if a credential had been
+    # attached. Both fixed together -- see _enqueue_sap_job's
+    # FORCE_LOCAL_STEPS (now just {"update_gatein_po"}) and the
+    # extra_env= added below.
+    #
+    # update_gatein_po (zgatein_update) is UNCHANGED -- still always
+    # spl_rpa, client decision, since it can also run unattended via the
+    # v21 auto-trigger with no live user credential available at all.
+    #
+    # Old FIX this replaces, kept for context: "Gate In is now forced onto
+    # the shared spl_rpa .env SAP login for every submitter, regardless of
+    # LDAP identity -- explicit client decision." That decision changed;
+    # this comment is the record of why.
     result = _run_rf_script(
-        "gate_in.robot", variables, timeout_seconds=180
+        "gate_in.robot", variables, timeout_seconds=180,
+        extra_env=_sap_credential_env(data)
     )
     if not result["success"]:
         return {"success": False, "error": result["error"], "gate_in_number": None}
@@ -1005,13 +1018,23 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
 # ============================================================
  
 def execute_migo103_link_sap(data: dict) -> dict:
+    # FIX (2026-08-14): removed extra_env=_sap_credential_env(data) here --
+    # client decision, migo103_link should always use the shared spl_rpa
+    # account. Note this line was already effectively a no-op before this
+    # change too: this job is only ever enqueued via _enqueue_link_attach()
+    # (rf_queue_worker.py), which calls enqueue_rf_job() directly from a
+    # background-worker context, never through app.py's _enqueue_sap_job()
+    # -- so `data` here never actually contained _sap_username/
+    # _sap_password in practice, and _sap_credential_env(data) always
+    # returned {}. Removing it makes the always-spl_rpa behavior explicit
+    # and intentional instead of an accident of how this job happens to
+    # get enqueued today.
     variables = {
         "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
         "DOCUMENT_LINK":       data.get("document_link", ""),
     }
     result = _run_rf_script(
-        "migo103_link.robot", variables, timeout_seconds=180,
-        extra_env=_sap_credential_env(data)
+        "migo103_link.robot", variables, timeout_seconds=180
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -1029,13 +1052,16 @@ def execute_migo103_link_sap(data: dict) -> dict:
  
  
 def execute_migo105_link_sap(data: dict) -> dict:
+    # FIX (2026-08-14): same as execute_migo103_link_sap above -- removed
+    # extra_env=_sap_credential_env(data), client decision to keep this on
+    # spl_rpa explicitly (was already a no-op in practice; see that
+    # function's comment for why).
     variables = {
         "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
         "DOCUMENT_LINK":       data.get("document_link", ""),
     }
     result = _run_rf_script(
-        "migo105_link.robot", variables, timeout_seconds=180,
-        extra_env=_sap_credential_env(data)
+        "migo105_link.robot", variables, timeout_seconds=180
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -1076,6 +1102,101 @@ def execute_miro_link_sap(data: dict) -> dict:
     }
  
  
+# ============================================================
+# ZGRN PRINT — GR Certificate printing to PDF (ADDED 2026-08-14)
+#
+# Frontend: a "Print" button next to MIGO 103's Post button (only
+# meaningful once MIGO 103 has actually posted -- needs a real material
+# document number). Always spl_rpa -- client decision, never per-user
+# (mirrors po_fetch/po_list_fetch's existing exception, not the MIGO
+# 103/105/MIRO per-user pattern).
+#
+# zgrn.robot has no SAP status-bar/error text to key off -- its actual
+# "result" is a PDF file landing on disk via a native Windows Print-to-PDF
+# save dialog, not a screen message. So unlike every other execute_*_sap
+# function here, success is NOT decided by a RESULT: marker alone --
+# that only confirms the script reached its last keyword without an
+# unhandled exception. The real check is whether the expected file(s)
+# actually exist in ZGRN_PRINT_FOLDER afterward, computed with the exact
+# same <MIGO_NUMBER>_<DDMMYYYY>_<GRN|CGD>.pdf naming the robot itself
+# uses -- a hung/misdirected print dialog could let the robot "finish"
+# without ever producing a file, and only checking the marker would miss
+# that entirely.
+# ============================================================
+
+def execute_zgrn_print_sap(data: dict) -> dict:
+    """
+    Run zgrn.robot to print a posted MIGO 103 document's GR Certificate
+    (and Certificate of Goods Delivery, if print_twice) to PDF.
+
+    data: {"material_doc_number": str, "history_id": int,
+           "print_twice": bool (default True)}
+
+    Returns {"success": bool, "error": str|None, "files": {"grn": path|None,
+    "cgd": path|None}} -- rf_queue_worker.py's _process_zgrn_print() reads
+    `files` to know what to copy into UPLOAD_FOLDER and attach.
+    """
+    mat_doc = str(data.get("material_doc_number", "") or "").strip()
+    history_id = data.get("history_id", "")
+    if not mat_doc:
+        return {
+            "success": False,
+            "error": f"Missing material_doc_number — cannot run zgrn print for history_id={history_id}",
+            "files": {"grn": None, "cgd": None},
+        }
+
+    print_twice = bool(data.get("print_twice", True))
+    variables = {
+        "MIGO_NUMBER":    mat_doc,
+        "OUTPUT_FOLDER":  config.ZGRN_PRINT_FOLDER,
+        "PRINT_TWICE":    "TRUE" if print_twice else "FALSE",
+    }
+
+    # Deliberately no extra_env= -- always spl_rpa, see module comment above.
+    result = _run_rf_script("zgrn.robot", variables, timeout_seconds=180)
+
+    status_val = _extract_marked_value(result.get("output") or "", "ZGRN_PRINT_STATUS")
+    script_reached_end = bool(status_val and status_val.upper() == "DONE")
+
+    today = datetime.now().strftime("%d%m%Y")
+    grn_path = os.path.join(config.ZGRN_PRINT_FOLDER, f"{mat_doc}_{today}_GRN.pdf")
+    cgd_path = os.path.join(config.ZGRN_PRINT_FOLDER, f"{mat_doc}_{today}_CGD.pdf")
+
+    grn_exists = os.path.isfile(grn_path)
+    cgd_exists = os.path.isfile(cgd_path) if print_twice else True  # not expected if print_twice is False
+
+    files = {
+        "grn": grn_path if grn_exists else None,
+        "cgd": (cgd_path if cgd_exists and print_twice else None),
+    }
+
+    if grn_exists and (not print_twice or cgd_exists):
+        return {"success": True, "error": None, "files": files}
+
+    if not script_reached_end and not result["success"]:
+        return {
+            "success": False,
+            "error": (
+                "ZGRN print did not complete — the SAP automation didn't "
+                "finish in time or hit an error. Check SAP manually "
+                "(TCODE: zgrn) before retrying."
+            ),
+            "files": files,
+        }
+
+    missing = "GRN" if not grn_exists else "CGD"
+    return {
+        "success": False,
+        "error": (
+            f"ZGRN print ran but the expected {missing} PDF was not found "
+            f"in {config.ZGRN_PRINT_FOLDER} afterward -- the print/save "
+            "dialog may not have completed as expected. Check SAP manually "
+            "(TCODE: zgrn) before retrying."
+        ),
+        "files": files,
+    }
+
+
 # ============================================================
 # DMS UPLOAD (Contentverse) — v18
 #

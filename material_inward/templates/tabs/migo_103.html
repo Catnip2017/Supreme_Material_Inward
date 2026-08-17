@@ -620,7 +620,17 @@
         {% if history and history.migo_103 %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
     </button>
+    {# ADDED (2026-08-14): zgrn.robot "Print" -- GR Certificate / Certificate
+       of Goods Delivery, only meaningful once MIGO 103 has actually posted
+       (needs a material_doc_number to run zgrn against). #}
+    <button type="button" id="zgrnPrintBtn" class="btn btn-secondary" onclick="submitZgrnPrint()"
+        {% if not (history and history.migo_103) %}disabled title="Complete MIGO 103 posting first"{% endif %}>
+        🖨️ Print
+    </button>
   </div>
+
+  <div id="zgrnPrintStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+  <div id="zgrnPrintLinks" style="display:none;margin:0 0 16px;"></div>
 
   {% if history_id %}
   {% set remarks_panel_id = 'migo103' %}
@@ -1599,6 +1609,47 @@ function _doSubmitMigo103(historyId) {
       // manual reload.
       sessionStorage.setItem('mi_reload_tab', 'migo103');
       setTimeout(() => window.location.reload(), 1800);
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+// ── ZGRN Print (GR Certificate / Certificate of Goods Delivery) ───────────
+// ADDED (2026-08-14): runs zgrn.robot (always spl_rpa) against the posted
+// MIGO 103 document, then shows View link(s) for whatever PDF(s) it
+// produced. Reuses submitAndPoll/pollRFJob exactly like Post MIGO 103 does
+// above -- same job-queue/poll mechanics, just a different route and a
+// different success rendering (links instead of a document number).
+function submitZgrnPrint() {
+  const historyId = parseInt(document.getElementById('history_id_migo').value);
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+
+  const btn       = document.getElementById('zgrnPrintBtn');
+  const statusEl  = document.getElementById('zgrnPrintStatus');
+  const linksEl   = document.getElementById('zgrnPrintLinks');
+
+  linksEl.style.display = 'none';
+  linksEl.innerHTML     = '';
+
+  submitAndPoll(`/api/zgrn_print/${historyId}`, { print_twice: true }, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '✓ Print complete — document(s) ready below.';
+
+      const files = (result && result.files) || [];
+      if (files.length) {
+        linksEl.innerHTML = files.map(f =>
+          `<a href="${f.view_url}" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-right:8px;text-decoration:none;">👁️ View ${f.label}</a>`
+        ).join('');
+        linksEl.style.display = 'block';
+      }
     },
     onFailure: (error) => {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
