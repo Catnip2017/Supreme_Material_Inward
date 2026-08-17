@@ -63,6 +63,7 @@ import time
 import shutil
 import subprocess
 import logging
+import threading
 from datetime import datetime
 from dotenv import dotenv_values
 
@@ -73,7 +74,9 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from config.config import config
-from database.db_operations import get_staged_dms_records, set_dms_status
+from database.db_operations import (
+    get_staged_dms_records, set_dms_status, get_history_details_by_id
+)
 from database.connection import init_pool
 from services.robot_lock import acquire_robot_lock, release_robot_lock, is_robot_locked
 from services.dms_links_import import run_dms_links_import
@@ -282,6 +285,84 @@ def run_dms_upload() -> None:
         run_dms_links_import()
     except Exception as e:
         logger.error(f"DMS links import failed after upload: {e}", exc_info=True)
+
+
+# ============================================================
+# ASYNC TRIGGER (ADDED 2026-08-14) — replaces rf_queue-chained "dms_upload"
+# step. See rf_queue_worker.py's _enqueue_dms_upload(), which now calls
+# trigger_dms_upload_for() below directly instead of enqueue_rf_job().
+#
+# Why this is safe to pull out of the RF queue's single worker thread:
+# dms_upload.robot is SeleniumLibrary (browser) automation against the
+# Contentverse website, not SAP GUI scripting — it does not need to wait
+# behind SAP jobs for the bulk of its run. The one exception is the native
+# Windows "Choose File" dialog (file_dialog.py) that a browser's own
+# upload button triggers — that's a real OS-level dialog outside the page
+# DOM, unreachable by Selenium, so it still needs real desktop/keyboard
+# focus for the few seconds it's open. _wait_for_desktop_free() below
+# already exists to handle exactly that handoff (it predates this change —
+# written for back when this ran as an independent Task Scheduler process,
+# before v18 temporarily folded it into the RF queue) and is unaffected by
+# this change: run_dms_upload() still calls it before touching anything.
+#
+# What IS new here: run_dms_upload() processes the WHOLE staging folder in
+# one batch (not scoped to one history_id), so two concurrent triggers
+# (e.g. two records finishing Gate In back to back) must not both run the
+# batch at the same time — both would list/move the same folder. Unlike
+# gst_runner.py's per-history_id threads (safe to run in parallel, each
+# owns its own browser session and GSTIN), DMS needs a single in-process
+# gate. _batch_lock (non-blocking) provides that: a skipped trigger is not
+# a lost upload — the file(s) stay in DMS_STAGING_FOLDER and get picked up
+# by the run that's currently in progress, the next trigger, or
+# dms_scheduler.py's own defensive periodic sweep.
+# ============================================================
+
+_batch_lock = threading.Lock()
+
+
+def trigger_dms_upload_for(history_id: int) -> None:
+    """
+    Fire-and-forget: starts run_dms_upload() on its own background thread
+    (daemon, same pattern as gst_runner.py's per-record threads) and
+    returns immediately. Does not go through rf_queue — no job_id, no
+    polling; the outcome is only in the logs and in this record's own
+    dms_status, same as it always was for the Task-Scheduler-driven path.
+    """
+    def _run():
+        if not _batch_lock.acquire(blocking=False):
+            logger.info(
+                f"[DMS Upload] Batch already running — history_id={history_id}'s "
+                "staged file will be picked up by that run (or the next trigger)."
+            )
+            return
+        try:
+            run_dms_upload()
+        except Exception as e:
+            logger.error(
+                f"[DMS Upload] Batch run crashed (triggered by history_id={history_id}): {e}",
+                exc_info=True
+            )
+        finally:
+            _batch_lock.release()
+
+        # Report this specific record's outcome — matches what
+        # rf_queue_worker.py's old _process_dms_upload() used to log.
+        try:
+            details = get_history_details_by_id(history_id) or {}
+            dms_status = (details.get("history") or {}).get("dms_status")
+            if dms_status == "uploaded":
+                logger.info(f"[DMS Upload] Complete — history_id={history_id}")
+            else:
+                logger.warning(
+                    f"[DMS Upload] Batch ran but history_id={history_id} is still "
+                    f"dms_status={dms_status!r} afterward."
+                )
+        except Exception as e:
+            logger.error(
+                f"[DMS Upload] Post-batch status check failed for history_id={history_id}: {e}"
+            )
+
+    threading.Thread(target=_run, daemon=True, name=f"DMSUpload-{history_id}").start()
 
 
 if __name__ == "__main__":

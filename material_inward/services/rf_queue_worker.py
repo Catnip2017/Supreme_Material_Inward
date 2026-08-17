@@ -7,10 +7,14 @@ v4 changes:
 - Approval notification fires on Gate In completion (in addition to existing emails).
 """
 
+import os
+import shutil
 import threading
 import time
 from datetime import datetime
+from config.config import config
 from database.po_operations import save_po_line_items
+from database.scenario_operations import add_history_extra, delete_history_extras_by_doctype
 
 from database.rf_queue_operations import (
     claim_next_pending_job,
@@ -27,7 +31,7 @@ from database.db_operations import (
     get_dms_document_link,
 )
 from services.doc_consolidator import consolidate_documents, write_staging_sidecar
-from services.dms_upload_runner import run_dms_upload
+from services.dms_upload_runner import trigger_dms_upload_for
 from database.gatein_operations import update_gatein_rf_result, get_gatein_entry
 from database.pending_po_operations import upsert_pending_po_update, mark_pending_po_resolved
 from database.notifications_operations import create_notification
@@ -51,6 +55,7 @@ from services.rf_runner import (
     execute_migo103_link_sap,
     execute_migo105_link_sap,
     execute_miro_link_sap,
+    execute_zgrn_print_sap,
 )
 from services.mail_service import (
     send_gate_in_notification,
@@ -277,21 +282,21 @@ def _process_po_fetch(history_id: int, payload: dict) -> dict:
 
 def _enqueue_dms_upload(history_id: int) -> None:
     """
-    v18: chains Contentverse upload directly onto the same rf_queue right
-    after po_fetch (or after gate_in for without_po flows), instead of
-    waiting for dms_upload_runner.py's own independent Windows Task
-    Scheduler timer. Best-effort — enqueue_rf_job already de-dupes
-    (pending/running for this history_id+step is blocked), and a failure
-    here must never affect the step that just genuinely succeeded.
+    CHANGED (2026-08-14): no longer chains onto rf_queue. Client decision —
+    Contentverse upload is Selenium/browser automation (dms_upload.robot),
+    not SAP GUI scripting, so it doesn't need to sit behind SAP jobs in the
+    single-worker rf_queue the way it did under the v18 design (see
+    dms_upload_runner.py's trigger_dms_upload_for() docstring for the full
+    reasoning, including why it's still safe re: the shared desktop lock).
+    Runs on its own background thread instead, same pattern as
+    gst_runner.py's per-record threads. Best-effort, same as before — a
+    failure here must never affect the step that just genuinely succeeded.
     """
     try:
-        job_id = enqueue_rf_job(history_id, "dms_upload", {"history_id": history_id})
-        if job_id:
-            logger.info(f"DMS upload enqueued — history_id={history_id} job_id={job_id}")
-        else:
-            logger.info(f"DMS upload already queued for history_id={history_id}")
+        trigger_dms_upload_for(history_id)
+        logger.info(f"DMS upload triggered (async) — history_id={history_id}")
     except Exception as e:
-        logger.error(f"Failed to enqueue dms_upload for history_id={history_id}: {e}", exc_info=True)
+        logger.error(f"Failed to trigger dms_upload for history_id={history_id}: {e}", exc_info=True)
 
 def _process_po_list_fetch(history_id: int, payload: dict) -> dict:
     result = execute_po_list_fetch_sap(payload)
@@ -758,45 +763,90 @@ def _process_miro_link(history_id: int, payload: dict) -> dict:
     return result
 
 
-def _process_dms_upload(history_id: int, payload: dict) -> dict:
+def _process_zgrn_print(history_id: int, payload: dict) -> dict:
     """
-    v18: Contentverse upload, chained into the same rf_queue right after
-    po_fetch/gate_in instead of a standalone Task Scheduler timer -- see
-    _enqueue_dms_upload. Reuses run_dms_upload() as-is (staged-only
-    quarantine, robot_lock, chained dms_links_import) rather than
-    duplicating that logic here.
+    ADDED (2026-08-14): MIGO 103 tab's "Print" button -- runs zgrn.robot
+    (always spl_rpa, see execute_zgrn_print_sap's own docstring) to print
+    the posted MIGO document's GR Certificate (+ Certificate of Goods
+    Delivery, if print_twice) to PDF, then copies whatever files it
+    produced from config.ZGRN_PRINT_FOLDER (the bot machine's local print
+    output) into UPLOAD_FOLDER so the app can serve them for viewing --
+    same copy-then-attach pattern folder_watcher.py/_run_ocr_and_save
+    already use for every other document type.
 
-    run_dms_upload() processes the WHOLE staging folder in one batch, not
-    just this one history_id -- normally that's just this record (nothing
-    else should be sitting in 'staged' at this point since the previous
-    record's own dms_upload job already cleared it), but it may also catch
-    up any stragglers left over from a prior failed run. This job's own
-    success/failure is still reported against the ONE history_id it was
-    queued for, by checking that record's dms_status specifically after
-    the batch completes -- a batch that uploads everyone else fine but
-    somehow leaves this one record's PDF behind must not be reported as
-    this job succeeding.
+    Attached via history_extras (doc_type='zgrn_grn' / 'zgrn_cgd') rather
+    than a new table -- same "at most one per record" reasoning as
+    "others" (see _attach_others_document in app.py): a re-run of Print
+    should REPLACE the previous PDF(s) for this record, not pile up
+    duplicates, so any existing zgrn_grn/zgrn_cgd row (and its now-stale
+    file under UPLOAD_FOLDER) is removed first.
     """
-    try:
-        run_dms_upload()
-    except Exception as e:
-        logger.error(f"dms_upload batch run crashed for history_id={history_id}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+    result = execute_zgrn_print_sap(payload)
+    if not result.get("success"):
+        logger.warning(f"zgrn_print failed for history_id={history_id}: {result.get('error')}")
+        return result
 
-    details = get_history_details_by_id(history_id) or {}
-    dms_status = (details.get("history") or {}).get("dms_status")
-    if dms_status == "uploaded":
-        logger.info(f"dms_upload complete — history_id={history_id}")
-        return {"success": True, "error": None}
+    files = result.get("files") or {}
+    attached = []
+    # ADDED (2026-08-14): collect filename/view_url per attached doc so the
+    # frontend can build "View" links straight from this handler's return
+    # value -- complete_rf_job() persists whatever dict we return here into
+    # rf_queue.result, and /api/queue_status/<job_id> (get_job_status())
+    # returns that column as-is, so no extra lookup endpoint is needed.
+    attached_files = []
+    for doc_type, src_path in (("zgrn_grn", files.get("grn")), ("zgrn_cgd", files.get("cgd"))):
+        if not src_path or not os.path.isfile(src_path):
+            continue
+        try:
+            # Replace, never accumulate -- delete any prior file(s) of this
+            # doc_type for this record before attaching the new one.
+            old_filenames = delete_history_extras_by_doctype(history_id, doc_type)
+            for old_filename in old_filenames:
+                try:
+                    old_path = os.path.join(config.UPLOAD_FOLDER, old_filename)
+                    if os.path.isfile(old_path):
+                        os.remove(old_path)
+                except Exception as e:
+                    logger.warning(f"Could not remove superseded {doc_type} file {old_filename!r}: {e}")
 
-    logger.warning(
-        f"dms_upload batch ran but history_id={history_id} is still "
-        f"dms_status={dms_status!r} afterward — not marking this job successful."
-    )
-    return {
-        "success": False,
-        "error": f"DMS upload batch completed but this record's status is still {dms_status!r}."
-    }
+            original_filename = os.path.basename(src_path)
+            safe_name = f"h{history_id}_{original_filename}"
+            os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+            shutil.copy2(src_path, os.path.join(config.UPLOAD_FOLDER, safe_name))
+            add_history_extra(history_id, safe_name, original_filename, doc_type=doc_type)
+            attached.append(doc_type)
+            attached_files.append({
+                "doc_type": doc_type,
+                "label": "GR Certificate" if doc_type == "zgrn_grn" else "Certificate of Goods Delivery",
+                "filename": safe_name,
+                "original_filename": original_filename,
+                # /view_document/<doctype>/<filename> is a generic existing
+                # route (app.py) -- doctype in the URL isn't even used to
+                # filter, _find_file() matches by filename alone -- so this
+                # is reusable as-is, no new view route needed.
+                "view_url": f"/view_document/{doc_type}/{safe_name}",
+            })
+        except Exception as e:
+            logger.error(f"Failed to attach {doc_type} for history_id={history_id}: {e}", exc_info=True)
+
+    if not attached:
+        # execute_zgrn_print_sap() already verified the file(s) existed on
+        # the bot machine right after the robot ran -- getting here means
+        # something failed purely on the copy-into-the-app side (disk
+        # full, permissions, etc.), not that the print itself failed.
+        logger.error(f"zgrn_print for history_id={history_id}: robot succeeded but nothing could be attached.")
+        return {"success": False, "error": "ZGRN print succeeded in SAP but the PDF(s) could not be attached to this record. Check server logs."}
+
+    logger.info(f"zgrn_print complete — history_id={history_id} attached={attached}")
+    return {"success": True, "error": None, "files": attached_files}
+
+
+# _process_dms_upload REMOVED (2026-08-14): dms_upload no longer runs as an
+# rf_queue step at all -- see _enqueue_dms_upload() above, which now calls
+# dms_upload_runner.py's trigger_dms_upload_for() directly on its own
+# background thread instead of enqueue_rf_job(). Nothing polls a job_id for
+# this anymore; outcome is logs + this record's own dms_status, same as
+# when this ran under Task Scheduler pre-v18.
 
 
 STEP_HANDLERS = {
@@ -807,10 +857,10 @@ STEP_HANDLERS = {
     "migo_105":           _process_migo_105,
     "miro":               _process_miro,
     "update_gatein_po":   _process_update_gatein_po,
-    "dms_upload":         _process_dms_upload,
     "migo103_link":       _process_migo103_link,
     "migo105_link":       _process_migo105_link,
     "miro_link":          _process_miro_link,
+    "zgrn_print":         _process_zgrn_print,
 }
 
 

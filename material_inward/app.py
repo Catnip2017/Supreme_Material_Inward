@@ -47,6 +47,7 @@ from database.scenario_operations import (
     get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
     delivery_mode_remark_text, ewb_exemption_remark_text, append_remark,
     DELIVERY_MODE_LABELS, EWB_EXEMPTION_LABELS, add_history_extra,
+    set_category, CATEGORY_LABELS, CATEGORY_TO_GATEIN_CODE,
     delete_history_extras_by_doctype
 )
 from database.vehicle_master_operations import get_drivers_by_truck
@@ -65,6 +66,7 @@ from database.miro_operations import (
 )
 from database.po_operations import get_po_line_items
 from database.rf_queue_operations import enqueue_rf_job, get_job_status
+from services.dms_upload_runner import trigger_dms_upload_for
 from database.user_operations import (
     verify_user, get_all_users, add_user, update_user, delete_user
 )
@@ -315,15 +317,29 @@ def _enqueue_sap_job(history_id, step: str, payload: dict):
     username  = session.get("username")
     auth_type = session.get("auth_type", "local")
 
-    # v20: Gate In (and update_gatein_po — the zgatein_update PO-backfill
-    # flow, same underlying GIN entry as Gate In, just triggered later) are
-    # always posted by the shared spl_rpa/.env account, regardless of the
-    # submitting user's own account auth_type — client decision. Only
-    # MIGO 103 / MIGO 105 / MIRO still route through an LDAP user's own
-    # cached SAP credential. This mirrors the same carve-out po_fetch
-    # already had (see its own call site further down) — it just never
-    # went through this shared wrapper in the first place.
-    FORCE_LOCAL_STEPS = {"gate_in", "update_gatein_po"}
+    # FIX (2026-08-14): "gate_in" REMOVED from this set -- client decision
+    # reversed, Gate In now uses each submitter's own per-user SAP login
+    # again, matching MIGO 103/105/MIRO. See rf_runner.py's
+    # execute_gate_in_sap() for the matching extra_env= change that was
+    # needed alongside this one (both had to change together, or this
+    # alone would've been a no-op).
+    #
+    # update_gatein_po (the zgatein_update PO-backfill flow, same
+    # underlying GIN entry as Gate In, just triggered later) STAYS forced
+    # to the shared spl_rpa/.env account -- unchanged, client decision.
+    # It can also run fully unattended via the v21 auto-trigger (MIGO 103
+    # capturing a PO for a without_po record), with no live user session
+    # to pull a credential from at all, so per-user routing doesn't apply
+    # to it the same way. This only actually affects the MANUAL "Retry"/
+    # "Update PO" click path (/api/pending_po_updates/<id>/run) -- the
+    # auto-trigger enqueues directly via enqueue_rf_job() and never goes
+    # through this wrapper regardless of what's in this set.
+    #
+    # zgrn_print ADDED (2026-08-14): new MIGO 103 "Print" button -- client
+    # decision, always spl_rpa (see execute_zgrn_print_sap()'s own
+    # docstring; the robot itself has no per-user override wiring active
+    # either, that branch is a dead no-op left in for pattern consistency).
+    FORCE_LOCAL_STEPS = {"update_gatein_po", "zgrn_print"}
     if step in FORCE_LOCAL_STEPS:
         auth_type = "local"
 
@@ -895,6 +911,17 @@ def view_detail(history_id):
         # once a real, verified vendor is known from Gate In.
         resolved_vendor_name = gatein_data.get("vendor_name") or None
 
+        # v26: Gate In's Category dropdown pre-selects from Extracted
+        # Data's simpler 3-option Category (defaults to "stores" if the
+        # record predates this feature/history.category is somehow NULL)
+        # -- but ONLY as a default. If this Gate In already has its own
+        # saved category (a draft in progress, or an already-submitted
+        # one), that real value always wins -- see the template's
+        # fallback logic in templates/tabs/gate_in.html.
+        gatein_category_default = CATEGORY_TO_GATEIN_CODE.get(
+            (history.get("category") or "stores"), "A"
+        )
+
         # v13: files folder_watcher.py couldn't recognize as INV/EWB/LR --
         # shown under the "Extras" banner on Extracted Data (view/download
         # only, see /view_document & /download_document, doctype='extra').
@@ -964,19 +991,47 @@ def view_detail(history_id):
         # to mark the initial active nav button/pane so a downstream-only
         # role (e.g. Gate Security) doesn't land on a blank "Documents"
         # pane they can't view.
+        # FIX (2026-08-13): this used to check "documents" first -- but
+        # can_view_documents is unconditionally True for every logged-in
+        # user (v14), so it always won and the whole role-based landing
+        # tab was dead code; everyone landed on Documents regardless of
+        # role. Now: land on the first tab, in pipeline order, that this
+        # user's role(s) cover AND that isn't already done for this
+        # record yet -- e.g. a Compliance+Gate Security+Stores user whose
+        # Extracted Data review is already approved skips straight to
+        # Gate In, and once Gate In is posted, to MIGO 103. GST Approval
+        # is deliberately excluded from this "next pending step" chain --
+        # it's a standalone, on-demand tab now, not a pipeline gate (see
+        # the Extracted Data redesign notes). Falls through to a second
+        # pass (any tab they can at least view, same order, Documents
+        # last) for a user with nothing left pending in any role they
+        # hold -- e.g. every one of their steps is already done, or they
+        # hold no operational role at all.
         default_tab_id = None
-        for _tab_id, _visible in (
-            ("documents",   can_view_documents),
-            ("extracted",   can_view_extracted),
-            ("gstApproval", can_view_gst),
-            ("gateIn",      can_view_gate_in),
-            ("migo103",     can_view_migo_103),
-            ("migo105",     can_view_migo_105),
-            ("miro",        can_view_miro),
+        for _tab_id, _visible, _pending in (
+            ("extracted", can_view_extracted, (history.get("approval_status") or "pending") != "approved"),
+            ("gateIn",    can_view_gate_in,   not history.get("gate_in")),
+            ("migo103",   can_view_migo_103,  not history.get("migo_103")),
+            ("migo105",   can_view_migo_105,  not history.get("migo_105")),
+            ("miro",      can_view_miro,      not history.get("miro")),
         ):
-            if _visible:
+            if _visible and _pending:
                 default_tab_id = _tab_id
                 break
+
+        if not default_tab_id:
+            for _tab_id, _visible in (
+                ("extracted",   can_view_extracted),
+                ("gstApproval", can_view_gst),
+                ("gateIn",      can_view_gate_in),
+                ("migo103",     can_view_migo_103),
+                ("migo105",     can_view_migo_105),
+                ("miro",        can_view_miro),
+                ("documents",   can_view_documents),
+            ):
+                if _visible:
+                    default_tab_id = _tab_id
+                    break
 
         return render_template(
             "index.html",
@@ -989,6 +1044,7 @@ def view_detail(history_id):
             history_extras=history_extras,
             gatein_data=gatein_data,
             resolved_vendor_name=resolved_vendor_name,
+            gatein_category_default=gatein_category_default,
             migo_data=migo_data,
             invoice_line_items=invoice_line_items,
             miro_data=miro_data,
@@ -1368,6 +1424,37 @@ def api_save_ewb_exemption(history_id):
         "reasons": reasons,
         "labels": [EWB_EXEMPTION_LABELS[r] for r in reasons]
     })
+
+
+@app.route("/api/save_category/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_save_category(history_id):
+    """
+    v26: set history.category -- compulsory (defaults to 'stores' at the
+    DB level too, see schema_migration_v26.sql), but NOT write-once like
+    goods_delivery_mode/ewb_exemption_reasons above. Compliance can change
+    it as often as they like while the record is still editable. Only
+    used to pre-select (not lock) Gate In's own Category dropdown --
+    CATEGORY_TO_GATEIN_CODE.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if (history.get("approval_status") or "pending") == "approved":
+        return jsonify({"success": False, "error": "Record already approved — editing locked."}), 403
+
+    body = request.get_json(silent=True) or {}
+    category = (body.get("category") or "").strip()
+    if category not in CATEGORY_LABELS:
+        return jsonify({"success": False, "error": "Invalid category."}), 400
+
+    if not set_category(history_id, category, _current_user()):
+        return jsonify({"success": False, "error": "DB update failed"}), 500
+
+    return jsonify({"success": True, "category": category, "label": CATEGORY_LABELS[category]})
 
 
 # ============================================================
@@ -1759,6 +1846,21 @@ def process_all():
         except Exception as e:
             logger.error(f"Failed to attach Others document for history_id={history_id}: {e}")
 
+    # FIX (2026-08-11): "Others" doctype support, mirroring folder_watcher.py's
+    # _process_batch() -- no OCR, just attached via history_extras so
+    # doc_consolidator.py picks it up into the DMS-bound consolidated PDF the
+    # same way a G-drive-dropped Others file would be. Doesn't touch `results`
+    # / the ocr_status logic below, which only concerns invoice/ewaybill/lr.
+    if others_file and others_file.filename:
+        safe_others_name = f"h{history_id}_{others_file.filename}"
+        others_path = os.path.join(config.UPLOAD_FOLDER, safe_others_name)
+        try:
+            os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+            others_file.save(others_path)
+            add_history_extra(history_id, safe_others_name, others_file.filename, doc_type="others")
+        except Exception as e:
+            logger.error(f"Failed to attach Others document for history_id={history_id}: {e}")
+
     session["current_history_id"] = history_id
     _auto_populate_form_tables(history_id)
     if any(results.values()):
@@ -2004,6 +2106,59 @@ def run_migo_103():
     if not job_id:
         return jsonify({"success": False, "error": "MIGO 103 already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+
+
+@app.route("/api/zgrn_print/<int:history_id>", methods=["POST"])
+@api_login_required
+def run_zgrn_print(history_id):
+    """
+    ADDED (2026-08-14): MIGO 103 tab's "Print" button -- runs zgrn.robot
+    (always spl_rpa, see FORCE_LOCAL_STEPS above) to print the posted
+    MIGO document's GR Certificate (+ Certificate of Goods Delivery) to
+    PDF, then attaches the result(s) via history_extras so the frontend
+    can offer a "View" link. Gated on the same "migo_103" role as the
+    Post button itself -- this is an action against an already-posted
+    MIGO 103 record, not a separate step in the sequential flow, so it
+    deliberately does NOT go through _check_step_allowed() the way
+    migo_103/migo_105/miro do.
+    """
+    blocked = _require_role_edit("migo_103")
+    if blocked:
+        return blocked
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+
+    # Same "UI override, then migo_entries, then history" precedence as
+    # run_migo_105() above -- whatever mat doc MIGO 103 actually posted.
+    migo_entry = get_migo_entry(history_id)
+    mat_doc = (
+        (migo_entry or {}).get("material_doc_number", "").strip()
+        or (history.get("material_doc_number") or "").strip()
+        or ""
+    )
+    if not mat_doc:
+        return jsonify({
+            "success": False,
+            "error": "Material Doc Number missing — ensure MIGO 103 has been posted before printing."
+        }), 400
+
+    payload = {
+        "material_doc_number": mat_doc,
+        "history_id": history_id,
+        "print_twice": bool(data.get("print_twice", True)),
+    }
+
+    job_id, err = _enqueue_sap_job(history_id, "zgrn_print", payload)
+    if err:
+        return err
+    if not job_id:
+        return jsonify({"success": False, "error": "ZGRN print already processing."}), 409
+    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+
 
 @app.route("/api/run_migo_105", methods=["POST"])
 @api_login_required
@@ -2677,15 +2832,18 @@ def api_dms_upload_retry(history_id):
     """
     Manual retry for a record whose consolidated PDF didn't make it to DMS
     on its own (dms_status stuck at 'staged'/'pending', or the earlier
-    automatic dms_upload RF job simply failed/timed out). Enqueues the
-    exact same "dms_upload" RF-queue step _enqueue_dms_upload() uses
-    automatically after Gate In (for without_po flows) or PO Fetch (for
-    with_po flows, itself chained off Gate In) -- run_dms_upload() (see
-    _process_dms_upload in rf_queue_worker.py) always processes the WHOLE
-    staging folder and skips files already uploaded, so re-running it here
-    is safe and can't double-upload or disturb any other pending record.
-    enqueue_rf_job() itself blocks duplicate submission if a dms_upload
-    job for this history_id is already pending/running.
+    automatic dms_upload trigger simply failed/timed out).
+
+    CHANGED (2026-08-14): dms_upload no longer goes through rf_queue (see
+    rf_queue_worker.py's _enqueue_dms_upload() and dms_upload_runner.py's
+    trigger_dms_upload_for()), so this no longer returns a job_id/poll_url
+    -- same pattern as /api/gst/rerun/<id> (also a fire-and-forget
+    background-thread trigger, no queue, no poll). run_dms_upload() always
+    processes the WHOLE staging folder and skips files already uploaded,
+    so re-running it here is safe and can't double-upload or disturb any
+    other pending record; trigger_dms_upload_for()'s own non-blocking
+    _batch_lock silently no-ops a second trigger while one is already
+    running rather than erroring the user.
 
     FIX: this used to gate on history.migo_103, a stale carryover from
     before v18 moved the DMS staging+upload trigger to right after Gate In
@@ -2706,10 +2864,8 @@ def api_dms_upload_retry(history_id):
     if history.get("dms_status") == "uploaded":
         return jsonify({"success": False, "error": "This record's document is already uploaded to DMS."}), 400
 
-    job_id = enqueue_rf_job(history_id, "dms_upload", {"history_id": history_id})
-    if not job_id:
-        return jsonify({"success": False, "error": "A DMS upload is already queued or running for this record."}), 409
-    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+    trigger_dms_upload_for(history_id)
+    return jsonify({"success": True, "message": "DMS upload retry started — check back shortly."})
 
 
 @app.route("/api/dms/sync_link/<int:history_id>", methods=["POST"])

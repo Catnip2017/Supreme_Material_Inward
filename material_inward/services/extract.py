@@ -340,9 +340,18 @@ def _apply_stock_transfer_routing(extracted: dict) -> dict:
     third-party purchase invoice, but ONLY when "Type of Sale" says
     STOCK TRANSFER:
       - Delivery Challan + Stock Transfer: invoice_number <- "GST Challan
-        Sr. No.", po_number <- "Ref No."
+        Sr. No.", po_number <- "Ref No.", irn is ALWAYS forced empty --
+        a Delivery Challan never carries an IRN (client-confirmed, 2026-08).
       - Tax Invoice + Stock Transfer: invoice_number <- "GST Invoice Sr.
-        No.", po_number <- "Sales Order / STO No."
+        No.", po_number <- "Sales Order / STO No." -- a genuine IRN CAN be
+        present here and is left as extracted.
+
+    Forcing irn="" for the Delivery Challan case is deliberate and happens
+    here (extraction phase) specifically so the frontend never has to
+    reason about it -- no extra client-side logic, and the existing IRN
+    red-highlight check (_checkIrnLength() in extracted_data.html) only
+    fires for a NON-empty value under 64 characters, so an empty IRN on a
+    Delivery Challan already displays clean with zero frontend changes.
 
     document_title / type_of_sale / gst_invoice_sr_no / gst_challan_sr_no /
     sales_order_sto_no / ref_no are internal-only fields -- never rendered
@@ -364,7 +373,15 @@ def _apply_stock_transfer_routing(extracted: dict) -> dict:
             extracted["invoice_number"] = extracted["gst_challan_sr_no"]
         if extracted.get("ref_no"):
             extracted["po_number"] = extracted["ref_no"]
-        logger.info("Stock Transfer routing applied: Delivery Challan (invoice_number <- GST Challan Sr. No., po_number <- Ref No.)")
+        # Delivery Challans in this document family never carry an IRN --
+        # force it empty regardless of what the model returned, rather
+        # than trusting/repairing whatever it saw (unlike the GSTIN/IRN
+        # repair functions above, this isn't a misread to correct, it's a
+        # field that structurally doesn't apply to this document type).
+        if extracted.get("irn"):
+            logger.info(f"Stock Transfer Delivery Challan: clearing unexpected irn value {extracted['irn']!r}")
+        extracted["irn"] = ""
+        logger.info("Stock Transfer routing applied: Delivery Challan (invoice_number <- GST Challan Sr. No., po_number <- Ref No., irn forced empty)")
     elif is_tax_invoice:
         if extracted.get("gst_invoice_sr_no"):
             extracted["invoice_number"] = extracted["gst_invoice_sr_no"]
@@ -372,6 +389,36 @@ def _apply_stock_transfer_routing(extracted: dict) -> dict:
             extracted["po_number"] = extracted["sales_order_sto_no"]
         logger.info("Stock Transfer routing applied: Tax Invoice (invoice_number <- GST Invoice Sr. No., po_number <- Sales Order/STO No.)")
 
+    return extracted
+
+
+# Fields where a genuinely valid value is ALWAYS pure alphanumeric --
+# client-requested (2026-08): no special characters extracted OR allowed
+# to be typed in, for GST No, PO No, E-Way Bill No, and IRN. Handled here
+# so the guarantee holds regardless of what the model returns, without
+# needing any matching logic on the frontend.
+_ALPHANUMERIC_ONLY_FIELDS = {
+    "buyer_gstin", "seller_gstin", "transporter_gstin",
+    "po_number", "ewaybill_number", "irn",
+}
+
+
+def _strip_special_characters(value: str) -> str:
+    """Keep only letters and digits -- strips spaces, hyphens, slashes,
+    commas, and any other punctuation OCR sometimes introduces into a
+    code-like field (e.g. a GSTIN misread with a stray space or hyphen)."""
+    if not value:
+        return value
+    return re.sub(r"[^A-Za-z0-9]", "", value)
+
+
+def _clean_alphanumeric_fields(extracted: dict) -> dict:
+    """Apply _strip_special_characters to every field in
+    _ALPHANUMERIC_ONLY_FIELDS present in extracted, top-level only (these
+    fields never appear inside hsn_details)."""
+    for field in _ALPHANUMERIC_ONLY_FIELDS:
+        if extracted.get(field):
+            extracted[field] = _strip_special_characters(extracted[field])
     return extracted
 
 
@@ -385,7 +432,24 @@ Rules:
 - Return ONLY valid JSON. No text before or after.
 - If a field is not visible or not applicable, use empty string "".
 - Do NOT use null, None, N/A, or any placeholder text.
-- Return all dates in DD/MM/YYYY format.
+- DATES — read and return every date as DD/MM/YYYY (day first), always:
+  * These are Indian business documents. A numeric date printed as
+    "03/04/2026" on the page means 3rd April 2026 (day/month/year) — NOT
+    March 4th. Never apply US month/day ordering when reading a numeric
+    date, even though that is a common default assumption — day always
+    comes first on these documents.
+  * This applies to how you READ the date off the page, not just how you
+    format the output — re-labeling an already-misread mm/dd value as if
+    it were dd/mm produces a wrong date, not a correctly reformatted one.
+  * Always read the full 4-digit year printed on the document. Only if
+    the document itself prints just a 2-digit year should you return one
+    (do not truncate a 4-digit year down to 2, and do not invent digits
+    that aren't printed).
+  * A date written with a 3-letter month name (e.g. "25-Jul-2026" or
+    "25 Jul 26") is unambiguous — convert it directly to DD/MM/YYYY, no
+    day/month guessing needed.
+  * If a date is genuinely illegible or not printed, return empty string
+    "" — never guess a plausible-looking date.
 - Return amounts as numbers only — no currency symbols, no commas.
 - Return quantities as numbers only — no units.
 - CRITICAL — every field value must be a SINGLE LINE with no actual line
@@ -461,6 +525,22 @@ Important field notes:
   page, not just the header. Do not confuse it with "Ack No" — that is a shorter,
   separate acknowledgement number, not the IRN. Return empty string if no line
   labeled IRN is found.
+  CRITICAL — do not confuse the IRN with the "E-Way Bill No." (also seen as
+  "EWB No." or "Eway Bill Number"), which commonly appears on the same
+  document, sometimes on the very next line right below the IRN. These are
+  two different numbers with two different shapes, not interchangeable:
+    * IRN: always exactly 64 characters, hexadecimal (digits 0-9 and
+      letters a-f only, e.g. "7afa1a5801a117c68b87b4ab2353cf1c20cd772fad69
+      63d18a11d7d8735c87a2").
+    * E-Way Bill No.: always exactly 12 digits, purely numeric (e.g.
+      "552048457615") -- NEVER 64 characters, NEVER contains a letter.
+      If what you're reading for E-Way Bill No. isn't exactly 12 digits,
+      re-examine that region of the image before returning it.
+  If the value you're about to return for "irn" is short and purely
+  numeric, you have almost certainly picked up the E-Way Bill Number by
+  mistake -- go back and find the actual line labeled "IRN" instead, and
+  return empty string for "irn" if no genuinely 64-character hex value is
+  present anywhere on the page.
 - "document_title": The literal document-type heading printed at the very top of
   the page (e.g. "TAX INVOICE", "DELIVERY CHALLAN", "BILL OF SUPPLY"). Return it
   exactly as printed. This is used only for internal routing logic below and is
@@ -506,10 +586,13 @@ SELF-VERIFICATION (run before returning JSON)
 ═══════════════════════════════════════════
 Before returning your answer, check:
 1. buyer_gstin and seller_gstin, if not empty, are exactly 15 characters.
-2. irn, if not empty, is exactly 64 characters -- if what you read is
-   shorter, re-scan the page for the rest of the value before giving up;
-   only return a value under 64 characters if you are confident that is
-   genuinely the entire printed IRN.
+2. irn, if not empty, is exactly 64 characters AND hexadecimal (0-9, a-f
+   only) -- if what you read is shorter, re-scan the page for the rest of
+   the value before giving up; only return a value under 64 characters if
+   you are confident that is genuinely the entire printed IRN. If the
+   value is short and purely numeric, you have picked up the E-Way Bill
+   Number by mistake (see the field note above) -- find the real IRN line
+   instead, or return empty string.
 3. invoice_date and po_number contain digits, not placeholder text.
 4. grand_total is the FINAL net payable figure if two total blocks exist,
    not the pre-deduction subtotal.
@@ -583,6 +666,12 @@ Correct any field that fails these checks before returning the JSON.
 Extract these fields from the E-way Bill:
 
 Important notes:
+- "ewaybill_number": Always exactly 12 digits, purely numeric, no letters
+  or spaces (e.g. "552048457615") -- labeled "E-Way Bill No.", "EWB No.",
+  or "Eway Bill Number". If what you're reading isn't exactly 12 digits,
+  re-examine that region of the image before returning it. Never return
+  an IRN (a 64-character hexadecimal string) here by mistake -- they are
+  different numbers even when printed close together.
 - "generated_date": Use the FIRST date shown on the document, labeled "Generated Date" or "Date".
 - "po_number": Look for purchase order number — may appear as "PO No", "Purchase Order", or near the invoice reference. Typically 10 digits starting with 4 or 6. Return empty string if not found.
 
@@ -805,6 +894,14 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
         date_fields = date_fields_map.get(doc_type, [])
         if date_fields:
             extracted = _normalize_dates_in_dict(extracted, date_fields)
+
+        # Client requested (2026-08): no special characters extracted for
+        # GST No / PO No / E-Way Bill No / IRN -- strip anything that
+        # isn't a letter or digit before any further processing. Safe to
+        # call for every doc_type: it only touches keys that are actually
+        # present (_ALPHANUMERIC_ONLY_FIELDS spans invoice + ewaybill
+        # fields; lr has none of these keys, so this is a no-op for lr).
+        extracted = _clean_alphanumeric_fields(extracted)
 
         # Server-side GSTIN OCR-error correction and IRN cleanup (client
         # requested: never blank a value that fails validation -- only ever

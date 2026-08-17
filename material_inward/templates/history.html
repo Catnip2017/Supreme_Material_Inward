@@ -96,14 +96,23 @@
         .new-invoice-btn:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(102,126,234,0.6); }
 
         /* Search/filter bar */
+        /* FIX (2026-08-13): switched from a 4-column grid (which forced the
+           date filter's Apply button to wrap onto its own line, making that
+           cell taller than Search/Status/Clear and pushing them to the
+           bottom via align-items:end -- the whole bar visually looked like
+           2 rows instead of 1) to a single flex row. Now that the date
+           inputs are date-only (no time picker, see dateFrom/dateTo below),
+           everything comfortably fits on one line without wrapping. */
         .filter-bar {
             background:white; border-radius:12px;
             padding:20px 24px; margin-bottom:20px;
             box-shadow:0 2px 12px rgba(0,0,0,0.08);
-            display:grid;
-            grid-template-columns:2fr 1fr 1fr 1fr;
+            display:flex; flex-wrap:wrap;
             gap:12px; align-items:end;
         }
+        .filter-group { flex:1 1 130px; min-width:110px; }
+        .filter-group.filter-search { flex:2 1 200px; }
+        .filter-group.filter-btn { flex:0 0 auto; }
         .filter-group label {
             display:block; font-size:12px; font-weight:600;
             color:#666; margin-bottom:6px; text-transform:uppercase;
@@ -114,16 +123,12 @@
             font-size:14px; transition:border-color 0.2s; outline:none;
         }
         .filter-input:focus, .filter-select:focus { border-color:#1e5ca8; }
-        .filter-date-row { display:flex; flex-wrap:wrap; gap:8px; }
-        .filter-date-row input { flex:1; min-width:150px; }
-        /* Apply Filter button wraps onto its own line under the two date
-           inputs -- the date filter-group only gets 1fr of the grid, not
-           enough room for 2 inputs + a button all on one line. */
-        .filter-date-row .apply-filter-btn { flex:0 0 100%; }
+        .filter-group.filter-btn .apply-filter-btn,
+        .filter-group.filter-btn .clear-btn { white-space:nowrap; }
         .clear-btn {
             padding:10px 20px; background:#f0f0f0; border:none;
             border-radius:8px; font-size:14px; cursor:pointer;
-            color:#555; font-weight:500; transition:0.2s; width:100%;
+            color:#555; font-weight:500; transition:0.2s;
         }
         .clear-btn:hover { background:#e0e0e0; }
 
@@ -284,7 +289,7 @@
 
     <!-- Search and filter bar -->
     <div class="filter-bar">
-        <div class="filter-group">
+        <div class="filter-group filter-search">
             <label>Search</label>
             <input type="text" class="filter-input" id="searchInput"
                 placeholder="Invoice No, Vendor Name, Gate In No, PO No, Vehicle Number..."
@@ -292,7 +297,7 @@
         </div>
         <div class="filter-group">
             <label>Status</label>
-            <select class="filter-select" id="statusFilter" onchange="loadHistory(1)">
+            <select class="filter-select" id="statusFilter" onchange="onStatusFilterChange()">
                 <option value="">All Status</option>
                 <option value="pending">Pending</option>
                 <option value="data_approved">Data Approved</option>
@@ -304,21 +309,23 @@
                 <option value="completed">Completed</option>
             </select>
         </div>
+        <!-- FIX (2026-08-13): date-only now (no time-of-day picker) -- see
+             _todayRange()/get_history_search()'s created_at::date comparison
+             below. dateFrom/dateTo still only filter on an explicit "Apply"
+             click (see applyDateFilter()), same as before. -->
         <div class="filter-group">
-            <label>Date &amp; Time Range</label>
-            <!-- FIX (2026-08-12): dateFrom/dateTo no longer filter live on
-                 every change (each keystroke/picker click used to refetch
-                 mid-edit) -- now require an explicit "Apply" click (see
-                 applyDateFilter() below), which also gives status-only
-                 changes a stable, intentionally-committed date range to
-                 stay scoped to. -->
-            <div class="filter-date-row">
-                <input type="datetime-local" class="filter-input" id="dateFrom">
-                <input type="datetime-local" class="filter-input" id="dateTo">
-                <button class="apply-filter-btn" onclick="applyDateFilter()">Apply Filter</button>
-            </div>
+            <label>From Date</label>
+            <input type="date" class="filter-input" id="dateFrom">
         </div>
         <div class="filter-group">
+            <label>To Date</label>
+            <input type="date" class="filter-input" id="dateTo">
+        </div>
+        <div class="filter-group filter-btn">
+            <label>&nbsp;</label>
+            <button class="apply-filter-btn" onclick="applyDateFilter()">Apply Filter</button>
+        </div>
+        <div class="filter-group filter-btn">
             <label>&nbsp;</label>
             <button class="clear-btn" onclick="clearFilters()">✕ Clear Filters</button>
         </div>
@@ -379,17 +386,22 @@ function debounceSearch() {
 let appliedDateFrom = '';
 let appliedDateTo   = '';
 
+// FIX (2026-08-13): date-only now (dateFrom/dateTo are type="date" inputs,
+// no time-of-day component) -- from/to are the same plain YYYY-MM-DD
+// string. The "to" side is made inclusive of the whole day server-side
+// (get_history_search()'s created_at::date comparison), not by encoding
+// 23:59 here.
 function _pad2(n) { return String(n).padStart(2, '0'); }
 function _todayRange() {
     const d = new Date();
     const dateStr = `${d.getFullYear()}-${_pad2(d.getMonth() + 1)}-${_pad2(d.getDate())}`;
-    return { from: `${dateStr}T00:00`, to: `${dateStr}T23:59` };
+    return { from: dateStr, to: dateStr };
 }
 
 function applyDateFilter() {
     appliedDateFrom = document.getElementById('dateFrom').value;
     appliedDateTo   = document.getElementById('dateTo').value;
-    _clearCardActiveState();
+    _syncCardActiveState();
     currentPage = 1;
     loadHistory();
 }
@@ -406,24 +418,63 @@ function applyCardFilter(status, cardEl) {
     appliedDateFrom = range.from;
     appliedDateTo   = range.to;
     document.getElementById('statusFilter').value = status;
-    _clearCardActiveState();
-    if (cardEl) cardEl.classList.add('card-active');
+    _syncCardActiveState();
     currentPage = 1;
     loadHistory();
+}
+
+// FIX (2026-08-12): the status dropdown used to call loadHistory(1)
+// directly, so picking a status manually left whichever card was last
+// clicked still showing as "active" even though it no longer matched the
+// filter actually in effect. Routes through _syncCardActiveState() instead,
+// same as every other filter-changing action below.
+function onStatusFilterChange() {
+    _syncCardActiveState();
+    loadHistory(1);
 }
 
 function _clearCardActiveState() {
     document.querySelectorAll('#countsRow .count-card').forEach(c => c.classList.remove('card-active'));
 }
 
+// FIX (2026-08-12): single source of truth for card highlighting. Called
+// after every action that can change status/date -- card click, manual
+// date Apply, manual status change, and page-load URL restore (see
+// _restoreFiltersFromUrl() below) -- so the highlighted card always
+// reflects what's actually filtered, not just what was last clicked.
+// Cards represent "today + status X" combos, so a card lights up only when
+// the currently-applied date range is exactly today's full-day range AND
+// the status dropdown matches that card's data-card-status. Anything else
+// (a non-today range, a status the cards don't cover like
+// "data_approved", or no filter at all) means no card can represent the
+// current state, so all cards are cleared instead of guessing.
+function _syncCardActiveState() {
+    _clearCardActiveState();
+    const range = _todayRange();
+    if (appliedDateFrom !== range.from || appliedDateTo !== range.to) return;
+    const status = document.getElementById('statusFilter').value;
+    const card = document.querySelector('#countsRow .count-card[data-card-status="' + status + '"]');
+    if (card) card.classList.add('card-active');
+}
+
+// FIX (2026-08-13): previously reset the date range to blank/unbounded
+// (all-time), which didn't match the page's own default -- a genuinely
+// fresh page load defaults to TODAY (see _restoreFiltersFromUrl()'s
+// 2026-08-12 fix), so "Clear Filters" landing on all-time-ever instead was
+// an inconsistent, surprising result (potentially years of records, no
+// card highlighted, nothing to indicate why it looked different from a
+// plain reload). Now resets to that exact same default: today + All
+// Status, with the Total Today card lit up to match, via
+// _syncCardActiveState() instead of _clearCardActiveState().
 function clearFilters() {
     document.getElementById('searchInput').value = '';
     document.getElementById('statusFilter').value = '';
-    document.getElementById('dateFrom').value = '';
-    document.getElementById('dateTo').value = '';
-    appliedDateFrom = '';
-    appliedDateTo = '';
-    _clearCardActiveState();
+    const range = _todayRange();
+    document.getElementById('dateFrom').value = range.from;
+    document.getElementById('dateTo').value   = range.to;
+    appliedDateFrom = range.from;
+    appliedDateTo   = range.to;
+    _syncCardActiveState();
     currentPage = 1;
     loadHistory();
 }
@@ -682,6 +733,12 @@ function _restoreFiltersFromUrl() {
     document.getElementById('dateTo').value   = appliedDateTo;
 
     if (page && page > 0) currentPage = page;
+
+    // FIX (2026-08-12): reflect the restored status/date back onto the
+    // count cards -- previously a refresh or a return-to-page navigation
+    // could land on a status+date combo that matches a card exactly (e.g.
+    // status=pending on today's range) with no card shown as active.
+    _syncCardActiveState();
 }
 
 // Load on page open

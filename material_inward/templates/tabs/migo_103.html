@@ -448,18 +448,18 @@
               <tr data-idx="{{ loop.index0 }}">
                 <td><button type="button" class="pair-btn pair-btn-inv" data-pair="" onclick="onInvPairClick(this)" ></button></td>
                 <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
-                <td><input type="text" class="form-input" data-field="material_code" value="{{ item.get('material_code','') }}" ></td>
-                <td><input type="text" class="form-input" data-field="qty" value="{{ item.get('qty_expected','') }}" ></td>
-                <td><input type="text" class="form-input" data-field="unit" value="{{ item.get('unit','') }}" ></td>
-                <td><input type="text" class="form-input" data-field="rate" value="{{ item.get('rate','') }}" ></td>
-                <td><input type="text" class="form-input" data-field="amount" value="{{ item.get('amount','') }}" ></td>
-                <td><input type="text" class="form-input" data-field="hsn_sac" value="{{ item.get('hsn_sac','') }}" ></td>
+                <td><input type="text" class="form-input" data-field="material_code" value="{{ ((item.get('material_code') if item else '') or '') }}" ></td>
+                <td><input type="text" class="form-input" data-field="qty" value="{{ ((item.get('qty_expected') if item else '') or '') }}" ></td>
+                <td><input type="text" class="form-input" data-field="unit" value="{{ ((item.get('unit') if item else '') or '') }}" ></td>
+                <td><input type="text" class="form-input" data-field="rate" value="{{ ((item.get('rate') if item else '') or '') }}" ></td>
+                <td><input type="text" class="form-input" data-field="amount" value="{{ ((item.get('amount') if item else '') or '') }}" ></td>
+                <td><input type="text" class="form-input" data-field="hsn_sac" value="{{ ((item.get('hsn_sac') if item else '') or '') }}" ></td>
               </tr>
               <tr class="item-desc-row">
                 <td colspan="8">
                   <div class="short-text-row">
                     <span class="short-text-chip">Short text</span>
-                    <input type="text" class="form-input short-text-input" data-field="short_text" value="{{ item.get('short_text','') }}" title="{{ item.get('short_text','') }}" oninput="this.title=this.value">
+                    <input type="text" class="form-input short-text-input" data-field="short_text" value="{{ ((item.get('short_text') if item else '') or '') }}" title="{{ ((item.get('short_text') if item else '') or '') }}" oninput="this.title=this.value">
                   </div>
                 </td>
               </tr>
@@ -493,7 +493,7 @@
                  table above -- see the comment there. UOM: SAP PO fetch
                  (po_fetch.robot) now scrapes a real unit-of-measure value
                  (added 2026-08-07) and database/po_operations.py was wired
-                 up to store/read it, so item.get('unit','') is populated
+                 up to store/read it, so ((item.get('unit') if item else '') or '') is populated
                  for any PO fetched since that change -- older, already-
                  fetched records will still show blank here until
                  re-fetched.
@@ -540,7 +540,7 @@
                   <td colspan="9">
                     <div class="short-text-row">
                       <span class="short-text-chip po-chip">Short text</span>
-                      <span class="cell-text short-text-value" data-field="short_text" title="{{ item.get('short_text','') }}">{{ item.get('short_text','') }}</span>
+                      <span class="cell-text short-text-value" data-field="short_text" title="{{ ((item.get('short_text') if item else '') or '') }}">{{ ((item.get('short_text') if item else '') or '') }}</span>
                     </div>
                   </td>
                 </tr>
@@ -620,7 +620,17 @@
         {% if history and history.migo_103 %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
     </button>
+    {# ADDED (2026-08-14): zgrn.robot "Print" -- GR Certificate / Certificate
+       of Goods Delivery, only meaningful once MIGO 103 has actually posted
+       (needs a material_doc_number to run zgrn against). #}
+    <button type="button" id="zgrnPrintBtn" class="btn btn-secondary" onclick="submitZgrnPrint()"
+        {% if not (history and history.migo_103) %}disabled title="Complete MIGO 103 posting first"{% endif %}>
+        🖨️ Print
+    </button>
   </div>
+
+  <div id="zgrnPrintStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+  <div id="zgrnPrintLinks" style="display:none;margin:0 0 16px;"></div>
 
   {% if history_id %}
   {% set remarks_panel_id = 'migo103' %}
@@ -948,7 +958,7 @@ const AUTO_PAIR_MIN = {{ config.AUTO_PAIR_MIN_MATCHES if config and config.AUTO_
 const AUTO_PAIR_AMT_TOL = {{ config.AUTO_PAIR_AMOUNT_TOLERANCE if config and config.AUTO_PAIR_AMOUNT_TOLERANCE else 5 }};
 
 
-function autoPair() {
+function autoPair(silent) {
   resetAllMatches();
 
   const invRows = document.querySelectorAll('#invoiceItemsBody tr[data-idx]');
@@ -1050,7 +1060,13 @@ function autoPair() {
     });
 
     msg += '\nUse manual pairing if values differ.';
-    showToast(msg, 'warning');
+    // FIX (2026-08-13): this Auto-Pair result toast used to fire on every
+    // page load too (see the DOMContentLoaded block below, which calls
+    // autoPair(true)) -- meaning a user just landing on the "View" page
+    // (default tab = Documents) would see a pairing popup for a tab they
+    // hadn't even opened yet. Now only shown for a user-initiated click
+    // on the "Auto-Pair" button itself (silent is unset/false there).
+    if (!silent) showToast(msg, 'warning');
   } else {
     const hint = document.getElementById('matchHint');
     if (hint) {
@@ -1435,10 +1451,14 @@ document.addEventListener('DOMContentLoaded', function() {
       _highlightPairMismatches(0, 0);
       _updateMatchHint();
       confirmMatches();
-      showToast('✓ Single invoice/PO line auto-matched and ready for posting.', 'success');
+      // FIX (2026-08-13): dropped the auto-match success toast here too --
+      // same reasoning as the silent flag on autoPair() below. The pairing
+      // itself still happens automatically; only the popup on page load
+      // is removed. Confirmed pairs are still visible once the user opens
+      // the MIGO 103 tab.
     }
   } else {
-    autoPair();
+    autoPair(true);
   }
 });
 {% endif %}
@@ -1589,6 +1609,47 @@ function _doSubmitMigo103(historyId) {
       // manual reload.
       sessionStorage.setItem('mi_reload_tab', 'migo103');
       setTimeout(() => window.location.reload(), 1800);
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+// ── ZGRN Print (GR Certificate / Certificate of Goods Delivery) ───────────
+// ADDED (2026-08-14): runs zgrn.robot (always spl_rpa) against the posted
+// MIGO 103 document, then shows View link(s) for whatever PDF(s) it
+// produced. Reuses submitAndPoll/pollRFJob exactly like Post MIGO 103 does
+// above -- same job-queue/poll mechanics, just a different route and a
+// different success rendering (links instead of a document number).
+function submitZgrnPrint() {
+  const historyId = parseInt(document.getElementById('history_id_migo').value);
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+
+  const btn       = document.getElementById('zgrnPrintBtn');
+  const statusEl  = document.getElementById('zgrnPrintStatus');
+  const linksEl   = document.getElementById('zgrnPrintLinks');
+
+  linksEl.style.display = 'none';
+  linksEl.innerHTML     = '';
+
+  submitAndPoll(`/api/zgrn_print/${historyId}`, { print_twice: true }, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '✓ Print complete — document(s) ready below.';
+
+      const files = (result && result.files) || [];
+      if (files.length) {
+        linksEl.innerHTML = files.map(f =>
+          `<a href="${f.view_url}" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-right:8px;text-decoration:none;">👁️ View ${f.label}</a>`
+        ).join('');
+        linksEl.style.display = 'block';
+      }
     },
     onFailure: (error) => {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';

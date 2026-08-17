@@ -45,6 +45,25 @@ EWB_EXEMPTION_LABELS = {
     "other_exemption":    "Other Exemptions",
 }
 
+# v26 (2026-08-13): Category classification, captured at the top of
+# Extracted Data. Unlike the two pickers above, this is NOT write-once --
+# compulsory (defaults to "stores"), but Compliance can change it freely
+# any time before the record is approved. Used only to PRE-SELECT (not
+# lock) Gate In's own, longer-standing 7-option Category dropdown -- see
+# CATEGORY_TO_GATEIN_CODE, app.py's view_detail(), and
+# templates/tabs/gate_in.html.
+CATEGORY_LABELS = {
+    "stores":       "Stores",
+    "sales_return": "Sales Return",
+    "job_work":     "Job Work",
+}
+
+CATEGORY_TO_GATEIN_CODE = {
+    "stores":       "A",
+    "sales_return": "E",
+    "job_work":     "F",
+}
+
 # Fixed Remarks text auto-appended for each choice -- client-approved
 # wording. Delivery-mode text is keyed by the single value chosen;
 # exemption text is looked up per reason and joined if more than one
@@ -154,6 +173,33 @@ def set_ewb_exemption_reasons(history_id: int, reasons: list, username: str) -> 
         return False
 
 
+def set_category(history_id: int, category: str, username: str) -> bool:
+    """
+    Not write-once (unlike set_goods_delivery_mode/set_ewb_exemption_reasons
+    above) -- app.py's route just re-runs this UPDATE on every change, no
+    "already set" guard. category_by/category_at record who last changed
+    it, for an audit trail only.
+    """
+    if category not in CATEGORY_LABELS:
+        logger.error(f"[scenario_ops] invalid category '{category}' for history_id={history_id}")
+        return False
+    sql = """
+        UPDATE history
+        SET category = %s,
+            category_by = %s,
+            category_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (category, username, history_id))
+            conn.commit()
+        logger.info(f"[scenario_ops] category={category} saved for history_id={history_id} by {username}")
+        return True
+    except Exception as e:
+        logger.error(f"[scenario_ops] set_category failed for history_id={history_id}: {e}")
+        return False
 def delete_history_extras_by_doctype(history_id: int, doc_type: str) -> list:
     """
     ADDED (2026-08-13): "Others" is meant to be at most one file per record

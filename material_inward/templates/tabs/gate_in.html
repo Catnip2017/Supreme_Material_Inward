@@ -70,6 +70,12 @@
 .driver-dropdown-item .drv-name { font-weight: 700; color: #1e5ca8; }
 .driver-dropdown-item .drv-meta { font-size: 11px; color: #888; margin-top: 2px; }
 .req { color:#e74c3c; margin-left:2px; }
+/* FIX (2026-08-13): Vendor Name / Vendor Code split -- Vendor Name (2fr)
+   [Fetch] / Vendor Code (1fr) / Transporter (2fr) all on one row, replacing
+   the old 2-column row where Fetch overwrote Vendor Name itself with the
+   resolved SAP code. Overrides main.css's default .form-row (equal
+   auto-fit columns). */
+.form-row-vendor { grid-template-columns: 2fr 1fr 2fr; }
 .manual-hint { font-size:11px; color:#1e5ca8; font-weight:600; margin-left:6px; background:#f0f4ff; padding:2px 8px; border-radius:10px; }
 .field-error { border-color:#e74c3c !important; }
 .field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
@@ -188,23 +194,27 @@
     <!-- ── Truck Fields Section ──────────────────────────────────────────── -->
     <div id="truckFieldsSection">
       <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🚚 Truck Details</h4>
-      <div class="form-row">
+      <div class="form-row form-row-vendor">
         <div class="form-group driver-dropdown-wrap">
-          <label>Vendor Name <span class="req">*</span>
-            <span style="font-size:11px;color:#e17055;font-weight:600;margin-left:6px;">
-              ❗ Click Fetch for vendor code
-            </span>
-          </label>
+          <label>Vendor Name <span class="req">*</span></label>
           <div class="vehicle-lookup-row">
             <input type="text" id="vendorName" class="form-input" maxlength="40" autocomplete="off"
                    value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-                   placeholder="SAP vendor code" oninput="onVendorNameTypeahead('')"
+                   placeholder="Vendor name" oninput="onVendorNameTypeahead('')"
                    {% if gate_in_locked %}disabled{% endif %}>
             <button type="button" class="btn-lookup" onclick="fetchVendorCode('')"
                     {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
           </div>
           <div class="driver-dropdown" id="vendorCodeDropdown"></div>
           <div class="field-error-msg" id="err_vendorName">Required</div>
+        </div>
+        <div class="form-group">
+          <label>Vendor Code <span class="req">*</span></label>
+          <input type="text" id="vendorCode" class="form-input" maxlength="10" autocomplete="off"
+                 value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
+                 placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_vendorCode">Required</div>
         </div>
         <div class="form-group">
           <label>Transporter</label>
@@ -256,13 +266,9 @@
     <!-- ── Hand Delivery Fields Section ─────────────────────────────────── -->
     <div id="handFieldsSection" style="display:none;">
       <h4 id="handSectionTitle" style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🤝 Hand Delivery Details</h4>
-      <div class="form-row">
+      <div class="form-row form-row-vendor">
         <div class="form-group driver-dropdown-wrap">
-          <label>Vendor Name <span class="req">*</span>
-            <span style="font-size:11px;color:#e17055;font-weight:600;margin-left:6px;">
-              ❗ Click Fetch for vendor code
-            </span>
-          </label>
+          <label>Vendor Name <span class="req">*</span></label>
           <div class="vehicle-lookup-row">
             <input type="text" id="vendorNameHand" class="form-input" maxlength="40" autocomplete="off"
                    value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
@@ -273,6 +279,14 @@
           </div>
           <div class="driver-dropdown" id="vendorCodeDropdownHand"></div>
           <div class="field-error-msg" id="err_vendorNameHand">Required</div>
+        </div>
+        <div class="form-group">
+          <label>Vendor Code <span class="req">*</span></label>
+          <input type="text" id="vendorCodeHand" class="form-input" maxlength="10" autocomplete="off"
+                 value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
+                 placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_vendorCodeHand">Required</div>
         </div>
         <div class="form-group">
           <label>Transporter</label>
@@ -336,25 +350,35 @@
     <div class="form-row">
       <div class="form-group">
         <label>Category <span class="req">*</span></label>
-        <select id="category" class="form-select" {% if gate_in_locked %}disabled{% endif %}>
+        {# v26: preselect from Extracted Data's simplified Category
+           (gatein_category_default, mapped stores->A / sales_return->E /
+           job_work->F in app.py's view_detail()) -- but ONLY when this
+           Gate In hasn't already saved its own category (a draft in
+           progress, or an already-submitted record). A real saved value
+           always wins over the default. All 7 options stay selectable --
+           this only changes which one starts selected. See the
+           data-preselected attribute + confirm-on-change JS below. #}
+        {% set _existing_cat = (gatein_data.get('category') if gatein_data else '') or '' %}
+        {% set _effective_cat = _existing_cat or gatein_category_default or '' %}
+        <select id="category" class="form-select" data-preselected="{{ _effective_cat }}" {% if gate_in_locked %}disabled{% endif %}>
           <option value="">Select category</option>
-          <option value="A" {% if gatein_data and gatein_data.get('category')=='A' %}selected{% endif %}>A — Stores</option>
-          <option value="B" {% if gatein_data and gatein_data.get('category')=='B' %}selected{% endif %}>B — Tankfarm</option>
-          <option value="C" {% if gatein_data and gatein_data.get('category')=='C' %}selected{% endif %}>C — Scrap</option>
-          <option value="D" {% if gatein_data and gatein_data.get('category')=='D' %}selected{% endif %}>D — Despatch</option>
-          <option value="E" {% if gatein_data and gatein_data.get('category')=='E' %}selected{% endif %}>E — Sales Return</option>
-          <option value="F" {% if gatein_data and gatein_data.get('category')=='F' %}selected{% endif %}>F — Job Work</option>
-          <option value="G" {% if gatein_data and gatein_data.get('category')=='G' %}selected{% endif %}>G — Despatch Scrap</option>
+          <option value="A" {% if _effective_cat=='A' %}selected{% endif %}>A — Stores</option>
+          <option value="B" {% if _effective_cat=='B' %}selected{% endif %}>B — Tankfarm</option>
+          <option value="C" {% if _effective_cat=='C' %}selected{% endif %}>C — Scrap</option>
+          <option value="D" {% if _effective_cat=='D' %}selected{% endif %}>D — Despatch</option>
+          <option value="E" {% if _effective_cat=='E' %}selected{% endif %}>E — Sales Return</option>
+          <option value="F" {% if _effective_cat=='F' %}selected{% endif %}>F — Job Work</option>
+          <option value="G" {% if _effective_cat=='G' %}selected{% endif %}>G — Despatch Scrap</option>
         </select>
         <div class="field-error-msg" id="err_category">Required</div>
       </div>
       {# v7: goods fallbacks now come from invoice hsn_details (EWB goods columns deprecated) #}
       {% set inv_hsn = (invoice_data.get('hsn_details') if invoice_data else []) or [] %}
-      {% set inv_goods_desc = (inv_hsn[0].get('description','') if inv_hsn else '') %}
+      {% set inv_goods_desc = ((inv_hsn[0].get('description') or '') if inv_hsn else '') %}
       {% if inv_hsn|length > 1 and inv_goods_desc %}
         {% set inv_goods_desc = inv_goods_desc ~ ' +' ~ (inv_hsn|length - 1) ~ ' more' %}
       {% endif %}
-      {% set inv_goods_qty = (inv_hsn[0].get('quantity','') if inv_hsn else '') %}
+      {% set inv_goods_qty = ((inv_hsn[0].get('quantity') or '') if inv_hsn else '') %}
       <div class="form-group">
         <label>Material <span class="req">*</span></label>
         <input type="text" id="material" class="form-input" maxlength="40"
@@ -519,6 +543,7 @@ const TRUCK_MANDATORY_FIELDS = [
   { id: 'gateInDate',    errId: 'err_gateInDate' },
   { id: 'gateInTime',    errId: 'err_gateInTime' },
   { id: 'vendorName',    errId: 'err_vendorName' },
+  { id: 'vendorCode',    errId: 'err_vendorCode' },
   { id: 'truckNo',       errId: 'err_truckNo' },
   { id: 'driverName',    errId: 'err_driverName' },
   { id: 'licenseNo',     errId: 'err_licenseNo' },
@@ -532,6 +557,7 @@ const HAND_MANDATORY_FIELDS = [
   { id: 'gateInDate',     errId: 'err_gateInDate' },
   { id: 'gateInTime',     errId: 'err_gateInTime' },
   { id: 'vendorNameHand', errId: 'err_vendorNameHand' },
+  { id: 'vendorCodeHand', errId: 'err_vendorCodeHand' },
   { id: 'category',       errId: 'err_category' },
   { id: 'material',       errId: 'err_material' },
   { id: 'challanNo',      errId: 'err_challanNo' },
@@ -637,18 +663,19 @@ function validateGateIn() {
   // pre-filled value can never exceed its SAP max length in the first
   // place -- no submit-blocking check needed here any more.
 
-  // Vendor Name must end up holding the SAP vendor code (LIFNR, max 10
-  // chars) before posting -- doesn't have to come from picking a
-  // Fetch/type-ahead match (a guard may just type the code straight in from
-  // memory), just has to fit the code format. Checked on whichever section
-  // is active.
+  // FIX (2026-08-13): Vendor Code (not Vendor Name any more -- see the
+  // gate_in_entries.vendor_code split) must hold the SAP vendor code
+  // (LIFNR, max 10 chars) before posting. Doesn't have to come from picking
+  // a Fetch/type-ahead match (a guard may still type the code straight in
+  // from memory) -- just has to fit the code format. Checked on whichever
+  // section is active.
   const vendorSuffix = (delivery === 'truck') ? '' : 'Hand';
-  const vendorEl = document.getElementById('vendorName' + vendorSuffix);
-  if (vendorEl && vendorEl.value.trim().length > 10) {
-    vendorEl.classList.add('field-error');
-    const errEl = document.getElementById('err_vendorName' + vendorSuffix);
+  const vendorCodeEl = document.getElementById('vendorCode' + vendorSuffix);
+  if (vendorCodeEl && vendorCodeEl.value.trim().length > 10) {
+    vendorCodeEl.classList.add('field-error');
+    const errEl = document.getElementById('err_vendorCode' + vendorSuffix);
     if (errEl) {
-      errEl.textContent = 'Max 10 characters -- enter the SAP vendor code (click Fetch or type it directly), not the vendor name.';
+      errEl.textContent = 'Max 10 characters -- this must be the SAP vendor code (click Fetch or type it directly).';
       errEl.classList.add('show');
     }
     valid = false;
@@ -783,12 +810,14 @@ function _doSubmitGateIn(historyId) {
   const delivery = dType ? dType.value : 'truck';
   const poFlowType = _getPoFlowType();
 
-  let vendorName, transporter;
+  let vendorName, vendorCode, transporter;
   if (delivery === 'truck') {
     vendorName  = document.getElementById('vendorName').value;
+    vendorCode  = document.getElementById('vendorCode').value;
     transporter = document.getElementById('transporter').value;
   } else {
     vendorName  = document.getElementById('vendorNameHand').value;
+    vendorCode  = document.getElementById('vendorCodeHand').value;
     transporter = document.getElementById('transporterHand').value;
   }
 
@@ -797,6 +826,7 @@ function _doSubmitGateIn(historyId) {
     gateInDate:    document.getElementById('gateInDate').value,
     gateInTime:    document.getElementById('gateInTime').value,
     vendorName:    vendorName,
+    vendorCode:    vendorCode,
     transporter:   transporter,
     truckNo:       (delivery === 'truck') ? document.getElementById('truckNo').value    : '',
     driverName:    document.getElementById('driverName').value,
@@ -855,11 +885,11 @@ function _doSubmitGateIn(historyId) {
 }
 
 function clearGateInForm() {
-  ['gateInDate','gateInTime','vendorName','transporter','truckNo',
+  ['gateInDate','gateInTime','vendorName','vendorCode','transporter','truckNo',
    'driverName','licenseNo','containerNo','numPersons','category',
    'material','challanNo','challanQty','boeNo','purchaseOrder',
    'gatePassNo','note',
-   'vendorNameHand','transporterHand'].forEach(id => {
+   'vendorNameHand','vendorCodeHand','transporterHand'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -874,6 +904,38 @@ function clearGateInForm() {
   const dd = document.getElementById('driverDropdown');
   if (dd) dd.classList.remove('show');
 }
+
+// ============================================================
+// v26: Category dropdown confirm-on-change. The field loads preselected
+// (see data-preselected on the <select> above, either a real saved
+// category or the Extracted-Data-derived default) but stays a normal,
+// fully editable dropdown with all 7 options. Any manual change reverts
+// immediately (no visible flicker -- happens synchronously inside this
+// same change event, before the user perceives the new value) and asks
+// for confirmation via the app's existing showConfirm() modal; only
+// applying the change if the user confirms. Re-confirms on every
+// subsequent change too, not just the first one away from the default.
+// ============================================================
+(function () {
+  const catEl = document.getElementById('category');
+  if (!catEl) return;
+  let _confirmedCategoryValue = catEl.value;
+
+  catEl.addEventListener('change', function () {
+    const pendingValue = catEl.value;
+    if (pendingValue === _confirmedCategoryValue) return;
+    catEl.value = _confirmedCategoryValue;  // revert first, so Cancel is a no-op
+    showConfirm(
+      'Change Category?',
+      'This category was pre-filled based on the Extracted Data review. Are you sure you want to change it?',
+      function () {
+        catEl.value = pendingValue;
+        _confirmedCategoryValue = pendingValue;
+      },
+      'Yes, Change It'
+    );
+  });
+})();
 
 // ============================================================
 // VEHICLE MASTER LOOKUP
@@ -947,10 +1009,15 @@ function _renderDriverDropdown(drivers) {
 // VENDOR CODE LOOKUP (supplier_master, synced nightly by the
 // standalone VENDOR_MASTER_SYNC bot -- see database/schema_migration_v8.sql)
 //
-// There is no separate vendor-code field. Vendor Name shows the OCR'd name
-// by default; Fetch (or picking a type-ahead match) overwrites that SAME
-// field's value with the resolved SAP vendor code, since Gate In posts to
-// SAP through the existing VENDOR_NAME slot either way.
+// FIX (2026-08-13): Vendor Name / Vendor Code split. Fetch/type-ahead is
+// still driven off the Vendor Name text (the user searches/types a name,
+// same as before) -- but picking a candidate now fills TWO fields instead
+// of one: Vendor Name gets the real resolved name (name_1/name), and the
+// new Vendor Code field gets the SAP code (candidate.supplier). Gate In's
+// SAP posting reads Vendor Code (see services/rf_runner.py's
+// execute_gate_in_sap()), not Vendor Name -- Vendor Name is display/search
+// only from here on. Vendor Code is still a plain editable text input (not
+// locked to Fetch-only), so a guard can still type a known code directly.
 // ============================================================
 let _vendorTypeaheadTimer  = null;
 // FIX: the debounce timer only ever guarded when a request gets SENT, not
@@ -1013,12 +1080,21 @@ function _searchVendorCandidates(name, suffix, isTypeahead) {
 }
 
 function _applyVendorCode(candidate, suffix) {
-  // Overwrites the Vendor Name field itself with the resolved SAP vendor
-  // code -- there's no separate code field. If the wrong line gets picked
-  // by mistake, Vendor Name is still a plain editable text input: just type
-  // over it, or hit Fetch again to reopen this list.
+  // FIX (2026-08-13): fills Vendor Name AND Vendor Code separately now --
+  // Vendor Name gets the real resolved name (falls back to whatever the
+  // user had typed if the candidate has neither name_1 nor name), Vendor
+  // Code gets the SAP code that actually posts to SAP. Both are still
+  // plain editable text inputs: if the wrong line gets picked by mistake,
+  // just type over either one, or hit Fetch again to reopen this list.
   const nameEl = document.getElementById('vendorName' + suffix);
-  if (nameEl) nameEl.value = candidate.supplier || '';
+  const codeEl = document.getElementById('vendorCode' + suffix);
+  if (nameEl) nameEl.value = candidate.name_1 || candidate.name || nameEl.value;
+  if (codeEl) {
+    codeEl.value = candidate.supplier || '';
+    codeEl.classList.remove('field-error');
+    const codeErr = document.getElementById('err_vendorCode' + suffix);
+    if (codeErr) codeErr.classList.remove('show');
+  }
   const dd = document.getElementById('vendorCodeDropdown' + suffix);
   if (dd) dd.classList.remove('show');
 }
