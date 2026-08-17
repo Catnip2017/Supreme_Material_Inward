@@ -757,7 +757,8 @@
       </tr>
       <tr>
         <td class="xd-attr-lbl">Transport Doc No.</td>
-        <td class="xd-attr-val"><input id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-val"><input id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_transport_doc_no"></div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">Transport Doc Date</td>
@@ -771,7 +772,8 @@
       <tr>
         <td class="xd-lbl" rowspan="9">LR details</td>
         <td class="xd-attr-lbl">LR No.</td>
-        <td class="xd-attr-val"><input id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-val"><input id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_lr_lr_number"></div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">LR Date</td>
@@ -787,11 +789,17 @@
       </tr>
       <tr>
         <td class="xd-attr-lbl">Consignor Name</td>
-        <td class="xd-attr-val"><input id="lr_consignor_name" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_consignor_name" maxlength="40" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_seller_address','lr_consignor_name','Seller Address')">📋 Copy from Invoice</button>
+          </div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">Consignee Name</td>
-        <td class="xd-attr-val"><input id="lr_consignee_name" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_consignee_name" maxlength="40" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_buyer_address','lr_consignee_name','Buyer Address')">📋 Copy from Invoice</button>
+          </div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">From Location</td>
@@ -809,7 +817,10 @@
       </tr>
       <tr>
         <td class="xd-attr-lbl">Delivery Address</td>
-        <td class="xd-attr-val"><textarea class="address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea></td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <textarea class="address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('eway_dispatch_to','lr_delivery_address','Dispatch To')">📋 Copy from E-Way Bill</button>
+          </div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">Transporter Name</td>
@@ -1812,10 +1823,13 @@ function _normMismatchVehicle(v) {
 }
 
 const MISMATCH_PAIRS = [
-  { a: 'inv_invoice_number',  b: 'eway_invoice_number', label: 'Invoice Number', norm: _normMismatchText },
-  { a: 'inv_invoice_date',    b: 'eway_invoice_date',   label: 'Invoice Date',   norm: _normMismatchText },
-  { a: 'inv_po_number',       b: 'eway_po_number',      label: 'PO Number',      norm: _normMismatchText },
-  { a: 'eway_vehicle_number', b: 'lr_vehicle_number',   label: 'Vehicle Number', norm: _normMismatchVehicle },
+  { a: 'inv_invoice_number',    b: 'eway_invoice_number',    label: 'Invoice Number',    norm: _normMismatchText },
+  { a: 'inv_invoice_date',      b: 'eway_invoice_date',      label: 'Invoice Date',      norm: _normMismatchText },
+  { a: 'inv_po_number',         b: 'eway_po_number',         label: 'PO Number',         norm: _normMismatchText },
+  { a: 'eway_vehicle_number',   b: 'lr_vehicle_number',      label: 'Vehicle Number',    norm: _normMismatchVehicle },
+  // FIX (2026-08-17, client request): LR No. is the same document as the
+  // E-Way Bill's Transport Doc No. -- highlight if they don't match.
+  { a: 'eway_transport_doc_no', b: 'lr_lr_number',           label: 'LR / Transport Doc No.', norm: _normMismatchText },
 ];
 
 function _checkMismatchPair(pair) {

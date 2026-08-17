@@ -119,7 +119,14 @@ Initialize SAP And Login
     #Sleep    5s
     Dismiss Any Popup
     Maximize Window    0
- 
+
+Dump Delflag Property
+    [Documentation]    TEMP DIAGNOSTIC — run once per test PO, then remove.
+    FOR    ${r}    IN RANGE    0    1
+        ${result}=    Get Delflag Status    ${TABLE}    ${r}
+        Log To Console    Row ${r} -> ${result}
+    END
+
 Dump Screen Elements
     [Documentation]    Diagnostic only — logs the technical IDs of all elements
     ...    on the current SAP screen so we can find the correct paths for
@@ -151,7 +158,7 @@ Fetch PO Line Items
     @{items}=    Create List
     ${row_idx}=    Set Variable    0
     ${scroll_pos}=    Set Variable    0
-    ${visible_rows}=    Set Variable    1
+    ${visible_rows}=    Set Variable    2
     WHILE    True
         ${row_in_view}=    Evaluate    ${row_idx} - ${scroll_pos}
         IF    ${row_in_view} >= ${visible_rows}

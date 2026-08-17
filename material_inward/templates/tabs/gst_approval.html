@@ -344,6 +344,12 @@
   const HISTORY_ID = parseInt(document.getElementById('gst_history_id').value, 10);
   let _pollTimer   = null;
   let _currentData = null;
+  /* FIX (2026-08-17, client-reported bug): last status actually reported by
+     /api/gst/status. Used instead of "!_currentData" below -- _currentData
+     stays null for BOTH "not_run" and "still waiting on the first poll",
+     so a tab-switch after a "not_run" response was incorrectly re-showing
+     the spinner on top of the already-correct "not run yet" message. */
+  let _lastStatus  = null; // null (unknown yet) | 'not_run' | 'checking' | 'done'
 
   /* ── Inline notification (replaces browser alert()) ─────────────────── */
   function _showMsg(text, type) {
@@ -356,15 +362,16 @@
   }
 
   /* ── Tab hook: called by main.js switchTab() via window._onTabSwitch ── */
-  /* Shows spinner if user opens the tab while bot is still running.       */
+  /* Shows spinner ONLY if we know a check is actually in progress, or we   */
+  /* haven't heard back from the first status poll yet. Never shows it on  */
+  /* top of a confirmed "not run" state. */
   window._onTabSwitch = function (name) {
     if (name === 'gstApproval') {
-      if (!_currentData) {
-        /* Bot not done yet — show spinner so user knows it's working */
+      if (_lastStatus === 'checking' || _lastStatus === null) {
         _show('gstCheckingWrap');
       }
-      /* If _currentData is already set, _renderResults already unhid
-         gstResultsWrap, so nothing extra to do here. */
+      /* If status is 'not_run' or 'done', the poll already rendered the
+         correct wrap -- nothing extra to do here. */
     }
   };
 
@@ -390,6 +397,7 @@
       })
       .then(function (d) {
         if (d.status === 'checking') {
+          _lastStatus = 'checking';
           _hide('gstNotRunWrap');
           _show('gstCheckingWrap');
           _setActionButton('checking');
@@ -397,6 +405,7 @@
           return;
         }
         if (d.status === 'not_run') {
+          _lastStatus = 'not_run';
           clearTimeout(_pollTimer);
           _hide('gstCheckingWrap');
           _hide('gstErrorWrap');
@@ -405,6 +414,7 @@
           _setActionButton('not_run');
           return;
         }
+        _lastStatus = 'done';
         clearTimeout(_pollTimer);
         _hide('gstNotRunWrap');
         _currentData = d;
@@ -620,6 +630,7 @@
      result that already exists; a first run has nothing to reset, so no
      confirmation needed. */
   window.gstRun = function () {
+    _lastStatus = 'checking';
     _hide('gstNotRunWrap');
     _show('gstCheckingWrap');
     _setActionButton('checking');
@@ -629,6 +640,7 @@
         if (d.success) {
           _gstPoll();
         } else {
+          _lastStatus = 'not_run';
           _hide('gstCheckingWrap');
           _show('gstNotRunWrap');
           _setActionButton('not_run');
@@ -636,6 +648,7 @@
         }
       })
       .catch(function (e) {
+        _lastStatus = 'not_run';
         _hide('gstCheckingWrap');
         _show('gstNotRunWrap');
         _setActionButton('not_run');
@@ -655,6 +668,7 @@
     gstCloseRerunModal();
     clearTimeout(_pollTimer);
     _currentData = null;
+    _lastStatus = 'checking';
     _hide('gstNotRunWrap');
     _hide('gstResultsWrap');
     _hide('gstErrorWrap');
