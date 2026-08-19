@@ -134,6 +134,8 @@
                 <input type="text" id="searchInput" placeholder="History ID, seller GSTIN, seller name, or invoice number" onkeydown="if(event.key==='Enter'){_page=1;loadList();}">
                 <select id="statusFilter" onchange="_page=1;loadList();">
                     <option value="not_run" selected>Not Run</option>
+                    <option value="pending_review">Pending Review</option>
+                    <option value="needs_rerun">Needs Re-run</option>
                     <option value="approved">Approved</option>
                     <option value="all">All</option>
                 </select>

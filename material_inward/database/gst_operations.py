@@ -157,7 +157,22 @@ def list_gst_verification_status(search: str = "", status: str = "", page: int =
     can derive not_run/pending_review/needs_re_run/approved without a
     second query per record. status: "" or "all" (no filter), "not_run"
     (no gst_approval row at all), "approved" (gst_approval.approval_status
-    = 'approved').
+    = 'approved'), "needs_rerun" (gst_approval.bot_error is set), or
+    "pending_review" (a gst_approval row exists, isn't approved, and has
+    no bot_error -- i.e. checked cleanly and just awaiting Compliance's
+    review/approve action).
+
+    FIX (2026-08-18, client request): needs_rerun/pending_review filter
+    options added -- these mirror the exact same status logic app.py's
+    api_gst_verification_list() already computes per-row (kept in sync
+    with that function's if/elif chain), just expressed as SQL conditions
+    here instead of a per-row Python branch, so filtering + pagination
+    both apply at the DB level. NOTE: this doesn't account for a record
+    currently mid-run (api_gst_verification_list()'s in-memory
+    is_running() check, which SQL has no visibility into) -- a record
+    actively being checked could theoretically appear under
+    "Pending Review" here for the few seconds it's running, same caveat
+    that already existed for not_run/approved before this change.
     """
     conditions = ["inv.id IS NOT NULL"]
     params: list = []
@@ -172,6 +187,13 @@ def list_gst_verification_status(search: str = "", status: str = "", page: int =
         conditions.append("ga.history_id IS NULL")
     elif status == "approved":
         conditions.append("ga.approval_status = 'approved'")
+    elif status == "needs_rerun":
+        conditions.append("ga.bot_error IS NOT NULL AND ga.bot_error != ''")
+    elif status == "pending_review":
+        conditions.append(
+            "ga.history_id IS NOT NULL AND ga.approval_status IS DISTINCT FROM 'approved' "
+            "AND (ga.bot_error IS NULL OR ga.bot_error = '')"
+        )
     where_clause = "WHERE " + " AND ".join(conditions)
 
     base_sql = f"""

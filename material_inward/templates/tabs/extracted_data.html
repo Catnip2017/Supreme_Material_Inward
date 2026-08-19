@@ -157,7 +157,16 @@
    regardless of which container currently holds the table. */
 .xd-material-card { display:flex; gap:0; }
 .xd-material-clamp { max-height:118px; overflow:hidden; flex:1; }
-.xd-material-expanded .xd-material-clamp { max-height:none; overflow:visible; }
+/* FIX (2026-08-18, client request): inside the "view all" modal, cap the
+   table to ~7 visible rows with its own scrollbar instead of letting it
+   grow to fit every row -- 264px ~= 1 header row (~26px) + 7 data rows
+   (~34px each). Header uses position:sticky (see .hsn-table-edit thead th
+   below) so it stays pinned while the body scrolls. */
+.xd-material-expanded .xd-material-clamp { max-height:264px; overflow-y:auto; overflow-x:hidden; }
+/* The "Showing X of Y / View more" footer only makes sense on the small
+   collapsed card behind the modal -- redundant once every row is already
+   visible in the modal, so hide it there. */
+.xd-material-expanded .xd-material-more-row { display:none; }
 .xd-material-more-row { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; background:#fafbfc; border:1px solid #e3e3e3; border-top:none; }
 .xd-material-count { font-size:11px; color:#888; }
 .btn-view-more {
@@ -172,6 +181,11 @@
 .hsn-table-edit th {
   background:#fff3c4; color:#7a5c00; padding:6px 8px; text-align:left; font-weight:700;
   border-bottom:2px solid #f0d58c; font-size:10.5px; text-transform:uppercase;
+  /* Pinned header while the modal's 7-row-tall body scrolls -- background
+     above is required for sticky to look right (so scrolled-under rows
+     don't show through). Harmless in the compact (non-modal) clamp too,
+     since that one has overflow:hidden and never actually scrolls. */
+  position:sticky; top:0; z-index:1;
 }
 .hsn-table-edit td { padding:4px 6px; border-bottom:1px solid #e3e3e3; }
 .hsn-table-edit input {
@@ -791,14 +805,14 @@
         <td class="xd-attr-lbl">Consignor Name</td>
         <td class="xd-attr-val"><div class="xd-val-with-copy">
           <input id="lr_consignor_name" maxlength="40" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_seller_address','lr_consignor_name','Seller Address')">📋 Copy from Invoice</button>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_seller_name','lr_consignor_name','Seller Name')">📋 Copy from Invoice</button>
           </div></td>
       </tr>
       <tr>
         <td class="xd-attr-lbl">Consignee Name</td>
         <td class="xd-attr-val"><div class="xd-val-with-copy">
           <input id="lr_consignee_name" maxlength="40" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
-          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_buyer_address','lr_consignee_name','Buyer Address')">📋 Copy from Invoice</button>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_buyer_name','lr_consignee_name','Buyer Name')">📋 Copy from Invoice</button>
           </div></td>
       </tr>
       <tr>
@@ -1328,15 +1342,19 @@ function closeMaterialInfoModal() {
 
 // ============================================================
 // Material Code pattern check (Material Codes are always exactly 8
-// characters and start with 18/20/21/23). Visual only.
+// characters and start with one of the prefixes below). Visual only.
+// FIX (2026-08-18, client-confirmed prefix list): was ['18','20','21','23']
+// -- too narrow, was false-flagging genuine codes starting with 17/19/22/
+// 24/26 as invalid. Same list also updated in services/extract.py's OCR
+// prompt -- keep both in sync if this list changes again.
 // ============================================================
-const MATERIAL_CODE_PREFIXES = ['18', '20', '21', '23'];
+const MATERIAL_CODE_PREFIXES = ['17', '18', '19', '20', '21', '22', '23', '24', '26'];
 
 function _checkMaterialCodeInput(input) {
   const val = (input.value || '').trim().toUpperCase();
   const bad = !!val && !(val.length === 8 && MATERIAL_CODE_PREFIXES.includes(val.slice(0, 2)));
   input.classList.toggle('field-mismatch', bad);
-  input.title = bad ? 'Material Code is usually 8 characters, starting with 18/20/21/23 -- please verify.' : '';
+  input.title = bad ? 'Material Code is usually 8 characters, starting with 17/18/19/20/21/22/23/24/26 -- please verify.' : '';
 }
 
 function _checkAllMaterialCodes() {

@@ -345,6 +345,13 @@ def _apply_stock_transfer_routing(extracted: dict) -> dict:
       - Tax Invoice + Stock Transfer: invoice_number <- "GST Invoice Sr.
         No.", po_number <- "Sales Order / STO No." -- a genuine IRN CAN be
         present here and is left as extracted.
+      - Either document type + Stock Transfer: seller_address <- "Unit
+        from where goods supplied" (client request, 2026-08-18) --
+        Principle Place of Business is the registered/head-office address,
+        not where the goods actually left from, so for this document
+        family the dispatch-location address is the more useful value in
+        the Seller Address field. Applies whenever the field was found,
+        regardless of challan vs. tax invoice.
 
     Forcing irn="" for the Delivery Challan case is deliberate and happens
     here (extraction phase) specifically so the frontend never has to
@@ -354,8 +361,9 @@ def _apply_stock_transfer_routing(extracted: dict) -> dict:
     Delivery Challan already displays clean with zero frontend changes.
 
     document_title / type_of_sale / gst_invoice_sr_no / gst_challan_sr_no /
-    sales_order_sto_no / ref_no are internal-only fields -- never rendered
-    on the Extracted Data tab -- used purely to decide this routing. If
+    sales_order_sto_no / ref_no / unit_from_where_goods_supplied are
+    internal-only fields -- never rendered on the Extracted Data tab --
+    used purely to decide this routing. If
     Type of Sale isn't Stock Transfer (the normal case), extracted is
     returned untouched and the regular invoice_number/po_number extraction
     above stands as-is.
@@ -363,6 +371,17 @@ def _apply_stock_transfer_routing(extracted: dict) -> dict:
     type_of_sale = (extracted.get("type_of_sale") or "").upper()
     if "STOCK TRANSFER" not in type_of_sale:
         return extracted
+
+    # Applies to either document type in this family -- "Unit from where
+    # goods supplied" is the real dispatch address, distinct from the
+    # registered "Principle Place of Business" address the general
+    # seller_address extraction rule would otherwise pick up.
+    if extracted.get("unit_from_where_goods_supplied"):
+        logger.info(
+            "Stock Transfer routing applied: seller_address <- Unit from "
+            "where goods supplied (was %r)", extracted.get("seller_address")
+        )
+        extracted["seller_address"] = extracted["unit_from_where_goods_supplied"]
 
     title = (extracted.get("document_title") or "").upper()
     is_challan = "DELIVERY CHALLAN" in title or bool(extracted.get("gst_challan_sr_no"))
@@ -502,18 +521,19 @@ Important field notes:
 - "buyer_address"/"seller_address"/"ship_to_address": these almost always span MULTIPLE LINES (street, village/area, city, state, PIN code, country) -- read every line belonging to that address block and join them into ONE combined string separated by ", " (comma and space), e.g. "VILLAGE: AMDOSHI / WANGANI, WAI-ROAD, TALUKA-ROHA, RAIGAD, MAHARASHTRA 402106", not just the first word or first line. Do NOT join with an actual line break -- comma-and-space only, per the SINGLE LINE rule above. On a landscape layout, address blocks are often squeezed into a narrow column and wrap across 3-4 short lines -- make sure you have captured the full block down to the PIN code before moving on, rather than stopping after the first line.
 - "buyer_gstin"/"seller_gstin": always exactly 15 characters (2-digit state code, 10-character PAN, 1-digit entity code, the letter "Z", 1 checksum character) -- if what you've read is shorter or longer than 15 characters, re-examine that region of the image for a missed or extra character before returning it.
 - "company_pan": always exactly 10 characters, format 5 letters + 4 digits + 1 letter (e.g. AAACE1713F) -- note that this PAN is also embedded inside the Seller GSTIN as characters 3-12, so if the two are visible together you can cross-check one against the other.
-- "hsn_sac" (also applies to hsn_details[].hsn_sac): a numeric HSN/SAC code, commonly 4, 6, or 8 digits -- do not confuse it with Material Code (which is always 8 characters and starts with 18/20/21/23, see below) or with a batch/lot number printed in the same row.
+- "hsn_sac" (also applies to hsn_details[].hsn_sac): a numeric HSN/SAC code, commonly 4, 6, or 8 digits -- do not confuse it with Material Code (which is always 8 characters and starts with 17/18/19/20/21/22/23/24/26, see below) or with a batch/lot number printed in the same row.
 - "grand_total": Some invoices show two separate total blocks -- an initial total (e.g. "Total Invoice Value") and a final total after deductions (e.g. "Total Net Invoice Value", "Net Payable", after a "Less: Advance Received" or similar line). When both appear, "grand_total" is always the FINAL net payable figure -- the one after any deduction line, not the subtotal above it. If there is only one total block, use that.
 - "material_code" (top-level field notes, applies to hsn_details[].material_code too): The vendor or buyer internal item identifier — look for labels
   like "Item Code", "Product Code", "Part No", "SAP Code", "Material Code",
   "Art. No", "Cat. No", or any alphanumeric code column separate from HSN/SAC.
   These material codes are always exactly 8 characters long and start with
-  one of "18", "20", "21", or "23" (e.g. 18040021, 20115032, 21987744,
-  23004410) -- use this shape to help distinguish it from other nearby
-  codes/numbers of a different length, and to sanity-check a read: if the
-  code you found is not 8 characters or does not start with one of those
-  four prefixes, double-check you have not picked up a different column
-  (HSN/SAC, batch no, etc.) before returning it. Return empty string if not
+  one of "17", "18", "19", "20", "21", "22", "23", "24", or "26" (e.g.
+  18040021, 20115032, 21987744, 23004410) -- use this shape to help
+  distinguish it from other nearby codes/numbers of a different length,
+  and to sanity-check a read: if the code you found is not 8 characters or
+  does not start with one of those nine prefixes, double-check you have
+  not picked up a different column (HSN/SAC, batch no, etc.) before
+  returning it. Return empty string if not
   found.
 - "rate": The unit rate/price per item as shown in the Rate column.
 - "unit": The unit of measure for the line item (e.g., pc, Nos, EA, Num, kg).
@@ -563,6 +583,14 @@ Important field notes:
   present.
 - "ref_no": Look for a label "Ref No." (top right header block, distinct from
   "Customer PO No."). Return empty string if not present.
+- "unit_from_where_goods_supplied": Only appears on documents from this
+  stock-transfer document family -- look for a label "Unit from where goods
+  supplied" (left column, below "Principle Place of Business"). This is the
+  actual dispatch location's address, which is a DIFFERENT address from
+  Principle Place of Business (the registered/head-office address) on these
+  documents -- do not confuse the two blocks. Join multi-line address text
+  into one comma-separated line, same rule as buyer_address/seller_address
+  above. Return empty string if not present.
 - "outbound_delivery_number": Look for a label "Outbound Delivery Number" or
   "Outbound Delivery No" (commonly near the bottom-left, next to Lot Number /
   Vehicle Number). Extract this into its own field whenever it's visible,
@@ -616,6 +644,7 @@ Correct any field that fails these checks before returning the JSON.
   "gst_challan_sr_no": "",
   "sales_order_sto_no": "",
   "ref_no": "",
+  "unit_from_where_goods_supplied": "",
   "outbound_delivery_number": "",
   "buyer_name": "",
   "buyer_address": "",
