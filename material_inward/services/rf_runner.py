@@ -154,12 +154,13 @@ def _run_rf_script(
     script_name: str,
     variables: dict,
     timeout_seconds: int = 120,
-    extra_env: Optional[dict] = None
+    extra_env: Optional[dict] = None,
+    history_id=None
 ) -> dict:
     if script_name == "po_fetch.robot":
         _force_kill_sap()
     _wake_sap_session()
- 
+
     sap_free = _wait_for_sap_free(max_wait_seconds=240, check_interval=30)
     if not sap_free:
         return {
@@ -172,19 +173,40 @@ def _run_rf_script(
         msg = f"RF script not found: {script_path}"
         logger.error(msg)
         return {"success": False, "error": msg, "output": ""}
- 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # FIX (2026-08-21): logs used to all land flat in one folder, named only
+    # <script>_<timestamp> -- with no history_id anywhere, finding every log
+    # for a specific record meant opening folders one at a time and reading
+    # the RESULT: markers inside each. Restructured into
+    # <step>/<date>/h<history_id>_<time>/ so logs are (a) segregated by which
+    # bot ran (one flat folder no longer holds every step type mixed
+    # together), (b) segregated by day (a single folder won't grow to
+    # thousands of entries), and (c) directly searchable by record --
+    # `h340_` in a folder name is now enough to find every run for
+    # history_id=340 across every step, without opening anything.
+    hid_label = f"h{history_id}" if history_id not in (None, "", 0) else "h_unknown"
+    step_label = script_name.replace(".robot", "")
+    now = datetime.now()
+    date_label = now.strftime("%Y-%m-%d")
+    time_label = now.strftime("%H%M%S")
     output_dir = os.path.join(
         config.RF_OUTPUT_PATH,
-        f"{script_name.replace('.robot', '')}_{timestamp}"
+        step_label,
+        date_label,
+        f"{hid_label}_{time_label}"
     )
     os.makedirs(output_dir, exist_ok=True)
- 
+
     cmd = [
         "python", "-m", "robot",
         "--outputdir", output_dir,
         "--loglevel", "DEBUG",
         "--nostatusrc",
+        # Embeds history_id into the RF log/report's own suite metadata too
+        # (visible in log.html's "Metadata" section and output.xml), not
+        # just the folder name -- so it's still identifiable even if a log
+        # file gets copied/moved out of its folder.
+        "--metadata", f"History_ID:{hid_label}",
     ]
     for key, value in variables.items():
         # FIX: this used to escape every ":" in the value as "\:", on the
@@ -448,7 +470,7 @@ def execute_gate_in_sap(data: dict) -> dict:
     # this comment is the record of why.
     result = _run_rf_script(
         "gate_in.robot", variables, timeout_seconds=180,
-        extra_env=_sap_credential_env(data)
+        extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
         return {"success": False, "error": result["error"], "gate_in_number": None}
@@ -539,6 +561,17 @@ def execute_migo_103_sap(data: dict) -> dict:
                 _item["qty_expected"] = str(_item["qty_expected"])[:13]
             if _item.get("qty_actual") is not None:
                 _item["qty_actual"] = str(_item["qty_actual"])[:13]
+            # ADDED (2026-08-21): item_no (PO Item Number / EBELP) is what
+            # migo_103.robot now matches each line against instead of array
+            # position -- SAP's MIGO grid silently drops PO lines already
+            # fully received, so "the Nth item we sent" was never reliably
+            # "the Nth row in SAP's grid" (confirmed root cause of the
+            # wrong-material-code GRIN issue). item_no is read off the real
+            # PO by po_fetch.robot and carried through the matching UI
+            # untouched -- capped defensively to SAP's own EBELP field
+            # width (5 digits, e.g. "00130").
+            if _item.get("item_no") is not None:
+                _item["item_no"] = str(_item["item_no"])[:5]
  
     items_json_str = json.dumps(items_data)
     items_json_b64 = base64.b64encode(items_json_str.encode()).decode()
@@ -567,13 +600,13 @@ def execute_migo_103_sap(data: dict) -> dict:
  
     result = _run_rf_script(
         "migo_103.robot", variables, timeout_seconds=300,
-        extra_env=_sap_credential_env(data)
+        extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"], "material_doc_number": None}
- 
+        return {"success": False, "error": result["error"], "material_doc_number": None, "item_results": []}
+
     mat_doc = _extract_marked_value(result["output"], "MATERIAL_DOC_NUMBER")
- 
+
     # FIX (2026-08-10): capture SAP's own status-bar text (see migo_103.robot's
     # Capture Final SAP Status, which now emits this unconditionally in
     # teardown) and append it to whichever failure message gets returned
@@ -582,7 +615,23 @@ def execute_migo_103_sap(data: dict) -> dict:
     # Empty/None if the marker wasn't found or SAP's status bar was blank.
     sap_status = _extract_marked_value(result["output"], "SAP_STATUS_MSG")
     sap_status_suffix = f' SAP showed: "{sap_status}"' if sap_status else ""
- 
+
+    # ADDED (2026-08-21): per-item match/post outcome. migo_103.robot now
+    # matches by PO Item Number (EBELP) instead of array position, and an
+    # item can legitimately come back "item not found" (already fully
+    # received, dropped from SAP's grid) without failing the whole run.
+    # Logged BEFORE Post is clicked in the robot script, so it's present
+    # even on a MANUAL_CHECK_REQUIRED or crashed run -- surfaced here so
+    # the caller (rf_queue_worker.py) can show/store which items actually
+    # got matched vs. skipped, instead of only one aggregate result.
+    item_results_raw = _extract_marked_value(result["output"], "ITEM_RESULTS")
+    item_results = []
+    if item_results_raw:
+        try:
+            item_results = json.loads(item_results_raw)
+        except Exception:
+            logger.warning(f"Could not parse ITEM_RESULTS marker as JSON: {item_results_raw[:300]}")
+
     if not mat_doc:
         # FIX: don't say "posted" when the script actually errored out
         # before ever reaching Post -- see _rf_test_actually_passed's
@@ -601,7 +650,8 @@ def execute_migo_103_sap(data: dict) -> dict:
                     "and error). No SAP document was created. Try again."
                     + sap_status_suffix
                 ),
-                "material_doc_number": None
+                "material_doc_number": None,
+                "item_results": item_results
             }
         return {
             "success": False,
@@ -610,7 +660,8 @@ def execute_migo_103_sap(data: dict) -> dict:
                 "from the SAP status bar. Check SAP manually before retrying."
                 + sap_status_suffix
             ),
-            "material_doc_number": None
+            "material_doc_number": None,
+            "item_results": item_results
         }
  
     # FIX: real bug, confirmed against history_id=39's flow -- migo_103.robot's
@@ -641,16 +692,134 @@ def execute_migo_103_sap(data: dict) -> dict:
                 "retrying without checking risks creating a duplicate GR."
                 + sap_status_suffix
             ),
-            "material_doc_number": None
+            "material_doc_number": None,
+            "item_results": item_results
         }
+
+    return {
+        "success": True,
+        "material_doc_number": mat_doc,
+        "error": None,
+        "item_results": item_results
+    }
  
-    return {"success": True, "material_doc_number": mat_doc, "error": None}
  
- 
+# ============================================================
+# MIGO 103 REVERSAL — SAP action A03 (ADDED 2026-08-21)
+#
+# Runs migo_reversal.robot against an already-posted MIGO 103 material
+# document. This is a REAL, final SAP posting (Post is live, confirmed
+# 2026-08-21) -- it creates a NEW SAP document that references the
+# original, it does not undo/delete the original GR. history.migo_103 /
+# material_doc_number must stay untouched; the caller (rf_queue_worker.py)
+# is expected to record the reversal via db_operations.mark_migo_103_reversed
+# using this function's returned reversal_doc_number, not overwrite the
+# original posting's own record.
+# ============================================================
+
+def execute_migo_103_reversal_sap(data: dict) -> dict:
+    """
+    data: {"material_doc_number": str, "history_id": int}
+
+    Returns {"success": bool, "error": str|None, "reversal_doc_number":
+    str|None, "raw_result": dict} -- raw_result is the full parsed
+    REVERSAL_STATUS payload (matdoc_entry_status/header_text_status/
+    post_status included) for logging/debugging even on failure.
+    """
+    mat_doc = str(data.get("material_doc_number", "") or "").strip()
+    history_id = data.get("history_id", "")
+    if not mat_doc:
+        return {
+            "success": False,
+            "error": f"Missing material_doc_number — cannot run MIGO reversal for history_id={history_id}",
+            "reversal_doc_number": None,
+            "raw_result": {}
+        }
+
+    variables = {
+        "MATERIAL_DOC_NUMBER": mat_doc,
+    }
+
+    # Per-user credential override, same as execute_migo_103_sap -- a
+    # reversal is an attributable SAP posting, not a shared read-only
+    # lookup like po_fetch.
+    result = _run_rf_script(
+        "migo_reversal.robot", variables, timeout_seconds=240,
+        extra_env=_sap_credential_env(data), history_id=data.get("history_id")
+    )
+    if not result["success"]:
+        return {
+            "success": False,
+            "error": result["error"],
+            "reversal_doc_number": None,
+            "raw_result": {}
+        }
+
+    status_raw = _extract_marked_value(result["output"], "REVERSAL_STATUS")
+    if not status_raw:
+        if not _rf_test_actually_passed(result["output"]):
+            return {
+                "success": False,
+                "error": (
+                    "MIGO Reversal not done — the automation script errored "
+                    "out before completing (see the RF log for the exact "
+                    "step and error). Check SAP manually before retrying."
+                ),
+                "reversal_doc_number": None,
+                "raw_result": {}
+            }
+        return {
+            "success": False,
+            "error": (
+                "MIGO Reversal ran but no result was captured. "
+                "Check SAP manually before retrying."
+            ),
+            "reversal_doc_number": None,
+            "raw_result": {}
+        }
+
+    try:
+        parsed = json.loads(status_raw)
+    except Exception as e:
+        logger.error(f"Could not parse REVERSAL_STATUS marker as JSON: {status_raw[:300]} ({e})")
+        return {
+            "success": False,
+            "error": (
+                "MIGO Reversal ran but its result could not be read. "
+                "Check SAP manually before retrying."
+            ),
+            "reversal_doc_number": None,
+            "raw_result": {}
+        }
+
+    if parsed.get("status") != "COMPLETED":
+        step = parsed.get("step", "unknown step")
+        message = parsed.get("message") or parsed.get("post_status") or "no SAP message captured"
+        return {
+            "success": False,
+            "error": (
+                f"MIGO Reversal did not complete (failed at {step}). "
+                f'SAP showed: "{message}". Check SAP manually (TCODE: MIGO) '
+                "before retrying -- retrying without checking risks a "
+                "duplicate reversal attempt."
+            ),
+            "reversal_doc_number": None,
+            "raw_result": parsed
+        }
+
+    reversal_doc_number = parsed.get("reversal_doc_number") or None
+    return {
+        "success": True,
+        "error": None,
+        "reversal_doc_number": reversal_doc_number,
+        "raw_result": parsed
+    }
+
+
 # ============================================================
 # MIGO 105 — per-line batch via ITEMS_JSON_BATCH
 # ============================================================
- 
+
 def execute_migo_105_sap(data: dict) -> dict:
     """
     Pass per-line batch values to robot via ITEMS_JSON_BATCH (base64 of JSON).
@@ -693,7 +862,7 @@ def execute_migo_105_sap(data: dict) -> dict:
  
     result = _run_rf_script(
         "migo_105.robot", variables, timeout_seconds=300,
-        extra_env=_sap_credential_env(data)
+        extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -766,7 +935,7 @@ def execute_miro_sap(data: dict) -> dict:
     }
     result = _run_rf_script(
         "miro.robot", variables, timeout_seconds=300,
-        extra_env=_sap_credential_env(data)
+        extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -835,7 +1004,7 @@ def execute_po_fetch_sap(data: dict) -> dict:
     # added to _run_rf_script's own TimeoutExpired handler as a backstop,
     # but raising this to a realistic ceiling is the actual fix: no
     # legitimate PO should need anywhere near 2700s.
-    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=2700)
+    result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=2700, history_id=data.get("history_id"))
     # FIX: real root cause of "bot finished, looped through everything, but
     # SAP was still open at the end" -- po_fetch.robot's own Close SAP
     # Session only killed saplogon.exe, never saplgpad.exe/sapgui.exe (fixed
@@ -858,6 +1027,32 @@ def execute_po_fetch_sap(data: dict) -> dict:
         po_items = json.loads(raw_json)
         if not isinstance(po_items, list):
             po_items = []
+
+        # FIX (2026-08-24): po_fetch.robot now detects an invalid/non-existent
+        # PO number (SAP status bar "Document ... does not exist") and stops
+        # immediately instead of reading whatever was left on screen from a
+        # previous PO -- that used to silently return stale/wrong line items.
+        # But that bot-side fix returns a single-element list shaped like
+        # {"status": "PO_NOT_FOUND", "message": ..., "po_number": ...}, which
+        # has none of the real line-item keys (item_no/material_code/qty/...).
+        # Without this check, the code below it would have treated that as
+        # "1 real line item" and saved a blank/garbage row to the database
+        # while reporting success -- worse than the original bug, since it
+        # would look like it worked. Catch that shape here and report it as
+        # the clear failure it actually is.
+        if (
+            len(po_items) == 1
+            and isinstance(po_items[0], dict)
+            and po_items[0].get("status") == "PO_NOT_FOUND"
+        ):
+            not_found_msg = po_items[0].get("message") or f"PO {po_number} does not exist in SAP."
+            logger.warning(f"PO fetch: PO={po_number} not found in SAP — {not_found_msg}")
+            return {
+                "success": False,
+                "error": f"PO {po_number} does not exist in SAP. Please check the PO number for typos. (SAP: {not_found_msg})",
+                "po_items": [],
+            }
+
         logger.info(f"PO fetch successful — PO={po_number} {len(po_items)} line(s).")
         return {"success": True, "po_items": po_items, "error": None}
     except json.JSONDecodeError as e:
@@ -877,7 +1072,7 @@ def execute_po_list_fetch_sap(data: dict) -> dict:
     # v16: po_list_fetch (ME2N open-PO lookup) always uses the shared
     # spl_rpa .env SAP login too -- same reasoning as po_fetch above.
     variables = {"VENDOR_NAME": vendor_name}
-    result = _run_rf_script("po_list_fetch.robot", variables, timeout_seconds=120)
+    result = _run_rf_script("po_list_fetch.robot", variables, timeout_seconds=120, history_id=data.get("history_id"))
     if not result["success"]:
         return {"success": False, "error": result["error"], "po_list": []}
  
@@ -943,7 +1138,7 @@ def execute_update_gatein_po_sap(data: dict) -> dict:
         # failure purely from the outer timeout (see the FIX note on
         # subprocess.TimeoutExpired in _run_rf_script above).
         "zgatein_update.robot", variables, timeout_seconds=300,
-        extra_env=_sap_credential_env(data)
+        extra_env=_sap_credential_env(data), history_id=history_id
     )
  
     # FIX (2026-08-11): check the success marker BEFORE giving up on
@@ -1034,7 +1229,8 @@ def execute_migo103_link_sap(data: dict) -> dict:
         "DOCUMENT_LINK":       data.get("document_link", ""),
     }
     result = _run_rf_script(
-        "migo103_link.robot", variables, timeout_seconds=180
+        "migo103_link.robot", variables, timeout_seconds=180,
+        history_id=data.get("history_id")
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -1061,7 +1257,8 @@ def execute_migo105_link_sap(data: dict) -> dict:
         "DOCUMENT_LINK":       data.get("document_link", ""),
     }
     result = _run_rf_script(
-        "migo105_link.robot", variables, timeout_seconds=180
+        "migo105_link.robot", variables, timeout_seconds=180,
+        history_id=data.get("history_id")
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -1085,7 +1282,7 @@ def execute_miro_link_sap(data: dict) -> dict:
     }
     result = _run_rf_script(
         "miro_link.robot", variables, timeout_seconds=180,
-        extra_env=_sap_credential_env(data)
+        extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -1153,7 +1350,8 @@ def execute_zgrn_print_sap(data: dict) -> dict:
     }
 
     # Deliberately no extra_env= -- always spl_rpa, see module comment above.
-    result = _run_rf_script("zgrn.robot", variables, timeout_seconds=180)
+    run_started_at = time.time()
+    result = _run_rf_script("zgrn.robot", variables, timeout_seconds=180, history_id=history_id)
 
     status_val = _extract_marked_value(result.get("output") or "", "ZGRN_PRINT_STATUS")
     script_reached_end = bool(status_val and status_val.upper() == "DONE")
@@ -1162,8 +1360,23 @@ def execute_zgrn_print_sap(data: dict) -> dict:
     grn_path = os.path.join(config.ZGRN_PRINT_FOLDER, f"{mat_doc}_{today}_GRN.pdf")
     cgd_path = os.path.join(config.ZGRN_PRINT_FOLDER, f"{mat_doc}_{today}_CGD.pdf")
 
-    grn_exists = os.path.isfile(grn_path)
-    cgd_exists = os.path.isfile(cgd_path) if print_twice else True  # not expected if print_twice is False
+    def _fresh(path):
+        # FIX (2026-08-21): the GRN filename is fully deterministic, so a
+        # same-day reprint (retry after a failed/timed-out first attempt,
+        # or an intentional reprint) lands on the exact same path an
+        # earlier run may have already written. os.path.isfile() alone
+        # can't tell "this run wrote it" from "a stale file from an
+        # earlier run is still sitting there" -- a run that hangs or fails
+        # would still be reported as success purely because an old file
+        # already existed. Now also requires the file's mtime to be after
+        # this run started.
+        try:
+            return os.path.isfile(path) and os.path.getmtime(path) >= run_started_at
+        except OSError:
+            return False
+
+    grn_exists = _fresh(grn_path)
+    cgd_exists = _fresh(cgd_path) if print_twice else True  # not expected if print_twice is False
 
     files = {
         "grn": grn_path if grn_exists else None,

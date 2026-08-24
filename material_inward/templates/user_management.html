@@ -70,6 +70,13 @@
         .user-profile:hover {
             transform: scale(1.05);
         }
+
+        .back-link {
+            color: #1e5ca8;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link:hover { text-decoration: underline; }
  
         .dropdown-menu {
             display: none;
@@ -511,15 +518,30 @@
             </div>
         </div>
  
-        <div class="user-menu">
-            <div class="user-profile" onclick="toggleDropdown(event)">
-                {{ role[0] if role else 'A' }}
-            </div>
- 
-            <div class="dropdown-menu" id="userDropdown">
-                <a href="/history"><i class="fas fa-history"></i> History</a>
-                <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
-                <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+        <div style="display:flex; align-items:center; gap:22px;">
+            <a href="/history" class="back-link"><i class="fas fa-arrow-left"></i> Back to History</a>
+
+            <div class="user-menu">
+                <div class="user-profile" onclick="toggleDropdown(event)">
+                    {{ role[0] if role else 'A' }}
+                </div>
+
+                <div class="dropdown-menu" id="userDropdown">
+                    <a href="/history"><i class="fas fa-history"></i> History</a>
+                    {% if is_superadmin or has_role('compliance') or allow_user_upload %}
+                    <a href="/new_entry"><i class="fas fa-plus"></i> New Entry</a>
+                    {% endif %}
+                    {% if is_superadmin %}
+                    <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
+                    {% endif %}
+                    {% if has_role('record_admin') %}
+                    <a href="/admin/records"><i class="fas fa-database"></i> Record Admin</a>
+                    {% endif %}
+                    {% if is_superadmin or has_role('compliance') %}
+                    <a href="/gst_verification"><i class="fas fa-file-invoice"></i> GST Verification</a>
+                    {% endif %}
+                    <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                </div>
             </div>
         </div>
     </div>

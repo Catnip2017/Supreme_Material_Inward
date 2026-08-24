@@ -78,6 +78,17 @@
 </div>
 {% endif %}
 
+{# ADDED (2026-08-21): proactive warning matching MIGO 103's own reversed-
+   status banner -- without this, the only way to find out MIGO 105 is
+   blocked was clicking Post and getting a server error back. #}
+{% if history and history.migo_103_reversed %}
+<div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:0 0 16px;font-weight:500;">
+  ↩️ MIGO 103 for this record was reversed in SAP
+  {% if history.migo_103_reversal_doc_number %}(new document {{ history.migo_103_reversal_doc_number }}){% endif %}.
+  MIGO 105 cannot be posted.
+</div>
+{% endif %}
+
   <input type="hidden" id="history_id_migo105" value="{{ history_id or '' }}">
 
   {% if resolved_vendor_name %}
@@ -148,7 +159,8 @@
 
   <div class="action-buttons">
     <button type="button" id="migo105Btn" class="btn btn-primary" onclick="submitMigo105()"
-        {% if history and history.migo_105 %}disabled{% endif %}
+        {% if history and (history.migo_105 or history.migo_103_reversed) %}disabled{% endif %}
+        {% if history and history.migo_103_reversed and not history.migo_105 %}title="MIGO 103 was reversed -- MIGO 105 cannot be posted."{% endif %}
         style="{% if history and history.migo_105 %}background:#00b894;{% else %}background:#1e5ca8;{% endif %};padding:10px 20px;font-size:14px;font-weight:600;min-width:160px;">
   {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
 </button>

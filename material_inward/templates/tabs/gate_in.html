@@ -149,15 +149,18 @@
 <div class="content-card">
   <h3>🚪 Gate In Entry Form</h3>
 {% set status = (history.approval_status if history else 'pending') or 'pending' %}
-{% set gst_ok = (history.gst_check) if history else false %}
-{% set post_locked = (status != 'approved') or (not gst_ok) %}
+{# FIX (2026-08-14, client request): Gate In no longer waits on GST
+   Verification -- see app.py's _check_step_allowed()/
+   _extracted_data_view_state() for the matching backend change. Only
+   Data Approval gates Gate In now; the old "GST Verification Pending"
+   intermediate banner is gone along with the gst_ok/post_locked factor
+   that used to require it. #}
+{% set post_locked = (status != 'approved') %}
 {% set is_approved = (status == 'approved') %}
 {% if not is_approved %}
 <div class="gate-banner">⏸ <strong>Awaiting Approval</strong> — Approve the record in Extracted Data first.</div>
-{% elif not gst_ok %}
-<div class="gate-banner" style="background:#fff8e1;border-color:#ffc107;color:#856404;">⚠ <strong>Data Approved — GST Verification Pending</strong> — Complete GST Approval tab to unlock posting.</div>
 {% else %}
-<div class="gate-banner unlocked">✓ <strong>Approved & GST Verified</strong> — Ready for Gate In posting.</div>
+<div class="gate-banner unlocked">✓ <strong>Approved</strong> — Ready for Gate In posting.</div>
 {% endif %}
 
   {% if history %}

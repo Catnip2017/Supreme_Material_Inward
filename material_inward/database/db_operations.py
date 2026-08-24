@@ -204,6 +204,47 @@ def update_history_step(
         return False
 
 
+def mark_migo_103_reversed(
+    history_id: int,
+    reversal_doc_number: str,
+    reversed_by: Optional[str] = None,
+) -> bool:
+    """
+    Records a successful MIGO 103 reversal (schema_migration_v27.sql).
+
+    Deliberately does NOT touch migo_103 / material_doc_number / migo_103_done_at
+    -- the original GR document is unchanged historical fact; SAP's reversal
+    (action A03) creates a SEPARATE new document that references it. This
+    only adds the "this record was later reversed" metadata layered on top.
+
+    Reversal is only ever called for a record where migo_103=1 already (see
+    app.py's reversal route) -- not enforced again here, since this is a
+    pure data-write helper, not a policy gate.
+    """
+    sql = """
+        UPDATE history
+        SET migo_103_reversed = 1,
+            migo_103_reversal_doc_number = %s,
+            migo_103_reversed_at = %s,
+            migo_103_reversed_by = %s,
+            updated_at = %s
+        WHERE id = %s
+    """
+    now = datetime.now()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (reversal_doc_number, now, reversed_by, now, history_id))
+                logger.info(
+                    f"History {history_id} marked migo_103_reversed "
+                    f"(doc={reversal_doc_number}, by={reversed_by})"
+                )
+                return True
+    except Exception as e:
+        logger.error(f"Failed to mark migo_103_reversed for ID {history_id}: {e}")
+        return False
+
+
 # ============================================================
 # APPROVAL WORKFLOW
 # ============================================================
@@ -584,23 +625,22 @@ def get_history_search(
         params.extend([like, like, like, like, like, like, like])
 
     if status == "pending":
-        # FIX: was just "h.gate_in = 0" -- left broad on purpose back when
-        # data_approved/gst_approved were added (see the v20 note this
-        # replaces), but that means it overlapped with those two: a record
-        # that's already Data Approved or GST Approved (just not yet gated
-        # in) still matched "Pending" too, so picking that filter showed
-        # other statuses mixed in. The status badge's CASE below already
-        # defines "Pending" narrowly as none-of-the-above (its ELSE
-        # branch) -- this now matches that exact definition instead of a
-        # broader one, so the filter and the badge agree.
+        # FIX (2026-08-14, client request): dropped the gst_check clause --
+        # GST Verification is now fully independent/on-demand and no
+        # longer gates or orders anything here, so it can finish before,
+        # during, or after Data Approval. A record's "Pending" vs. "Data
+        # Approved" bucket is decided by approval_status alone now; see
+        # the matching CASE change below and the removed "gst_approved"
+        # bucket just below this one.
         conditions.append(
-            "h.gate_in = 0 AND COALESCE(h.approval_status, '') != 'approved' "
-            "AND COALESCE(h.gst_check, 0) = 0"
+            "h.gate_in = 0 AND COALESCE(h.approval_status, '') != 'approved'"
         )
     elif status == "data_approved":
-        conditions.append("h.approval_status = 'approved' AND COALESCE(h.gst_check, 0) = 0")
-    elif status == "gst_approved":
-        conditions.append("COALESCE(h.gst_check, 0) = 1 AND h.gate_in = 0")
+        # FIX (2026-08-14, client request): used to require gst_check = 0
+        # too (an "approved but GST not yet checked" exclusive stage) --
+        # since Gate In no longer waits on GST, "Data Approved" now just
+        # means "approved, not yet gated in," regardless of GST state.
+        conditions.append("h.approval_status = 'approved' AND h.gate_in = 0")
     elif status == "gate_in_done":
         # Added alongside data_approved/gst_approved above -- same v20
         # pattern, splitting a specific, commonly-wanted state (Gate In
@@ -673,26 +713,39 @@ def get_history_search(
             h.gst_check, h.gst_check_done_at,
             h.created_at,
             h.gatein_done_at, h.migo_103_done_at, h.migo_105_done_at, h.miro_done_at,
+            -- ADDED (2026-08-21): reversal tracking (schema_migration_v27.sql)
+            -- was missing from this SELECT entirely, so a reversed record
+            -- looked identical to a normal one on the History page -- see
+            -- the 'MIGO 103 Reversed' status CASE branch below.
+            h.migo_103_reversed, h.migo_103_reversal_doc_number,
+            h.migo_103_reversed_at,
             -- who actually submitted the Gate In (gate_in_entries.submitted_by,
             -- see schema_migration_v16.sql) -- shown in the History page's
             -- existing collapsible step-times panel, not a new always-visible
             -- column, so this doesn't add clutter to the main table.
             gatein.submitted_by AS gate_in_submitted_by,
             -- v20: "Data Approved" (Extracted Data tab approval,
-            -- history.approval_status) and "GST Approved"
-            -- (history.gst_check, already the same column
-            -- services/gst_operations.py._mark_gst_check_done sets, no
-            -- migration needed) slotted in before Gate In Done, matching
-            -- the actual order a record has to clear both gates before
-            -- Gate In is allowed (see the Extracted Data approve modal's
-            -- own "GST Verification must also be completed before Gate
-            -- In" text).
+            -- history.approval_status) slotted in before Gate In Done.
+            -- FIX (2026-08-14, client request): "GST Approved" removed as
+            -- a pipeline stage -- GST Verification is independent/
+            -- on-demand now and no longer gates Gate In (see app.py's
+            -- _check_step_allowed), so it has no fixed place in this
+            -- ordered CASE anymore. GST's own state is now surfaced
+            -- separately as the compliance-only "GST Verified" Yes/No
+            -- column instead (see get_history_search's SELECT / the
+            -- caller in app.py), not as a step in this status badge.
             CASE
+                -- ADDED (2026-08-21): checked first -- a reversed record
+                -- can still have miro/migo_105 done from BEFORE it was
+                -- reversed (reversal is now blocked going forward once
+                -- either is done, but this covers the display side for
+                -- any such record either way), and "MIRO Done"/"MIGO 105
+                -- Done" would be a misleading thing to show once reversed.
+                WHEN h.migo_103_reversed = 1 THEN 'MIGO 103 Reversed'
                 WHEN h.miro = 1     THEN 'MIRO Done'
                 WHEN h.migo_105 = 1 THEN 'MIGO 105 Done'
                 WHEN h.migo_103 = 1 THEN 'MIGO 103 Done'
                 WHEN h.gate_in = 1  THEN 'Gate In Done'
-                WHEN COALESCE(h.gst_check, 0) = 1 AND h.approval_status = 'approved' THEN 'GST Approved'
                 WHEN h.approval_status = 'approved' THEN 'Data Approved'
                 ELSE 'Pending'
             END AS status

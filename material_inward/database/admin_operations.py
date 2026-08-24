@@ -173,12 +173,22 @@ def reset_gate_in_step(history_id: int, performed_by: str) -> bool:
 
 
 def reset_migo_103_step(history_id: int, performed_by: str) -> bool:
+    # FIX (2026-08-21): this used to leave migo_103_reversed and its 3
+    # sibling columns (schema_migration_v27.sql) completely untouched. A
+    # reset is meant to give this step a clean slate for a fresh repost --
+    # but with the reversal columns left stale, a record that was reversed
+    # BEFORE being reset would still have migo_103_reversed=1 sitting there
+    # after the reset, permanently blocking MIGO 105/MIRO (app.py's
+    # _check_step_allowed) even for a brand-new, never-reversed repost.
+    # Now cleared together, same as every other MIGO 103-owned column here.
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """UPDATE history
                        SET migo_103 = 0, migo_103_done_at = NULL, material_doc_number = NULL,
+                           migo_103_reversed = 0, migo_103_reversal_doc_number = NULL,
+                           migo_103_reversed_at = NULL, migo_103_reversed_by = NULL,
                            updated_at = CURRENT_TIMESTAMP
                        WHERE id = %s""",
                     (history_id,)

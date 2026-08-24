@@ -128,6 +128,105 @@ def get_gst_approval(history_id: int) -> Optional[dict]:
         return None
 
 
+# v27 (2026-08-14): backs the new GST Verification admin page -- lists every
+# record that HAS invoice data (only those are GST-eligible at all, since
+# there's no seller GSTIN to check without one) alongside whatever
+# gst_approval result exists for it, if any. "Was it run" here is exactly
+# "does a gst_approval row exist" -- no new column needed, see the design
+# discussion this was built from. is_running() is checked separately by the
+# caller (app.py), in-memory, since that's not something SQL can see.
+#
+# v28 (2026-08-14, client request): added the status param -- the admin
+# page's filter dropdown (Not Run / Approved / All, default Not Run) has to
+# be applied HERE, in the WHERE clause, rather than after the fact in
+# app.py -- app.py's per-record status derivation (not_run/pending_review/
+# needs_rerun/approved/checking) runs on whatever page of rows comes back,
+# so filtering after that point would paginate over the wrong row set
+# (e.g. page 1 of "Not Run" could come back mostly empty because the SQL
+# LIMIT/OFFSET already sliced off a different 20 rows before filtering).
+# "checking" can't be expressed in SQL at all (it's in-memory, see above)
+# -- not a problem here since it isn't one of the 3 filter values; a row
+# that happens to be actively running when fetched under "All" or "Not
+# Run" still gets the correct live "checking" label from app.py, same as
+# before, just computed after this already-correct page of rows returns.
+def list_gst_verification_status(search: str = "", status: str = "", page: int = 1, per_page: int = 50) -> dict:
+    """
+    Returns {"total": int, "records": [ {id, invoice_number, seller_name,
+    seller_gstin, created_at, gst_row: {...} or None}, ... ]}, newest
+    first. gst_row is the full gst_approval row (or None) so the caller
+    can derive not_run/pending_review/needs_re_run/approved without a
+    second query per record. status: "" or "all" (no filter), "not_run"
+    (no gst_approval row at all), "approved" (gst_approval.approval_status
+    = 'approved'), "needs_rerun" (gst_approval.bot_error is set), or
+    "pending_review" (a gst_approval row exists, isn't approved, and has
+    no bot_error -- i.e. checked cleanly and just awaiting Compliance's
+    review/approve action).
+
+    FIX (2026-08-18, client request): needs_rerun/pending_review filter
+    options added -- these mirror the exact same status logic app.py's
+    api_gst_verification_list() already computes per-row (kept in sync
+    with that function's if/elif chain), just expressed as SQL conditions
+    here instead of a per-row Python branch, so filtering + pagination
+    both apply at the DB level. NOTE: this doesn't account for a record
+    currently mid-run (api_gst_verification_list()'s in-memory
+    is_running() check, which SQL has no visibility into) -- a record
+    actively being checked could theoretically appear under
+    "Pending Review" here for the few seconds it's running, same caveat
+    that already existed for not_run/approved before this change.
+    """
+    conditions = ["inv.id IS NOT NULL"]
+    params: list = []
+    if search:
+        conditions.append(
+            "(CAST(h.id AS TEXT) ILIKE %s OR inv.seller_gstin ILIKE %s "
+            "OR inv.seller_name ILIKE %s OR inv.invoice_number ILIKE %s)"
+        )
+        like = f"%{search}%"
+        params.extend([like, like, like, like])
+    if status == "not_run":
+        conditions.append("ga.history_id IS NULL")
+    elif status == "approved":
+        conditions.append("ga.approval_status = 'approved'")
+    elif status == "needs_rerun":
+        conditions.append("ga.bot_error IS NOT NULL AND ga.bot_error != ''")
+    elif status == "pending_review":
+        conditions.append(
+            "ga.history_id IS NOT NULL AND ga.approval_status IS DISTINCT FROM 'approved' "
+            "AND (ga.bot_error IS NULL OR ga.bot_error = '')"
+        )
+    where_clause = "WHERE " + " AND ".join(conditions)
+
+    base_sql = f"""
+        FROM history h
+        JOIN invoice_data inv ON inv.id = h.id
+        LEFT JOIN gst_approval ga ON ga.history_id = h.id
+        {where_clause}
+    """
+    count_sql = f"SELECT COUNT(*) {base_sql}"
+    data_sql = f"""
+        SELECT
+            h.id, h.created_at,
+            inv.invoice_number, inv.seller_name, inv.seller_gstin,
+            ga.approval_status AS gst_approval_status,
+            ga.bot_error, ga.checked_at
+        {base_sql}
+        ORDER BY h.created_at DESC
+        LIMIT %s OFFSET %s
+    """
+    offset = (page - 1) * per_page
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(count_sql, params)
+                total = cur.fetchone()["count"]
+                cur.execute(data_sql, params + [per_page, offset])
+                records = [dict(r) for r in cur.fetchall()]
+        return {"total": total, "records": records}
+    except Exception as e:
+        logger.error(f"[gst_ops] list_gst_verification_status failed: {e}")
+        return {"total": 0, "records": []}
+
+
 # ── Approve ───────────────────────────────────────────────────────────────────
 
 def approve_gst(history_id: int, approved_by: str) -> bool:

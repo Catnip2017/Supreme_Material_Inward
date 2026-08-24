@@ -519,7 +519,21 @@
                    data-deleted below, read by autoPair()'s poRows filter,
                    and the disabled pair-btn-po which also blocks manual
                    click-to-pair. #}
-                <tr data-idx="{{ loop.index0 }}" data-deleted="{{ 'true' if is_deleted else 'false' }}"{% if is_deleted %} class="po-row-deleted" title="This line is marked deleted in SAP -- not selectable for pairing."{% endif %}>
+                {# FIX (2026-08-21): data-item-no carries the REAL SAP PO item
+                   number (EBELP, e.g. "10"/"20"/"120") through into the DOM --
+                   previously only loop.index (a display-only 1,2,3... position)
+                   existed anywhere on this row, so nothing downstream
+                   (confirmMatches, matched-pairs table, items_data sent to
+                   migo_103.robot) had access to the real PO seat number at
+                   all. That's the root cause of the material-code-mismatch
+                   incident (PO 4100035144): the robot posted by matched-pair
+                   POSITION, not by the actual PO line, and SAP's own MIGO grid
+                   silently drops already-received lines, so position and real
+                   PO line stop agreeing the moment anything's been partially
+                   delivered. The "#" column below now shows the real item_no
+                   instead of a cosmetic 1,2,3 count, so what's on screen
+                   matches what's actually stored and posted. #}
+                <tr data-idx="{{ loop.index0 }}" data-item-no="{{ item.get('item_no','') }}" data-deleted="{{ 'true' if is_deleted else 'false' }}"{% if is_deleted %} class="po-row-deleted" title="This line is marked deleted in SAP -- not selectable for pairing."{% endif %}>
                   <td>
                     {% if is_deleted %}
                     <button type="button" class="pair-btn pair-btn-po" data-pair="" disabled title="Deleted in SAP -- not pairable"></button>
@@ -527,7 +541,7 @@
                     <button type="button" class="pair-btn pair-btn-po" data-pair="" onclick="onPoPairClick(this)" ></button>
                     {% endif %}
                   </td>
-                  <td style="color:#888;font-size:11px;">{{ loop.index }}{% if is_deleted %} <span class="po-deleted-badge">Deleted</span>{% endif %}</td>
+                  <td style="color:#888;font-size:11px;" title="PO item number (SAP EBELP)">{{ item.get('item_no','') }}{% if is_deleted %} <span class="po-deleted-badge">Deleted</span>{% endif %}</td>
                   <td data-field="material_code">{{ item.get('material_code','') }}</td>
                   <td data-field="qty">{{ item.get('qty','') }}</td>
                   <td data-field="unit">{{ item.get('unit','') }}</td>
@@ -627,10 +641,37 @@
         {% if not (history and history.migo_103) %}disabled title="Complete MIGO 103 posting first"{% endif %}>
         🖨️ Print
     </button>
+    {# ADDED (2026-08-21): MIGO Reversal (SAP action A03) -- only offered once
+       MIGO 103 has actually posted, and only once (a record already reversed
+       shows a status badge instead -- see below). This is a real, final SAP
+       posting: it creates a new SAP document referencing the original and
+       permanently blocks MIGO 105/MIRO for this record afterward, so it's
+       gated behind a confirmation dialog in submitMigoReversal(). #}
+    {# ADDED (2026-08-21): also hidden once MIGO 105/MIRO have posted --
+       reversing at that point would leave those postings referencing
+       stock that's been reversed back out. Matches the server-side guard
+       in app.py's run_migo_103_reversal(). #}
+    {% if history and history.migo_103 and not history.migo_103_reversed and not history.migo_105 and not history.miro %}
+    <button type="button" id="migoReversalBtn" class="btn btn-danger" onclick="submitMigoReversal()"
+        style="background:#e17055;border-color:#e17055;">
+        ↩️ Reverse
+    </button>
+    {% endif %}
   </div>
 
   <div id="zgrnPrintStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
   <div id="zgrnPrintLinks" style="display:none;margin:0 0 16px;"></div>
+
+  {% if history and history.migo_103_reversed %}
+  <div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;">
+    ↩️ MIGO 103 was reversed in SAP
+    {% if history.migo_103_reversal_doc_number %}(new document {{ history.migo_103_reversal_doc_number }}){% endif %}
+    {% if history.migo_103_reversed_at %}on {{ history.migo_103_reversed_at }}{% endif %}
+    {% if history.migo_103_reversed_by %}by {{ history.migo_103_reversed_by }}{% endif %}.
+    MIGO 105 and MIRO are blocked for this record.
+  </div>
+  {% endif %}
+  <div id="migoReversalStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
 
   {% if history_id %}
   {% set remarks_panel_id = 'migo103' %}
@@ -1277,7 +1318,14 @@ function confirmMatches() {
       amount:        invRow?.querySelector('[data-field="amount"]')?.value || '',
       hsn_sac:       invRow?.querySelector('[data-field="hsn_sac"]')?.value || '',
     };
+    // FIX (2026-08-21): po.item_no is the real SAP PO item number (EBELP),
+    // read off the PO row's data-item-no attribute (see the Jinja template
+    // above) -- carried through here so it can be stored on the matched-pair
+    // row and, from there, into items_data for migo_103.robot's grid
+    // matching. Without this, the robot has no way to know which real PO
+    // line a matched pair belongs to.
     const po = {
+      item_no:       poRow?.getAttribute('data-item-no') || '',
       material_code: poRow?.querySelector('[data-field="material_code"]')?.textContent.trim() || '',
       short_text:    poDescRow?.querySelector('[data-field="short_text"]')?.textContent.trim() || '',
       quantity:      poRow?.querySelector('[data-field="qty"]')?.textContent.trim() || '',
@@ -1289,7 +1337,20 @@ function confirmMatches() {
 
    const tr = document.createElement('tr');
     tr.setAttribute('data-pair', pair.pairNum);
+    // Real PO item number, stashed as a data attribute (no visible column
+    // needed) -- read back by _collectMigoItems() below.
+    tr.setAttribute('data-item-no', po.item_no);
 
+    // FIX (2026-08-21, client decision): Mat. Code / HSN-SAC / Short Text
+    // now always come from the PO side ONLY, never falling back to the
+    // invoice OCR value even if the PO's own value happens to be blank
+    // (e.g. non-stock/service PO lines with no material master code) --
+    // the PO is SAP's own verified data, the OCR reading is not. Both
+    // short_text columns (invoice + PO) stay visible side by side so a
+    // mismatch between what the invoice says and what SAP's PO says is
+    // still plainly visible -- only which one gets STORED has changed.
+    // Qty/Rate/Amount are unchanged (still inv-or-po, still user-editable
+    // inputs) -- only these three "ground truth" fields switched.
     tr.innerHTML = `
       <td>
         <div class="row-move-btns">
@@ -1298,10 +1359,10 @@ function confirmMatches() {
         </div>
       </td>
       <td style="font-weight:600;color:#1e5ca8;">${idx + 1}</td>
-      <td>${_esc(inv.material_code || po.material_code)}</td>
+      <td>${_esc(po.material_code)}</td>
       <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
       <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
-      <td>${_esc(inv.hsn_sac || po.hsn_sac)}</td>
+      <td>${_esc(po.hsn_sac)}</td>
       <td>${_esc(inv.unit || po.unit)}</td>
       <td><input type="text" class="form-input" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
       <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
@@ -1477,21 +1538,30 @@ function _collectMigoItems() {
       const inputs = row.querySelectorAll('input[type="text"]');
       const cells  = row.querySelectorAll('td');
       // matchedBody <tr> cell layout (see confirmMatches() above):
-      // [0]=move-buttons [1]=# [2]=material_code [3]=short_text(inv)
-      // [4]=short_text(po) [5]=hsn_sac [6]=UOM [7]=qty-input [8]=dn-qty-input
-      // [9]=rate-input [10]=amount-input [11]=undo-button.
-      // FIX: this was previously reading cells[1]/[2]/[4] (which are
-      // actually "#", material_code, and short_text(po) respectively) into
-      // material_code/short_text/hsn_sac -- a one-column-off bug that
-      // scrambled every posted line's material_code/short_text/hsn_sac in
-      // migo_entries.items_data. Doesn't affect the actual SAP posting
-      // (migo_103.robot posts by PO line number + qty only -- see its Step 4
-      // comments -- material/short_text/hsn_sac in items_data are metadata,
-      // not typed into SAP), but it did corrupt our own stored record.
+      // [0]=move-buttons [1]=# [2]=material_code(PO) [3]=short_text(inv)
+      // [4]=short_text(po) [5]=hsn_sac(PO) [6]=UOM [7]=qty-input
+      // [8]=dn-qty-input [9]=rate-input [10]=amount-input [11]=undo-button.
+      //
+      // FIX (2026-08-21, client decision): material_code/hsn_sac/short_text
+      // now come from the PO side (cells[2], cells[5], cells[4]) -- these
+      // columns are already PO-sourced-only as of confirmMatches() above,
+      // never falling back to the invoice OCR value, so reading them
+      // straight through here is correct. Previously short_text was read
+      // from cells[3] (the invoice column) -- switched to cells[4] (PO)
+      // to match the same "PO is ground truth" decision for this field.
+      //
+      // item_no: the real SAP PO item number (EBELP), stashed as a data
+      // attribute on this row by confirmMatches() -- this is what
+      // migo_103.robot now uses to find the correct SAP grid row to post
+      // into, replacing the old `line` (matched-pair position) field that
+      // caused the material-code-mismatch incident. `line` is kept too,
+      // display-numbering only (e.g. MIGO 105's "Line Items from MIGO 103"
+      // table) -- the robot itself only reads item_no now.
       items.push({
         line:          idx + 1,
+        item_no:       row.getAttribute('data-item-no') || '',
         material_code: cells[2]?.textContent.trim() || '',
-        short_text:    cells[3]?.textContent.trim() || '',
+        short_text:    cells[4]?.textContent.trim() || '',
         hsn_sac:       cells[5]?.textContent.trim() || '',
         unit:          cells[6]?.textContent.trim() || '',
         qty_expected:  inputs[0]?.value || '',
@@ -1507,12 +1577,18 @@ function _collectMigoItems() {
   // Fallback — no matches; use raw invoice rows. Read by data-field
   // attribute, not position -- see autoPair()/confirmMatches() above.
   // Short Text lives on the following item-desc-row sibling.
+  // NOTE: item_no is necessarily blank here -- with no PO pairing at all,
+  // there's no real PO line to identify. In practice validateMigo103()
+  // already blocks submission with zero confirmed pairs, so this branch
+  // shouldn't be reachable from the normal Submit button -- kept as a
+  // defensive fallback, not a supported posting path.
   document.querySelectorAll('#invoiceItemsBody tr[data-idx]').forEach((row, idx) => {
     const materialEl = row.querySelector('[data-field="material_code"]');
     const descRow = row.nextElementSibling;
     if (materialEl) {
       items.push({
         line:          idx + 1,
+        item_no:       '',
         material_code: materialEl.value || '',
         short_text:    descRow?.querySelector('[data-field="short_text"]')?.value || '',
         qty_expected:  row.querySelector('[data-field="qty"]')?.value || '',
@@ -1650,6 +1726,50 @@ function submitZgrnPrint() {
         ).join('');
         linksEl.style.display = 'block';
       }
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+// ── MIGO Reversal (SAP action A03) ─────────────────────────────────────────
+// ADDED (2026-08-21): reverses an already-posted MIGO 103 document. A REAL,
+// final SAP posting (not a dry run) -- creates a new SAP document referencing
+// the original, and permanently blocks MIGO 105/MIRO for this record
+// afterward, so this is confirmed before submitting. Reuses submitAndPoll/
+// pollRFJob exactly like Post MIGO 103 / Print do above.
+function submitMigoReversal() {
+  const historyId = parseInt(document.getElementById('history_id_migo').value);
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+
+  const confirmed = confirm(
+    'Reverse this MIGO 103 in SAP?\n\n' +
+    'This posts a real cancellation (SAP action A03) -- it is not a preview ' +
+    'or dry run, and it cannot be undone from this app. MIGO 105 and MIRO ' +
+    'will be permanently blocked for this record afterward.\n\n' +
+    'Continue?'
+  );
+  if (!confirmed) return;
+
+  const btn      = document.getElementById('migoReversalBtn');
+  const statusEl = document.getElementById('migoReversalStatus');
+
+  submitAndPoll(`/api/run_migo_103_reversal/${historyId}`, {}, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `✓ MIGO 103 reversed in SAP${result.reversal_doc_number ? ' — new document ' + result.reversal_doc_number : ''}.`;
+      // Same reload pattern as Post MIGO 103 above -- refreshes this tab
+      // (and any other tab reading history.migo_103_reversed) so the
+      // "already reversed" badge and disabled state show up without a
+      // manual reload.
+      sessionStorage.setItem('mi_reload_tab', 'migo103');
+      setTimeout(() => window.location.reload(), 1800);
     },
     onFailure: (error) => {
       statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';

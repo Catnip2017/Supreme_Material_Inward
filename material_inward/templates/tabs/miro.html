@@ -53,6 +53,19 @@
 </div>
 {% endif %}
 
+{# ADDED (2026-08-21): same proactive warning as MIGO 105's tab. In
+   practice a reversal can no longer even be triggered once MIGO 105 is
+   done (see app.py's run_migo_103_reversal guard), so this shouldn't be
+   reachable through the normal UI flow -- kept as defense-in-depth in
+   case of older/inconsistent data. #}
+{% if history and history.migo_103_reversed %}
+<div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:0 0 16px;font-weight:500;">
+  ↩️ MIGO 103 for this record was reversed in SAP
+  {% if history.migo_103_reversal_doc_number %}(new document {{ history.migo_103_reversal_doc_number }}){% endif %}.
+  MIRO cannot be posted.
+</div>
+{% endif %}
+
     <!-- <div class="form-row">
       <div class="form-group">
         <label>Transaction</label>
@@ -140,7 +153,8 @@
 
     <div class="action-buttons">
       <button type="submit" id="miroSubmitBtn" class="btn btn-primary"
-        {% if history and history.miro %}disabled style="background:#00b894;"{% endif %}>
+        {% if history and history.miro %}disabled style="background:#00b894;"
+        {% elif history and history.migo_103_reversed %}disabled title="MIGO 103 was reversed -- MIRO cannot be posted."{% endif %}>
         {% if history and history.miro %}✓ MIRO Posted — Complete{% else %}📮 Post MIRO{% endif %}
       </button>
     </div>

@@ -86,7 +86,7 @@ def set_sap_focus(element_path: str):
     session.FindById(element_path).SetFocus()
 
 
-def get_delflag_status(table_path, row):
+def get_delflag_status(table_path, row, session=None):
     """
     ADDED (2026-08-12): reads IconName/Tooltip/Text of the deletion-status
     button in a PO line-item grid row directly via the SAP GUI Scripting
@@ -101,14 +101,32 @@ def get_delflag_status(table_path, row):
     Deleted rows are still returned (row_status="Deleted" in the JSON
     output) rather than dropped, so the app can grey them out instead of
     making them look like they silently vanished.
+
+    FIX (2026-08-24): this used to always re-derive the session itself via
+    GetScriptingEngine.Children(0).Children(0) -- the exact same "always
+    grabs the FIRST connection/session that exists" bug already fixed at
+    the .robot level (see po_fetch.robot's/migo_103.robot's Connect To Sap
+    Session, which now binds to SapGuiLibrary's own ${lib.session} instead
+    of re-deriving by index). That .robot-level fix never touched this
+    Python helper, which is a separate library and does its own independent
+    COM lookup -- so this call could still silently read delflag status
+    from the WRONG SAP window whenever more than one SAP connection/session
+    exists (e.g. a leftover window from an earlier run, or a user with SAP
+    Logon open separately on the same machine), producing a wrong or
+    stale Active/Deleted flag with no error at all. Now accepts the
+    already-correctly-bound session object as an optional argument --
+    po_fetch.robot passes its own ${session} (bound via ${lib.session})
+    in -- and only falls back to the old Children(0).Children(0) lookup if
+    no session is passed, for backward compatibility with any other caller.
     """
-    try:
-        sap_gui_auto = win32com.client.GetObject("SAPGUI")
-        application = sap_gui_auto.GetScriptingEngine
-        connection = application.Children(0)
-        session = connection.Children(0)
-    except Exception as e:
-        return f"ERROR:SESSION:{e}"
+    if session is None:
+        try:
+            sap_gui_auto = win32com.client.GetObject("SAPGUI")
+            application = sap_gui_auto.GetScriptingEngine
+            connection = application.Children(0)
+            session = connection.Children(0)
+        except Exception as e:
+            return f"ERROR:SESSION:{e}"
 
     path = f"{table_path}/btnMEPO1211-STATUSICON[0,{row}]"
     try:

@@ -24,12 +24,37 @@ ${ITEMS_JSON_B64}    W10=
 # .pressButton() method isn't exposed by SapGuiLibrary's own keywords.
 ${PATH_TREE_CLOSE_BTN}    wnd[0]/shellcont/shell/shellcont[1]/shell[0]
 ${session}          ${NONE}
- 
- 
+
+# --- MIGO item overview grid (ADDED 2026-08-21 -- EBELP-based matching) ----
+# Used to read the live grid and match each incoming item by PO Item Number
+# (EBELP) instead of by array position -- see Fill MIGO 103 And Post's Step 4
+# comment for the full reasoning (this replaced the root cause of the wrong-
+# material-code GRIN issue).
+${GOITEM_TABLE}    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMLIST:SAPLMIGO:0200/tblSAPLMIGOTV_GOITEM
+${COL_GOITEM_MATNR}     59
+${COL_GOITEM_ERFMG}     4
+${COL_GOITEM_EBELP}     39
+
+# --- Multi-bot coordination (ADDED 2026-08-21) ------------------------------
+${REFCOUNT_FILE}           C:\\temp\\sap_bot_refcount.txt
+${REFCOUNT_LOCK_DIR}       C:\\temp\\sap_bot_refcount.lock
+
+
 *** Test Cases ***
 Execute MIGO 103
     [Setup]    Initialize SAP And Login
-    ${mat_doc}=    Fill MIGO 103 And Post
+    ${result}=    Fill MIGO 103 And Post
+    # ${result} is now a dict: {"status": "COMPLETED"|"MANUAL_CHECK_REQUIRED",
+    # "matdoc": "...", "item_results": [...]}. RESULT:ITEM_RESULTS is already
+    # logged inside the keyword itself (before Post is even clicked, so it's
+    # always available even on a MANUAL_CHECK_REQUIRED outcome). Here we only
+    # need to re-derive the single MATERIAL_DOC_NUMBER marker rf_runner.py
+    # already knows how to extract, unchanged from before.
+    IF    '${result}[status]' == 'COMPLETED'
+        ${mat_doc}=    Set Variable    ${result}[matdoc]
+    ELSE
+        ${mat_doc}=    Set Variable    MANUAL_CHECK_REQUIRED
+    END
     Log To Console    RESULT:MATERIAL_DOC_NUMBER:${mat_doc}
     Sleep    10s
     [Teardown]    Close SAP Session
@@ -60,15 +85,50 @@ Initialize SAP And Login
         Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
     END
  
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Sleep    2s
- 
-    Start Process    ${LOGON_PATH}  
-    Sleep    5s
- 
-    Connect To Session
+    Register Bot Start
+
+    # MULTI-BOT FIX (2026-08-21): this used to unconditionally taskkill
+    # saplogon.exe here, every run -- fine standalone, but under concurrency
+    # that kills whatever session another bot already has open. Now: only
+    # start fresh if SAP Logon isn't already running; otherwise reuse the
+    # existing process and just open a new connection window under it. The
+    # whole open-connection + login + session-bind sequence runs under the
+    # refcount lock so two bots can never race for "which connection is
+    # mine" (see Connect To Sap Session).
+    Acquire Refcount Lock
+
+    ${tasklist_result}=    Run Process    tasklist    /FI    IMAGENAME eq saplogon.exe
+    ${already_running}=    Run Keyword And Return Status
+    ...    Should Contain    ${tasklist_result.stdout}    saplogon.exe
+
+    IF    ${already_running}
+        Log To Console    SAP Logon already open -- reusing existing process, opening a new connection window under it.
+    ELSE
+        Log To Console    SAP Logon not running -- starting fresh.
+        Start Process    ${LOGON_PATH}
+        Sleep    5s
+    END
+
+    # Retries instead of failing on the first attempt -- SAP Logon Pad's
+    # scripting engine can take a moment to be ready right after launch.
+    # SELF-HEALING: if this still can't connect after a real attempt, the
+    # process we're trying to reuse is stale/orphaned rather than just slow.
+    # Kill it and start a truly fresh one rather than retrying forever.
+    ${connected}=    Run Keyword And Return Status
+    ...    Wait Until Keyword Succeeds    5x    2s    Connect To Session
+    IF    not ${connected}
+        Log To Console    Could not connect to the existing SAP Logon process -- treating it as stale, killing it and starting fresh.
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe    /T
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe    /T
+        Sleep    2s
+        Start Process    ${LOGON_PATH}
+        Sleep    5s
+        Wait Until Keyword Succeeds    10x    2s    Connect To Session
+    END
+
     Open Connection    ${CONN_NAME}
- 
+
     Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
     Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
     Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
@@ -97,15 +157,16 @@ Initialize SAP And Login
  
     Sleep    5s
     Dismiss Any Popup
- 
+
     Maximize Window    0
     Connect To Sap Session
- 
- 
- 
- 
- 
- 
+
+    # Only release the lock once THIS bot's own session is fully bound --
+    # from here on, another bot is free to open its own connection without
+    # any chance of grabbing this bot's window by mistake.
+    Release Refcount Lock
+
+
 Get Firstline Path
     # The Action/RefDoc combo box subscreen can render as either :0003 or
     # :0007 depending on MIGO's current internal state (seen in GUI Script
@@ -128,19 +189,216 @@ Get Firstline Path
  
     Fail    Neither SAPLMIGO:0003 nor SAPLMIGO:0007 firstline subscreen found -- MIGO screen state unrecognized.
  
+Ensure Header And Detail Open
+    # Header Data and Item Detail sections each toggle open/closed, and the
+    # screen number shifts depending on the OTHER section's current state.
+    # Only the "open" button name is searched for -- btnOK_HEADER (header)
+    # and btnBUTTON_DETAIL (detail). If found, click it once. If not found,
+    # the section is already open, so do nothing and move on. The "close"
+    # button names (btnBUTTON_HEADER_TOGGLE, btnBUTTON_ITEMDETAIL) are
+    # deliberately never searched for -- we only ever open, never close.
  
+    # --- Header: open button = btnOK_HEADER ---
+    ${header_open_path}=    Set Variable    ${EMPTY}
+    FOR    ${scr}    IN    0002    0003    0004    0005
+        ${candidate}=    Set Variable
+        ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:${scr}/subSUB_HEADER:SAPLMIGO:0102/btnOK_HEADER
+        ${found}=    Run Keyword And Return Status    Element Should Be Present    ${candidate}
+        IF    ${found}
+            ${header_open_path}=    Set Variable    ${candidate}
+            BREAK
+        END
+    END
+ 
+    IF    '${header_open_path}' != '${EMPTY}'
+        Run Keyword And Ignore Error
+        ...    Evaluate    $session.findById('${header_open_path}').press()
+        Sleep    1s
+        Log To Console    Header data was closed -- opened it (${header_open_path}).
+    ELSE
+        Log To Console    Header data already open -- leaving as is.
+    END
+ 
+    # --- Item Detail: open button = btnBUTTON_DETAIL ---
+    ${detail_open_path}=    Set Variable    ${EMPTY}
+    FOR    ${scr}    IN    0002    0003    0004    0005
+        ${candidate}=    Set Variable
+        ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:${scr}/subSUB_ITEMDETAIL:SAPLMIGO:0302/btnBUTTON_DETAIL
+        ${found}=    Run Keyword And Return Status    Element Should Be Present    ${candidate}
+        IF    ${found}
+            ${detail_open_path}=    Set Variable    ${candidate}
+            BREAK
+        END
+    END
+ 
+    IF    '${detail_open_path}' != '${EMPTY}'
+        Run Keyword And Ignore Error
+        ...    Evaluate    $session.findById('${detail_open_path}').press()
+        Sleep    1s
+        Log To Console    Item detail was closed -- opened it (${detail_open_path}).
+    ELSE
+        Log To Console    Item detail already open -- leaving as is.
+    END
+
 Connect To Sap Session
-    # Attaches to the same live SAP GUI Scripting session SapGuiLibrary is
-    # already driving, so Evaluate can call session.findById(...).pressButton(...)
-    # -- a GuiShell tree control method SapGuiLibrary's own keywords don't
-    # expose. Same pattern as robot_scripts/migo_invoice_link.robot's own
-    # Connect To Sap Session. Requires: pip install pywin32 (already a
-    # dependency for every other bot here).
-    ${sess}=    Evaluate
-    ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
+    # MULTI-BOT FIX (2026-08-21): previously used
+    # GetScriptingEngine.Children(0).Children(0), which always grabs the
+    # FIRST connection/session that exists -- wrong bot under concurrency.
+    # SapGuiLibrary itself already knows exactly which connection/session
+    # THIS bot's own Open Connection call just created, so reuse that
+    # instead of re-deriving it by index. Same object either way -- still
+    # usable for the GuiShell tree control's .pressButton() calls that
+    # SapGuiLibrary's own keywords don't expose.
+    ${lib}=    Get Library Instance    SapGuiLibrary
+    ${sess}=    Set Variable    ${lib.session}
     Set Suite Variable    ${session}    ${sess}
- 
- 
+
+
+Acquire Refcount Lock
+    # Directory creation is atomic on Windows -- used as a simple mutex.
+    # Retries for up to ~30s (150 x 0.2s) since the critical section covers
+    # the full login sequence, not just a quick counter-file write.
+    FOR    ${attempt}    IN RANGE    1    150
+        ${status}=    Run Keyword And Return Status
+        ...    Create Directory    ${REFCOUNT_LOCK_DIR}
+        IF    ${status}
+            RETURN
+        END
+        Sleep    0.2s
+    END
+    Log    Could not acquire refcount lock after retries -- proceeding anyway to avoid deadlock.    level=WARN
+
+
+Release Refcount Lock
+    Run Keyword And Ignore Error    Remove Directory    ${REFCOUNT_LOCK_DIR}
+
+
+Register Bot Start
+    # Increments the shared counter. Creates the counter file at 0 first
+    # if this is the very first bot to ever run. Uses its own short-lived
+    # lock acquisition (separate from the login-sequence lock) so
+    # registering doesn't hold the lock any longer than necessary.
+    Create Directory    C:\\temp
+    Acquire Refcount Lock
+
+    ${exists}=    Run Keyword And Return Status
+    ...    File Should Exist    ${REFCOUNT_FILE}
+    ${current}=    Set Variable    ${0}
+    IF    ${exists}
+        ${raw}=    Get File    ${REFCOUNT_FILE}
+        ${raw}=    Strip String    ${raw}
+        IF    '${raw}' != ''
+            ${current}=    Convert To Integer    ${raw}
+        END
+    END
+
+    ${new_count}=    Evaluate    ${current} + 1
+    ${new_count_str}=    Convert To String    ${new_count}
+    Create File    ${REFCOUNT_FILE}    ${new_count_str}
+
+    Log To Console    SAP bot refcount: ${current} -> ${new_count} (this bot registered as active)
+
+    Release Refcount Lock
+
+
+Register Bot End
+    # Decrements the shared counter and returns the count remaining AFTER
+    # this bot's decrement. If it returns 0, this bot was the last one
+    # active and should be the one to close SAP.
+    Acquire Refcount Lock
+
+    ${exists}=    Run Keyword And Return Status
+    ...    File Should Exist    ${REFCOUNT_FILE}
+    IF    ${exists}
+        ${current}=    Get File    ${REFCOUNT_FILE}
+        ${current}=    Convert To Integer    ${current}
+    ELSE
+        ${current}=    Set Variable    ${0}
+    END
+
+    ${new_count}=    Evaluate    max(0, ${current} - 1)
+    ${new_count_str}=    Convert To String    ${new_count}
+    Create File    ${REFCOUNT_FILE}    ${new_count_str}
+
+    Log To Console    SAP bot refcount: ${current} -> ${new_count} (this bot deregistering)
+
+    Release Refcount Lock
+    RETURN    ${new_count}
+
+
+Extract MIGO Item Table
+    [Documentation]    Reads the live item overview grid row by row: Line
+    ...    number (ZEILE, used for DETAIL_ZEILE navigation), PO Item Number
+    ...    (EBELP, used for matching), Material, Short Text, Qty. Returns
+    ...    the raw list of dicts so Step 4 can search it directly. This is
+    ...    what replaced position-based matching (${line_num}=${i}+1) --
+    ...    SAP's grid silently drops PO lines that are already fully
+    ...    received, so array position in our payload never reliably lined
+    ...    up with the actual grid row; EBELP is SAP's own unique line
+    ...    identifier and is read directly from this same grid.
+    @{item_rows}=    Create List
+    ${row_idx}=    Set Variable    0
+    ${scroll_pos}=    Set Variable    0
+    ${visible_rows}=    Evaluate    $session.findById('${GOITEM_TABLE}').VisibleRowCount
+
+    WHILE    True
+        ${row_in_view}=    Evaluate    ${row_idx} - ${scroll_pos}
+        IF    ${row_in_view} >= ${visible_rows}
+            ${scroll_pos}=    Set Variable    ${row_idx}
+            Run Keyword And Ignore Error
+            ...    Evaluate    setattr($session.findById('${GOITEM_TABLE}').verticalScrollbar, 'position', ${scroll_pos})
+            Sleep    0.5s
+        END
+        ${grid_row}=    Evaluate    ${row_idx} - ${scroll_pos}
+
+        ${zeile_path}=    Set Variable    ${GOITEM_TABLE}/btnGOITEM-ZEILE[0,${grid_row}]
+        ${line_res}=    Run Keyword And Ignore Error    Get Value    ${zeile_path}
+        IF    '${line_res}[0]' == 'FAIL'
+            BREAK
+        END
+        ${line_no}=    Clean Value    ${line_res}[1]
+        ${line_no_stripped}=    Replace String    ${line_no}    _    ${EMPTY}
+        ${line_no_stripped}=    Replace String    ${line_no_stripped}    .    ${EMPTY}
+        ${line_no_stripped}=    Strip String    ${line_no_stripped}
+        IF    '${line_no_stripped}' == '${EMPTY}'
+            BREAK
+        END
+
+        ${st_path}=    Set Variable    ${GOITEM_TABLE}/ctxtGOITEM-MAKTX[1,${grid_row}]
+        ${st_res}=    Run Keyword And Ignore Error    Get Value    ${st_path}
+        ${short_text}=    Set Variable If    '${st_res}[0]' == 'PASS'    ${st_res}[1]    ${EMPTY}
+
+        ${mat_path}=    Set Variable    ${GOITEM_TABLE}/ctxtGOITEM-MATNR[${COL_GOITEM_MATNR},${grid_row}]
+        ${mat_res}=    Run Keyword And Ignore Error    Get Value    ${mat_path}
+        ${material}=    Set Variable If    '${mat_res}[0]' == 'PASS'    ${mat_res}[1]    ${EMPTY}
+
+        ${qty_path}=    Set Variable    ${GOITEM_TABLE}/txtGOITEM-ERFMG[${COL_GOITEM_ERFMG},${grid_row}]
+        ${qty_res}=    Run Keyword And Ignore Error    Get Value    ${qty_path}
+        ${qty}=    Set Variable If    '${qty_res}[0]' == 'PASS'    ${qty_res}[1]    ${EMPTY}
+
+        ${ebelp_path}=    Set Variable    ${GOITEM_TABLE}/ctxtGOITEM-EBELP[${COL_GOITEM_EBELP},${grid_row}]
+        ${ebelp_res}=    Run Keyword And Ignore Error    Get Value    ${ebelp_path}
+        ${ebelp}=    Set Variable If    '${ebelp_res}[0]' == 'PASS'    ${ebelp_res}[1]    ${EMPTY}
+
+        &{row_data}=    Create Dictionary
+        ...    line_no=${line_no}
+        ...    ebelp=${ebelp}
+        ...    material=${material}
+        ...    short_text=${short_text}
+        ...    qty=${qty}
+        Append To List    ${item_rows}    ${row_data}
+
+        Log To Console    MIGO ITEM ROW ${row_idx}: line=${line_no} ebelp=${ebelp} material=${material} short_text="${short_text}" qty=${qty}
+
+        ${row_idx}=    Evaluate    ${row_idx} + 1
+        IF    ${row_idx} >= 100    BREAK
+    END
+
+    ${total_rows}=    Get Length    ${item_rows}
+    Log To Console    Extracted ${total_rows} live item row(s) from MIGO overview table
+    RETURN    ${item_rows}
+
+
 Dismiss Overview Tree Sidebar
     # INTEGRATION: found by the migo103_link/migo105_link bots -- MIGO can
     # pop up a document-overview tree sidebar on this same screen. Defensive
@@ -182,8 +440,7 @@ Fill MIGO 103 And Post
     # always 0, so this whole line-item loop silently never ran on any
     # real run -- Material/Qty were never being filled at all, regardless
     # of what the app sent. Now parsing the actual decoded payload.
-    ${items_json}=    Evaluate    __import__('base64').b64decode('${ITEMS_JSON_B64}').decode()
-    ${items}=         Evaluate    __import__('json').loads('''${items_json}''')
+    ${items}=    Evaluate    __import__('json').loads(__import__('base64').b64decode('${ITEMS_JSON_B64}').decode())
     ${total}=    Get Length    ${items}
     Log To Console    Total matched pairs to fill: ${total}
  
@@ -192,6 +449,7 @@ Fill MIGO 103 And Post
     Sleep    3s
     Dismiss Any Popup
     Dismiss Overview Tree Sidebar
+    Ensure Header And Detail Open      
  
     # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
     # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
@@ -240,7 +498,13 @@ Fill MIGO 103 And Post
     Send VKey    0
     Sleep    3s
     Dismiss Any Popup
- 
+
+    # --- Read the LIVE grid before typing anything (ADDED 2026-08-21) ---
+    # This is what Step 4 below matches each incoming item against by
+    # EBELP (PO Item Number), instead of guessing a grid row from array
+    # position.
+    @{item_rows}=    Extract MIGO Item Table
+
     # --- Step 3: Header Fields ---
     ${hdr_base}=    Set Variable
     ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110
@@ -274,46 +538,85 @@ Fill MIGO 103 And Post
     Sleep    2s
     Dismiss Any Popup
  
-    # --- Step 4: Line Items — dynamic, n pairs from ITEMS_JSON ---
+    # --- Step 4: Line Items — matched by PO Item Number (EBELP), not array
+    # position. FIX (2026-08-21): this used to navigate by
+    # ${line_num}=${i}+1 -- treating the Nth item WE sent as the Nth row IN
+    # SAP's grid. That silently broke whenever SAP's grid didn't mirror our
+    # array 1:1, which happens routinely: SAP drops PO lines that are
+    # already fully received from the MIGO grid, so a PO with 13 lines can
+    # show only 10 in MIGO, and the row at a given position is not
+    # necessarily the same PO line our array's same position refers to.
+    # That mismatch is the confirmed root cause of the wrong-material-code
+    # GRIN issue (PO 4100035144 and others). Now: each incoming item
+    # carries its own real PO Item Number (EBELP, e.g. "10"/"30"/"40"),
+    # read directly off the PO by po_fetch.robot and carried through the
+    # UI's matching step untouched. We read the live grid once (Extract
+    # MIGO Item Table, above) and look up each item's row by EBELP -- a
+    # direct, unambiguous match, independent of ordering or gaps. A missing
+    # item_no (already received / not in this grid) no longer fails the
+    # whole run -- it's skipped and recorded, so every item's outcome ends
+    # up in ${item_results} for the UI/DB to see.
     Set Suite Variable    ${det_base}
     ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMDETAIL:SAPLMIGO:0301/subSUB_DETAIL:SAPLMIGO:0300
+
+    @{used_item_nos}=    Create List
+    @{item_results}=    Create List
+
     FOR    ${i}    IN RANGE    ${total}
-        ${item}=        Get From List    ${items}    ${i}
-        ${line_num}=    Evaluate    ${i} + 1
- 
+        ${item}=          Get From List    ${items}    ${i}
         ${qty_actual}=    Clean Value    ${item}[qty_actual]
         ${qty_dn}=        Clean Value    ${item}[qty_expected]
-        ${item_short_text}=    Run Keyword And Ignore Error    Set Variable    ${item}[short_text]
- 
-        # Diagnostic: log this item's own short_text alongside the header
-        # REMARKS value that actually gets typed into SGTXT today (see FIX
-        # note at the Post step below) -- makes it easy to see, per run,
-        # whether they match coincidentally (single-item runs) or diverge
-        # (multi-item runs), without having to guess from SAP afterwards.
-        Log To Console    Line ${line_num}: qty_actual=${qty_actual} qty_dn=${qty_dn} item_short_text=${item_short_text}[1] (SGTXT actually filled from REMARKS="${rem_clean}" for every line -- see Step 4 note)
- 
+        ${target_item_no}=    Clean Value    ${item}[item_no]
+
+        IF    $target_item_no in $used_item_nos
+            Log To Console    PO item ${target_item_no} already processed earlier in this list -- skipping duplicate.
+            &{result}=    Create Dictionary    item_no=${target_item_no}    status=duplicate item_no, skipped
+            Append To List    ${item_results}    ${result}
+            CONTINUE
+        END
+
+        # --- Find the live SAP grid row whose EBELP matches this item ---
+        ${matched_row}=    Set Variable    ${NONE}
+        FOR    ${row}    IN    @{item_rows}
+            ${row_ebelp}=    Clean Value    ${row}[ebelp]
+            IF    '${row_ebelp}' == '${target_item_no}'
+                ${matched_row}=    Set Variable    ${row}
+                BREAK
+            END
+        END
+
+        IF    $matched_row == $NONE
+            Log To Console    PO item ${target_item_no} not found in the live SAP grid -- skipping (may already be fully received and dropped from the grid).
+            &{result}=    Create Dictionary    item_no=${target_item_no}    status=item not found
+            Append To List    ${item_results}    ${result}
+            CONTINUE
+        END
+
+        Append To List    ${used_item_nos}    ${target_item_no}
+        ${line_num}=    Set Variable    ${matched_row}[line_no]
+        Log To Console    PO item ${target_item_no} -> matched SAP grid line ${line_num} (EBELP=${matched_row}[ebelp], material=${matched_row}[material])
+
         # Navigate to correct line
         Safe Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num}
         Click Element   ${det_base}/btnOK_LOCATE
         Sleep    1s
         Dismiss Any Popup
- 
-        # --- Diagnostic: confirm the line actually loaded from the PO and
-        # Material auto-populated, BEFORE we touch quantities. We don't have
-        # a verified field ID for the Material tab's MATNR control in this
-        # environment, so this is a best-effort guess wrapped in Run Keyword
-        # And Ignore Error -- if the ID is wrong it just logs "N/A" instead
-        # of failing the whole run. If the real ID differs, send us this
-        # log line and we'll correct it.
+
+        # --- Sanity check: compares the detail screen's own MATNR against
+        # what the OVERVIEW GRID already showed for this same EBELP match --
+        # confirms SAP actually navigated to the same item.
         ${matnr_status}    ${matnr_check}=    Run Keyword And Ignore Error
         ...    Get Value
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_MATERIAL/ssubSUB_TS_GOITEM_MATERIAL:SAPLMIGO:0301/ctxtGOITEM-MATNR
         IF    '${matnr_status}' == 'PASS'
-            Log To Console    Line ${line_num} READBACK: MATNR (material)="${matnr_check}"
+            Log To Console    Line ${line_num} READBACK: MATNR="${matnr_check}" (grid showed "${matched_row}[material]")
+            IF    '${matnr_check}' != '${matched_row}[material]'
+                Log To Console    WARNING: navigated to line ${line_num} but detail-screen MATNR doesn't match the overview grid's MATNR for this item -- check manually.
+            END
         ELSE
             Log To Console    Line ${line_num} READBACK: MATNR field ID not confirmed for this screen -- could not read back (${matnr_check})
         END
- 
+
         # Quantity tab
         Click Element
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_QUANTITIES
@@ -342,18 +645,10 @@ Fill MIGO 103 And Post
         ${erfmg_check}=    Get Value    ${qty_base}/txtGOITEM-ERFMG
         ${lsmng_check}=    Get Value    ${qty_base}/txtGOITEM-LSMNG
         Log To Console    Line ${line_num} READBACK: ERFMG(actual qty)="${erfmg_check}" LSMNG(DN qty)="${lsmng_check}"
- 
-        # Where tab — fill remarks/text
-        # NOTE (flagged for review, not yet changed): SGTXT below is filled
-        # from ${rem_clean} -- the single header-level REMARKS value -- for
-        # EVERY line item, not from this item's own short_text (item[short_text]
-        # from items_data is read and logged above for visibility, but not
-        # used here). With a single line item this is indistinguishable from
-        # "per-item text working correctly", since there's only one value
-        # either way -- it only becomes visible with 2+ items that have
-        # genuinely different short_text from each other and from REMARKS.
-        # Left as-is pending an explicit decision on whether SGTXT should
-        # switch to using ${item}[short_text] per line instead.
+
+        # Where tab — fill remarks/text. SGTXT is filled from ${rem_clean}
+        # -- the single header-level REMARKS value -- for EVERY line item.
+        # Unchanged behavior, noted here for visibility.
         Click Element
         ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT.
         Sleep    1s
@@ -377,38 +672,49 @@ Fill MIGO 103 And Post
         Select Checkbox
         ...    ${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE
         Sleep    0.5s
- 
-       
+
+        &{result}=    Create Dictionary    item_no=${target_item_no}    status=found and edited successfully
+        Append To List    ${item_results}    ${result}
     END
-   
-   
-   
-   
+
+    # --- Per-item results summary: readable log + JSON. Logged BEFORE Post
+    # is even clicked, so it's always available regardless of the posting
+    # outcome (including MANUAL_CHECK_REQUIRED) -- this is what the UI/DB
+    # will use to show which items actually got matched vs. skipped.
+    Log To Console    ${EMPTY}
+    Log To Console    ============ ITEM RESULTS SUMMARY ============
+    FOR    ${r}    IN    @{item_results}
+        Log To Console    Item ${r}[item_no]: ${r}[status]
+    END
+    ${item_results_json}=    Evaluate    __import__('json').dumps($item_results)
+    Log To Console    RESULT:ITEM_RESULTS:${item_results_json}
+
     # --- Step 5: Post ---
     # FIX: this used to click btnMIGO_OK_GO -- the PO-check/execute button
     # from Step 2, not a Save/Post action. Confirmed via SAP GUI Script
     # Recording that the real Post button is wnd[0]/tbar[1]/btn[23]. That's
     # why every prior run returned MANUAL_CHECK_REQUIRED with an empty
     # status bar -- nothing was ever actually being saved to SAP.
- 
- 
- 
- 
     Click Element    wnd[0]/tbar[1]/btn[23]
- 
+
     Sleep    3s
     Dismiss Any Popup
- 
+
     # --- Step 6: Read Material Doc Number ---
     ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
     Log To Console    Final Status Message: ${status_msg}
- 
+    # ADDED (2026-08-21): rf_runner.py's execute_migo_103_sap already looks
+    # for this exact marker (SAP_STATUS_MSG) to append SAP's own status-bar
+    # text to failure messages -- it was never actually being emitted here,
+    # so that lookup always silently came back empty. Closing that gap.
+    Log To Console    RESULT:SAP_STATUS_MSG:${status_msg}
+
     @{matches}=    Get Regexp Matches    ${status_msg}    \\d{8,12}
     IF    len($matches) == 0
-        RETURN    MANUAL_CHECK_REQUIRED
+        RETURN    {"status": "MANUAL_CHECK_REQUIRED", "item_results": ${item_results_json}}
     END
- 
-    RETURN    ${matches}[0]
+
+    RETURN    {"status": "COMPLETED", "matdoc": "${matches}[0]", "item_results": ${item_results_json}}
  
  
 Read Status Bar With Retry
@@ -488,11 +794,32 @@ Dismiss Any Popup
 #     # RETURN
  
 Close SAP Session
-    Log    Closing SAP session...
+    ${remaining}=    Register Bot End
+
+    # Always close THIS bot's own SAP session/tab (log off this window),
+    # regardless of whether other bots are still active.
+    Log    Closing this bot's SAP session tab...
     Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
     Run Keyword And Ignore Error    Send VKey     wnd[0]    0
     Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Log    SAP session closed and process terminated.    level=INFO
+
+    IF    ${remaining} > 0
+        Log To Console    Another bot (or bots) still active (refcount=${remaining}) -- this bot's tab is closed, but the shared SAP processes stay running for the other bot(s).
+    ELSE
+        # FIX (2026-08-21): this only ever killed saplogon.exe -- never
+        # saplgpad.exe or sapgui.exe, which is what's actually running/
+        # showing the SAP GUI window once a session is logged in. Matches
+        # the 3-process kill pattern used elsewhere in this codebase. Now
+        # gated on being the LAST active bot -- killing SAP out from under
+        # another still-running bot was the exact collision this refcount
+        # system exists to prevent.
+        Log    This was the last active bot -- shutting down all SAP processes fully...
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
+        Sleep    2s
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe    /T
+        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe    /T
+        Log    SAP session closed and process terminated.    level=INFO
+    END

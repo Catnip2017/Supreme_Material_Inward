@@ -153,6 +153,36 @@ def update_gatein_rf_result(
         logger.error(f"Failed to update Gate In RF result for history_id {history_id}: {e}")
         return False
 
+def update_gatein_purchase_order(history_id: int, po_number: str) -> bool:
+    """
+    Overwrite the stored PO number for this record after a SUCCESSFUL PO
+    fetch. migo_103.html's PO Number box is initialized from
+    gate_in_entries.purchase_order on every page load -- if Retry PO Fetch
+    succeeds with a DIFFERENT PO number, this keeps that column in sync so
+    a reload doesn't revert the box to a stale value that no longer
+    matches the line items actually loaded under it.
+    """
+    sql = """
+        UPDATE gate_in_entries
+        SET purchase_order = %s,
+            updated_at     = CURRENT_TIMESTAMP
+        WHERE history_id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (po_number, history_id))
+                logger.info(
+                    f"Gate In purchase_order synced to fetched PO for "
+                    f"history_id {history_id}: {po_number}"
+                )
+                return True
+    except Exception as e:
+        logger.error(
+            f"Failed to sync Gate In purchase_order for history_id "
+            f"{history_id}: {e}"
+        )
+        return False
 
 def get_gatein_entry(history_id: int) -> Optional[dict]:
     """

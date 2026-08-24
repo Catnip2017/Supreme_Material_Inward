@@ -443,16 +443,22 @@ def _extracted_data_view_state(history: dict) -> tuple:
 
     Downstream roles get a staggered read-only reveal, one stage at a
     time, matching the SAP process order already enforced by
-    _check_step_allowed(): Gate Security sees it once GST is approved;
-    Stores Officer (103) once Gate In is done; Quality/Release (105)
-    once MIGO 103 is done; Accounts Payable (MIRO) once MIGO 105 is
-    done. None of these roles can ever edit it -- view only.
+    _check_step_allowed(): Gate Security sees it once Data Approval is
+    done; Stores Officer (103) once Gate In is done; Quality/Release
+    (105) once MIGO 103 is done; Accounts Payable (MIRO) once MIGO 105
+    is done. None of these roles can ever edit it -- view only.
+
+    FIX (2026-08-14, client request): Gate Security's reveal used to wait
+    on history.gst_check instead of approval_status -- that was the same
+    Gate-In/GST coupling removed from _check_step_allowed() below. GST
+    Verification is now fully independent and on-demand; it has no
+    bearing on what Gate Security can see or do.
     """
     if _is_superadmin() or "compliance" in _current_roles():
         return True, _admin_can_edit() if _is_superadmin() else True
 
     roles = _current_roles()
-    if "gate_in" in roles and history.get("gst_check"):
+    if "gate_in" in roles and (history.get("approval_status") or "") == "approved":
         return True, False
     if "migo_103" in roles and history.get("gate_in"):
         return True, False
@@ -480,14 +486,32 @@ def _check_step_allowed(history: dict, step: str) -> tuple:
     if step_label and history.get(step):
         return False, f"{step_label} has already been posted for this record."
 
+    # ADDED (2026-08-21): once a MIGO 103 posting has been reversed (SAP
+    # action A03 -- see schema_migration_v27.sql), the goods are no longer
+    # actually sitting in blocked stock, so MIGO 105 (release from blocked
+    # stock) and MIRO (invoice verification against that GR) must not be
+    # allowed to proceed against it. Checked before the ENABLE_STEP_LOCKS
+    # toggle -- this is a data-integrity guard, not an ordering preference,
+    # so it applies unconditionally, the same way the duplicate-post guard
+    # above does.
+    if step in ("migo_105", "miro") and history.get("migo_103_reversed"):
+        return False, (
+            "MIGO 103 for this record was reversed in SAP -- "
+            f"{step_label} cannot proceed. Check SAP manually if this "
+            "record needs a fresh GR."
+        )
+
     step_locks = os.getenv('ENABLE_STEP_LOCKS', 'true').lower() == 'true'
     if not step_locks:
         return True, ""
     if step == "gate_in":
+        # FIX (2026-08-14, client request): Gate In no longer waits on GST
+        # Verification -- that dependency (history.gst_check required
+        # here) is removed. GST Verification is now a fully independent,
+        # on-demand tab; it can be run before, during, or after Gate In
+        # and has no bearing on whether Gate In is allowed.
         if (history.get("approval_status") or "pending") != "approved":
             return False, "Documents pending verification & approval."
-        if not history.get("gst_check"):
-            return False, "GST verification pending — approve on the GST Approval tab first."
     elif step == "migo_103":
         if not history.get("gate_in"):
             return False, "Awaiting Gate In completion."
@@ -671,12 +695,12 @@ def _run_ocr_and_save(doctype: str, file_path: str, filename: str, history_id: i
         extracted["filename"] = filename
         if doctype == "invoice":
             save_invoice_to_db(history_id, extracted)
-            # Auto-start GST verification as soon as invoice (seller_gstin) is saved
-            try:
-                from services.gst_runner import trigger_async as _gst_trigger
-                _gst_trigger(history_id)
-            except Exception as _gst_err:
-                logger.warning(f"GST auto-trigger failed (non-fatal): {_gst_err}")
+            # v27 (2026-08-14, client request): GST verification is now
+            # strictly on-demand -- it no longer auto-starts when invoice
+            # OCR completes. It only ever starts from an explicit user
+            # action (the Run/Re-run button on GST Approval, or the bulk
+            # "Run Selected" action on the GST Verification admin page).
+            # See api_gst_run/api_gst_bulk_run below.
         elif doctype == "ewaybill":
             save_ewaybill_to_db(history_id, extracted)
         elif doctype == "lr":
@@ -1263,51 +1287,17 @@ def save_extracted_invoice(history_id):
 
     data = request.get_json(silent=True) or {}
 
-    # Snapshot the GSTIN as it stood BEFORE this save overwrites it, so we
-    # can tell afterwards whether compliance actually corrected it.
-    old_invoice = (get_history_details_by_id(history_id) or {}).get("invoice_data") or {}
-    old_gstin = (old_invoice.get("seller_gstin") or old_invoice.get("gstin") or "").strip().upper()
-
     if save_invoice_to_db(history_id, data):
         _auto_populate_form_tables(history_id)
 
-        # GSTIN auto-recheck on edit: the GST tab's cached result (if any)
-        # was computed against whatever GSTIN was on record BEFORE this
-        # save. If compliance just corrected a wrong OCR'd GSTIN, that
-        # cached result is now checking the WRONG company and would
-        # otherwise sit there looking "done" forever -- trigger_async()
-        # deliberately skips re-running when a clean (non-error) result
-        # already exists, since normally nothing changed. Here something
-        # did change, so we invalidate the stale result and kick off a
-        # fresh check, using the exact same reset+force path the manual
-        # Re-run button uses (see api_gst_rerun above) so the same safety
-        # gates apply automatically:
-        #   - GST already approved -> never touched (human decision is final)
-        #   - a check already running -> left alone, not interrupted
-        new_gstin = (data.get("seller_gstin") or data.get("gstin") or "").strip().upper()
-        if new_gstin and new_gstin != old_gstin:
-            try:
-                gst_row = get_gst_approval(history_id)
-                if gst_row and gst_row.get("approval_status") == "approved":
-                    logger.info(
-                        f"[save_extracted_invoice] GSTIN changed for history_id={history_id} "
-                        "but GST is already approved -- not re-running"
-                    )
-                elif is_running(history_id):
-                    logger.info(
-                        f"[save_extracted_invoice] GSTIN changed for history_id={history_id} "
-                        "but a check is already in progress -- not interrupting it"
-                    )
-                else:
-                    if gst_row:
-                        reset_gst_for_rerun(history_id)
-                    trigger_async(history_id, force=True)
-                    logger.info(
-                        f"[save_extracted_invoice] GSTIN corrected for history_id={history_id} "
-                        f"('{old_gstin}' -> '{new_gstin}') -- GST re-check triggered"
-                    )
-            except Exception as _gst_err:
-                logger.warning(f"GST re-trigger on GSTIN edit failed (non-fatal): {_gst_err}")
+        # v27 (2026-08-14, client request): no longer auto-retriggers GST
+        # verification when the seller GSTIN is edited here. GST is now
+        # strictly on-demand (see api_gst_run/api_gst_bulk_run) -- if
+        # Compliance corrects a GSTIN after already approving Extracted
+        # Data with a wrong one, re-running GST for it is on them, same as
+        # any other post-approval correction. The GST Verification admin
+        # page's "Needs Re-run" / stale-result cases are exactly what that
+        # page is for.
 
         return jsonify({"success": True, "message": "Invoice data saved"})
     return jsonify({"success": False, "error": "Failed to save"}), 500
@@ -1606,15 +1596,9 @@ def api_rerun_ocr(history_id):
                 if doc_type == "invoice":
                     save_invoice_to_db(history_id, extracted)
                     invoice_succeeded = True
-                    # Same auto-trigger as the first-pass OCR save (_run_ocr_and_save)
-                    # -- this re-run path re-extracts from the source file and can
-                    # produce a GSTIN that never got checked at all (the original
-                    # OCR attempt failed before reaching the invoice save), so fire
-                    # the GST bots against whatever GSTIN comes out this time.
-                    try:
-                        trigger_async(history_id)
-                    except Exception as _gst_err:
-                        logger.warning(f"GST auto-trigger failed on OCR re-run (non-fatal): {_gst_err}")
+                    # v27 (2026-08-14, client request): no longer auto-triggers
+                    # GST verification after an OCR re-run either -- fully
+                    # on-demand now, same as every other GST trigger point.
                 elif doc_type == "ewaybill": save_ewaybill_to_db(history_id, extracted)
                 elif doc_type == "lr":       save_lr_to_db(history_id, extracted)
                 files_processed += 1
@@ -2157,6 +2141,86 @@ def run_zgrn_print(history_id):
         return err
     if not job_id:
         return jsonify({"success": False, "error": "ZGRN print already processing."}), 409
+    return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+
+
+@app.route("/api/run_migo_103_reversal/<int:history_id>", methods=["POST"])
+@api_login_required
+def run_migo_103_reversal(history_id):
+    """
+    ADDED (2026-08-21): reverses an already-posted MIGO 103 document in SAP
+    (action A03, via migo_reversal.robot) -- a REAL, final SAP posting, not
+    a dry run. Gated on the same "migo_103" role as posting/printing it
+    (client decision — same permission level as posting it in the first
+    place). Deliberately does NOT go through _check_step_allowed() the way
+    migo_103/migo_105/miro do (this is an action against an already-posted
+    record, not a step in the sequential flow) -- eligibility is checked
+    directly below instead: migo_103 must already be 1, and it must not
+    already be reversed.
+    """
+    blocked = _require_role_edit("migo_103")
+    if blocked:
+        return blocked
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    if not history.get("migo_103"):
+        return jsonify({
+            "success": False,
+            "error": "MIGO 103 has not been posted for this record -- nothing to reverse."
+        }), 400
+
+    if history.get("migo_103_reversed"):
+        return jsonify({
+            "success": False,
+            "error": "MIGO 103 for this record has already been reversed."
+        }), 400
+
+    # ADDED (2026-08-21): the whole point of blocking MIGO 105/MIRO once
+    # reversed (schema_migration_v27.sql's stated policy -- "the goods are
+    # no longer actually sitting in blocked stock once reversed") cuts the
+    # other way too: reversing a GR that MIGO 105/MIRO have ALREADY been
+    # posted against would leave those already-created postings referring
+    # to stock that's now been reversed back out -- a real inconsistent
+    # state, not just a blocked-forward one. This was missing before.
+    if history.get("migo_105") or history.get("miro"):
+        return jsonify({
+            "success": False,
+            "error": (
+                "MIGO 105 and/or MIRO have already been posted for this "
+                "record -- reversing MIGO 103 now would leave those "
+                "postings referencing stock that's been reversed out. "
+                "Check with your team before reversing."
+            )
+        }), 400
+
+    # Same "UI override, then migo_entries, then history" precedence as
+    # run_migo_105()/run_zgrn_print() above -- whatever mat doc MIGO 103
+    # actually posted.
+    migo_entry = get_migo_entry(history_id)
+    mat_doc = (
+        (migo_entry or {}).get("material_doc_number", "").strip()
+        or (history.get("material_doc_number") or "").strip()
+        or ""
+    )
+    if not mat_doc:
+        return jsonify({
+            "success": False,
+            "error": "Material Doc Number missing -- cannot reverse."
+        }), 400
+
+    payload = {
+        "material_doc_number": mat_doc,
+        "history_id": history_id,
+    }
+
+    job_id, err = _enqueue_sap_job(history_id, "migo_103_reversal", payload)
+    if err:
+        return err
+    if not job_id:
+        return jsonify({"success": False, "error": "MIGO 103 reversal already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
 
 
@@ -3033,7 +3097,8 @@ def api_pending_po_updates_run(history_id):
 # GST APPROVAL ROUTES
 # ============================================================
 from database.gst_operations import (
-    get_gst_approval, approve_gst, hold_gst, reset_gst_for_rerun
+    get_gst_approval, approve_gst, hold_gst, reset_gst_for_rerun,
+    list_gst_verification_status
 )
 from services.gst_runner import trigger_async, is_running
 from database.remarks_operations import get_remark, upsert_remark, get_comments, add_comment
@@ -3043,23 +3108,29 @@ from database.remarks_operations import get_remark, upsert_remark, get_comments,
 @api_login_required
 def api_gst_status(history_id):
     """
-    Poll endpoint called every 5 s by the GST Approval tab.
-    Triggers bots on first call if not already running.
-    Returns {"status":"checking"} while bots run, then the full
-    gst_approval row (plus status="done") when complete.
+    Read-only status check -- called once on GST Approval tab load, and
+    every 5 s WHILE a run is actively in progress (never to start one).
+
+    v27 (2026-08-14, client request): this used to also call
+    trigger_async(history_id) on every call, which meant simply opening
+    the tab silently started the bot. GST verification is now strictly
+    on-demand -- it only ever starts from api_gst_run/api_gst_bulk_run
+    (fresh) or api_gst_rerun (reset + restart), both explicit button
+    clicks. This endpoint just reports whatever the current state is:
+      - "not_run"  -- no gst_approval row exists yet, nothing running
+      - "checking" -- a bot thread is actively running for this record
+      - "done"     -- a stored result exists (success, partial, or error)
     """
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404
-
-    trigger_async(history_id)
 
     if is_running(history_id):
         return jsonify({"status": "checking"})
 
     row = get_gst_approval(history_id)
     if not row:
-        return jsonify({"status": "checking"})
+        return jsonify({"status": "not_run"})
 
     data = {}
     for k, v in row.items():
@@ -3069,6 +3140,155 @@ def api_gst_status(history_id):
             data[k] = v
     data["status"] = "done"
     return jsonify(data)
+
+
+@app.route("/api/gst/run/<int:history_id>", methods=["POST"])
+@api_login_required
+def api_gst_run(history_id):
+    """
+    First-time, explicit "Run GST Verification" trigger -- the ONLY way
+    (along with api_gst_bulk_run below) GST verification ever starts now
+    that every auto-trigger has been removed (v27, 2026-08-14). Refuses
+    if a result already exists for this record -- that's what Re-run
+    (api_gst_rerun above) is for, so the reset-and-restart safety checks
+    there always apply once a row exists.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    if is_running(history_id):
+        return jsonify({
+            "success": False,
+            "error": "A GST check is already in progress for this record — please wait for it to finish."
+        }), 409
+
+    if get_gst_approval(history_id):
+        return jsonify({
+            "success": False,
+            "error": "GST verification has already been run for this record — use Re-run instead."
+        }), 400
+
+    trigger_async(history_id)
+    return jsonify({"success": True, "message": "GST verification started"})
+
+
+@app.route("/api/gst/bulk_run", methods=["POST"])
+@api_login_required
+def api_gst_bulk_run():
+    """
+    Bulk trigger from the GST Verification admin page's multi-select --
+    accepts a list of history_ids and, for EACH one independently, picks
+    the same action a single Run/Re-run click would: fresh trigger_async()
+    if no gst_approval row exists yet, or reset_gst_for_rerun()+
+    trigger_async(force=True) if one does. Records that are currently
+    running or already approved are silently skipped (not errors -- a
+    mixed batch selection is expected/normal), same rules api_gst_run and
+    api_gst_rerun already enforce individually, just applied per-id here
+    instead of failing the whole batch over one ineligible record.
+
+    Actual browser concurrency is still capped by gst_runner.py's slot
+    pools (2 e-invoice + 2 taxpayer-search slots) regardless of how many
+    ids are submitted here -- this just fires them all off, the existing
+    pool naturally queues the rest.
+    """
+    blocked = _require_role_edit("compliance")
+    if blocked:
+        return blocked
+    body = request.get_json(silent=True) or {}
+    ids = body.get("history_ids") or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"success": False, "error": "No records selected."}), 400
+
+    results = {}
+    for hid in ids:
+        try:
+            hid = int(hid)
+        except (TypeError, ValueError):
+            continue
+        history = get_history_by_id(hid)
+        if not history:
+            results[hid] = "not_found"
+            continue
+        if is_running(hid):
+            results[hid] = "skipped_running"
+            continue
+        row = get_gst_approval(hid)
+        if row and row.get("approval_status") == "approved":
+            results[hid] = "skipped_approved"
+            continue
+        if row:
+            reset_gst_for_rerun(hid)
+            trigger_async(hid, force=True)
+            results[hid] = "rerun_started"
+        else:
+            trigger_async(hid)
+            results[hid] = "run_started"
+
+    return jsonify({"success": True, "results": results})
+
+
+@app.route("/gst_verification")
+@login_required
+def gst_verification_page():
+    """
+    v27 (2026-08-14, client request): admin page listing every GST-eligible
+    record (has invoice data) with its verification status, and letting
+    Compliance/SuperAdmin multi-select and bulk-run/re-run. Same access
+    rule as the GST actions themselves (_has_role already returns True for
+    any SuperAdmin, view-only or not -- editing/running is still gated per
+    action by _require_role_edit inside the API routes below).
+    """
+    if not _has_role("compliance"):
+        return redirect(url_for("history_page"))
+    return render_template(
+        "gst_verification_admin.html",
+        username=session.get("username"),
+        role=session.get("role"),
+    )
+
+
+@app.route("/api/gst/verification_list")
+@api_login_required
+def api_gst_verification_list():
+    if not _has_role("compliance"):
+        return jsonify({"success": False, "error": "Permission denied."}), 403
+    search = request.args.get("q", "").strip()
+    status_filter = request.args.get("status", "").strip().lower()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+
+    result = list_gst_verification_status(search=search, status=status_filter, page=page, per_page=20)
+
+    records = []
+    for r in result["records"]:
+        hid = r["id"]
+        if is_running(hid):
+            status = "checking"
+        elif r.get("gst_approval_status") is None and r.get("checked_at") is None:
+            status = "not_run"
+        elif r.get("gst_approval_status") == "approved":
+            status = "approved"
+        elif r.get("bot_error"):
+            status = "needs_rerun"
+        else:
+            status = "pending_review"
+        records.append({
+            "id": hid,
+            "invoice_number": r.get("invoice_number"),
+            "seller_name": r.get("seller_name"),
+            "seller_gstin": r.get("seller_gstin"),
+            "created_at": r["created_at"].strftime("%d-%m-%Y %H:%M") if r.get("created_at") else None,
+            "checked_at": r["checked_at"].strftime("%d-%m-%Y %H:%M") if r.get("checked_at") else None,
+            "status": status,
+        })
+
+    return jsonify({"success": True, "total": result["total"], "records": records})
 
 
 @app.route("/api/gst/approve/<int:history_id>", methods=["POST"])

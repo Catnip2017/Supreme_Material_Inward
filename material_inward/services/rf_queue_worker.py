@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from config.config import config
 from database.po_operations import save_po_line_items
+from database.gatein_operations import update_gatein_purchase_order
 from database.scenario_operations import add_history_extra, delete_history_extras_by_doctype
 
 from database.rf_queue_operations import (
@@ -28,7 +29,7 @@ from services.credential_cache import (
 )
 from database.db_operations import (
     update_history_step, get_history_details_by_id, set_dms_status,
-    get_dms_document_link,
+    get_dms_document_link, mark_migo_103_reversed,
 )
 from services.doc_consolidator import consolidate_documents, write_staging_sidecar
 from services.dms_upload_runner import trigger_dms_upload_for
@@ -47,6 +48,7 @@ from database.miro_operations import update_miro_rf_result, update_miro_link_res
 from services.rf_runner import (
     execute_gate_in_sap,
     execute_migo_103_sap,
+    execute_migo_103_reversal_sap,
     execute_migo_105_sap,
     execute_miro_sap,
     execute_po_fetch_sap,
@@ -255,7 +257,39 @@ def _process_po_fetch(history_id: int, payload: dict) -> dict:
     result = execute_po_fetch_sap(payload)
     if result.get("success"):
         po_items = result.get("po_items", [])
-        save_po_line_items(history_id, po_items)
+        # FIX (2026-08-21): save_po_line_items()'s return value was never
+        # checked -- if the DB write failed for any reason (bad row,
+        # connection hiccup, etc.), this function still logged "PO fetch
+        # complete" and returned the SAP-side result unchanged
+        # (success: True), so complete_rf_job() recorded the job as a
+        # success with nothing actually saved to po_line_items. Since
+        # po_line_items is the ONLY place item_no (the PO seat number
+        # EBELP-based matching depends on) survives between PO Fetch
+        # running and MIGO 103 being posted -- often days later, by a
+        # different user -- a silent save failure here would surface as a
+        # confusing "PO table is empty" on the MIGO 103 tab with no error
+        # anywhere pointing back to why. Now genuinely fails the job so
+        # it's visible and retriable.
+        saved = save_po_line_items(history_id, po_items)
+        if not saved:
+            logger.error(
+                f"PO fetch SAP read succeeded but saving to the database "
+                f"failed — history_id={history_id}. PO line items will NOT "
+                f"be available on the MIGO 103 tab until this is retried."
+            )
+            _enqueue_dms_upload(history_id)
+            return {
+                "success": False,
+                "po_items": po_items,
+                "error": (
+                    "PO Fetch read the line items from SAP successfully, but "
+                    "saving them to the database failed. Please retry PO "
+                    "Fetch — nothing was posted to SAP, so a retry is safe."
+                ),
+            }
+        fetched_po = (payload.get("po_number") or "").strip()
+        if fetched_po:
+            update_gatein_purchase_order(history_id, fetched_po)
         logger.info(
             f"PO fetch complete — history_id={history_id} "
             f"{len(po_items)} line(s)."
@@ -465,6 +499,55 @@ def _process_migo_103(history_id: int, payload: dict) -> dict:
             ),
             notification_type="migo_103",
             role_target="migo_103"
+        )
+    return result
+
+
+def _process_migo_103_reversal(history_id: int, payload: dict) -> dict:
+    """
+    ADDED (2026-08-21): reverses an already-posted MIGO 103 document (SAP
+    action A03, via migo_reversal.robot -- a REAL, final SAP posting, not
+    a dry run). This creates a NEW SAP document that references the
+    original -- history.migo_103 / material_doc_number are deliberately
+    left untouched here (see mark_migo_103_reversed's own docstring).
+    Once recorded, MIGO 105/MIRO are blocked for this record going forward
+    (see app.py's _check_step_allowed).
+    """
+    result = execute_migo_103_reversal_sap(payload)
+    original_mat_doc = payload.get("material_doc_number")
+
+    if result.get("success"):
+        reversal_doc_number = result.get("reversal_doc_number")
+        reversed_by = payload.get("_submitted_by_username")
+        mark_migo_103_reversed(history_id, reversal_doc_number, reversed_by)
+        logger.info(
+            f"MIGO 103 reversed — history_id={history_id} "
+            f"original_matdoc={original_mat_doc} reversal_doc={reversal_doc_number}"
+        )
+        create_notification(
+            history_id=history_id,
+            title="MIGO 103 Reversed",
+            message=(
+                f"MIGO 103 (material doc {original_mat_doc}) was reversed in SAP"
+                + (f" — new document {reversal_doc_number}" if reversal_doc_number else "")
+                + ". MIGO 105 and MIRO are now blocked for this record."
+            ),
+            notification_type="migo_103_reversal",
+            role_target="migo_103",
+        )
+    else:
+        logger.error(
+            f"MIGO 103 REVERSAL FAILED — history_id={history_id}: {result.get('error')}"
+        )
+        create_notification(
+            history_id=history_id,
+            title="MIGO 103 Reversal Failed — Manual Check Required",
+            message=result.get(
+                "error",
+                "MIGO Reversal NOT done — SAP posting failed. Please check manually and try again."
+            ),
+            notification_type="migo_103_reversal",
+            role_target="migo_103",
         )
     return result
 
@@ -854,6 +937,7 @@ STEP_HANDLERS = {
     "po_fetch":           _process_po_fetch,
     "po_list_fetch":      _process_po_list_fetch,
     "migo_103":           _process_migo_103,
+    "migo_103_reversal":  _process_migo_103_reversal,
     "migo_105":           _process_migo_105,
     "miro":               _process_miro,
     "update_gatein_po":   _process_update_gatein_po,
@@ -919,6 +1003,18 @@ def _worker_loop() -> None:
             history_id = job["history_id"]
             step       = job["step"]
             payload    = job["payload"]
+
+            # ADDED (2026-08-21): guarantees every execute_*_sap() call in
+            # rf_runner.py can rely on data.get("history_id") being present
+            # -- used to segregate RF logs per record (_run_rf_script's
+            # output_dir). Previously only some handlers bothered to set
+            # this key in their own payload before calling execute_*_sap;
+            # setting it once, centrally, here means it's never missing
+            # regardless of which handler runs. Never overwrites a
+            # differing value if one's already there (shouldn't happen --
+            # this IS that job's own history_id -- but never second-guess
+            # data a handler deliberately set).
+            payload.setdefault("history_id", history_id)
 
             logger.info(f"Worker processing job_id={job_id} history_id={history_id} step={step}")
 
