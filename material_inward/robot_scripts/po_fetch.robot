@@ -817,4 +817,3 @@ Close SAP Session
         Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe    /T
         Log    SAP session closed and process terminated.    level=INFO
     END
- 

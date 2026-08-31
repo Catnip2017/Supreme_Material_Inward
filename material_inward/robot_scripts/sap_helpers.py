@@ -1,6 +1,8 @@
 import win32com.client
 import subprocess
 import os
+import time
+import pywinauto
 
 # def set_combo_via_vbs(element_path: str, index: int):
 #     """Run a VBScript to set the combo key — bypasses COM dispatch issues."""
@@ -151,3 +153,89 @@ def get_delflag_status(table_path, row, session=None):
         pass
 
     return f"IconName='{icon_name}' | Tooltip='{tooltip}' | Text='{text}'"
+
+
+def check_abap_session_killed(timeout=1.0):
+    """
+    ADDED (2026-08-29): SAP can kill an ABAP session server-side mid-run
+    (e.g. a real production case: "SPA: SAP system message: ABAP session
+    closed by system (location SPLPRDAPP_SPA_00-W18)", history_id=511) and
+    put up a native Windows message box to say so. This dialog is NOT part
+    of the SAP GUI Scripting object tree -- it's a plain Win32 message box
+    owned by the OS, not a GuiModalWindow -- so once the underlying ABAP
+    session is dead, session.findById('wnd[1]') throws the exact same
+    "Cannot find Element" COM error whether this dialog is genuinely on
+    screen or there's really nothing there. That's confirmed to be why
+    migo_103.robot's own popup-capture (Capture And Dismiss Popup Message,
+    which reads wnd[1] via the SAP session object) can never see this
+    class of failure -- it isn't a blind spot in that keyword's logic, the
+    text simply isn't reachable through SAP's own COM API once the session
+    is gone. Reading it via pywinauto instead (OS-level window read,
+    independent of whether the SAP session behind it is still alive) is
+    the only way to actually get this text back.
+
+    Same window-matching lesson already learned the hard way in
+    pdf_helper.py's ZGRN print-dialog fixes applies here too: match on
+    BOTH title AND class_name="#32770" (the standard Win32 message-box
+    class) -- title text alone was previously confirmed to falsely match a
+    SAP-owned window in a different context (the ZGRN "Print:" window
+    incident), so the same defensive filter is used here from the start
+    rather than waiting to get burned by it again.
+
+    Deliberately fast (default 1s) and fully swallowed by design -- this
+    is meant to be called only at existing "nothing else was captured"
+    checkpoints, not on every step, so it should never meaningfully slow
+    down a normal run. Must NEVER raise: any pywinauto/COM problem here is
+    treated as "nothing found" (returns ""), never as a script-breaking
+    error -- a bug in this detection path must not be able to take down
+    an otherwise-working MIGO 103 run.
+
+    Returns the captured message text (and best-effort clicks OK to
+    dismiss it) if a matching dialog is found, else "".
+    """
+    try:
+        deadline = time.time() + timeout
+        matches = []
+        while time.time() < deadline:
+            try:
+                matches = pywinauto.Desktop(backend="win32").windows(
+                    title_re="SAP GUI for Windows.*", class_name="#32770"
+                )
+            except Exception:
+                matches = []
+            if matches:
+                break
+            time.sleep(0.2)
+
+        if not matches:
+            return ""
+
+        dlg = matches[-1]
+
+        text_parts = []
+        try:
+            for ctrl in dlg.children():
+                try:
+                    t = (ctrl.window_text() or "").strip()
+                    if t and t.upper() not in ("OK",):
+                        text_parts.append(t)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        message = " | ".join(p for p in text_parts if p).strip()
+
+        # Best-effort dismiss -- a failure to click OK should not stop us
+        # from at least returning the text we already captured above.
+        try:
+            dlg.set_focus()
+            try:
+                dlg["OK"].click()
+            except Exception:
+                dlg.type_keys("{ENTER}")
+        except Exception:
+            pass
+
+        return message or "SAP GUI system message (text could not be read)"
+    except Exception:
+        return ""

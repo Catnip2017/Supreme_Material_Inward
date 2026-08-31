@@ -8,7 +8,7 @@ v4 changes:
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import psycopg2.extras
 
@@ -16,6 +16,22 @@ from database.connection import get_connection
 from config.logger import get_logger
 
 logger = get_logger(__name__)
+
+# FIX (2026-08-24, client request): this server runs in UTC, not IST --
+# datetime.now() here returns the SERVER's clock, which is UTC. Used
+# bare, this fallback would compute "today" from UTC, silently landing
+# on the WRONG calendar date for any request made between ~00:00 and
+# 05:30 IST (same underlying bug as migo_103.html's client-side
+# toISOString() default, fixed there separately). India is a fixed
+# UTC+5:30 offset (no DST), so adding it directly is correct and doesn't
+# need a timezone database.
+_IST_OFFSET = timedelta(hours=5, minutes=30)
+
+
+def _today_ist() -> str:
+    """Today's date as YYYY-MM-DD in India time, computed from this UTC
+    server's clock."""
+    return (datetime.utcnow() + _IST_OFFSET).strftime("%Y-%m-%d")
 
 
 def upsert_migo_entry(history_id: int, data: dict) -> bool:
@@ -49,7 +65,7 @@ def upsert_migo_entry(history_id: int, data: dict) -> bool:
         history_id,
         data.get("migoPoNumber") or data.get("migo_po_number") or data.get("purchaseOrder"),
         data.get("migoDocDate") or data.get("migo_doc_date"),
-        data.get("migoPostDate") or data.get("migo_post_date") or datetime.now().strftime("%Y-%m-%d"),
+        data.get("migoPostDate") or data.get("migo_post_date") or _today_ist(),
         data.get("migoDeliveryNote") or data.get("migo_delivery_note"),
         data.get("migoBillOfLading") or data.get("migo_bill_of_lading"),
         data.get("migoGRSlipNo") or data.get("migo_gr_slip_no"),

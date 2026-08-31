@@ -65,6 +65,62 @@ def get_drivers_by_truck(truck_number: str) -> list:
         return []
 
 
+def upsert_vehicle_master_from_gate_in(
+    truck_number: str,
+    driver_name: str,
+    transporter_name: str,
+    licence_number: str,
+) -> bool:
+    """
+    ADDED (client request, 2026-08-26): vehicle_master used to be a
+    one-way, one-time Excel load (bulk_insert_vehicle_master above) --
+    every Gate In only ever READ from it, nothing fed back in. A truck/
+    driver combo not already in that original Excel had to be typed in
+    manually every single time, forever. Called from
+    rf_queue_worker.py._process_gate_in() right after a Gate In posts
+    successfully, so the master data now grows on its own from real
+    entries -- the next Gate In for the same truck+driver auto-fills even
+    if that combo was never in the client's original file.
+
+    Skips entirely if truck_number or driver_name is blank (Hand/Courier
+    deliveries send these empty -- see gate_in.html's submit payload --
+    and both are part of the UNIQUE key below, so there's nothing
+    meaningful to store or match on without them).
+
+    ON CONFLICT (truck_number, driver_name) DO UPDATE -- so if the same
+    truck+driver reappears with a corrected/updated transporter or
+    licence number, the master record refreshes to the latest instead of
+    silently keeping stale data forever.
+    """
+    truck_number     = (truck_number or "").strip().upper()
+    driver_name      = (driver_name or "").strip()
+    transporter_name = (transporter_name or "").strip()
+    licence_number   = (licence_number or "").strip()
+
+    if not truck_number or not driver_name:
+        return False
+
+    sql = """
+        INSERT INTO vehicle_master
+            (truck_number, driver_name, transporter_name, licence_number)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (truck_number, driver_name) DO UPDATE SET
+            transporter_name = EXCLUDED.transporter_name,
+            licence_number   = EXCLUDED.licence_number
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (truck_number, driver_name, transporter_name, licence_number))
+            conn.commit()
+        logger.info(f"vehicle_master upserted from Gate In — truck={truck_number} driver={driver_name!r}")
+        return True
+    except Exception as e:
+        # Best-effort -- must never affect Gate In's own success/failure.
+        logger.error(f"upsert_vehicle_master_from_gate_in failed for truck={truck_number!r}: {e}")
+        return False
+
+
 def bulk_insert_vehicle_master(rows: list) -> int:
     """
     Insert rows from Excel load.

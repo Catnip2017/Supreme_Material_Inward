@@ -5,40 +5,84 @@
 .field-error-msg.show { display:block; }
 .readonly-field { background:#f8f9fb !important; color:#1e5ca8; font-weight:600; }
 
-.gate-banner {
-  background:#fff3cd; border:1px solid #ffc107;
-  border-radius:8px; padding:14px 18px; margin-bottom:20px;
-  color:#856404; font-weight:500; font-size:14px;
-}
-.gate-banner.unlocked {
-  background:#ecfdf5; border-color:#00b894; color:#1a7a3c;
-}
-
 .matched-105 {
   margin-top:18px;
-  border:2px solid #1e5ca8; border-radius:8px; overflow:hidden;
+  border:2px solid #f0a500; border-radius:8px; overflow:hidden;
 }
 .matched-105-header {
-  background:#1e5ca8; color:#fff;
-  padding:9px 16px; font-weight:700; font-size:13px;
+  background:#fff3c4; color:#8a6100; border-left:3px solid #f0a500;
+  padding:9px 16px; font-weight:700; font-size:13px; letter-spacing:0.3px;
 }
 .matched-105-table { width:100%; border-collapse:collapse; font-size:12px; }
 .matched-105-table th {
-  background:#f5f3ff; padding:8px 10px; text-align:left;
-  font-weight:600; border-bottom:2px solid #ddd6fe;
+  background:#fffaf0; padding:8px 10px; text-align:left;
+  font-weight:600; border-bottom:2px solid #ffe6a8; color:#8a6100;
   white-space:nowrap;
 }
 .matched-105-table td {
-  padding:7px 10px; border-bottom:1px solid #ede9fe;
+  padding:7px 10px; border-bottom:1px solid #fff3d6;
   white-space:nowrap;
 }
 .matched-105-table input.batch-input {
   width:140px; padding:5px 8px; font-size:12px;
-  border:1.5px solid #c5d8f8; border-radius:5px;
+  border:1.5px solid #f0d9a0; border-radius:5px;
 }
 .matched-105-table input.batch-input:focus {
-  outline:none; border-color:#1e5ca8;
+  outline:none; border-color:#f0a500;
 }
+
+/* ───────── Visual redesign (2026-08-24): restyled to match the xd-*
+   design system already used by extracted_data.html, gate_in.html and
+   migo_103.html, copied verbatim from those files -- not shared via
+   main.css, each tab template is self-contained. Every existing field
+   id, JS function, and behavior below is unchanged -- this only
+   restyles the surrounding markup. The Line Items table above keeps
+   its exact existing structure/ids -- only its header/border colors
+   were retouched to the amber theme (see .matched-105* above). ─────── */
+.approval-banner {
+  border-radius:10px; padding:9px 18px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:13px; margin-bottom:14px;
+}
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input, .xd-table select {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table select { border-color:#dfe3e8; background:white; }
+.xd-table input:hover, .xd-table select:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table select:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table select:disabled { color:#4a5568; cursor:not-allowed; }
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; align-items:stretch; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
+.xd-table .field-error-msg { margin-top:2px; }
 </style>
 
 <div class="content-card">
@@ -60,9 +104,9 @@
 {% set post_locked = (history is none) or (not history.migo_103) %}
 {% set migo_103_done = history and history.migo_103 %}
 {% if not migo_103_done %}
-<div class="gate-banner">⏸ <strong>Awaiting MIGO 103</strong> — Complete MIGO 103 before posting MIGO 105.</div>
+<div class="approval-banner pending">⏸ <strong>Awaiting MIGO 103</strong> — Complete MIGO 103 before posting MIGO 105.</div>
 {% else %}
-<div class="gate-banner unlocked">✓ <strong>MIGO 103 Done</strong> — Ready for MIGO 105 posting.</div>
+<div class="approval-banner approved">✓ <strong>MIGO 103 Done</strong> — Ready for MIGO 105 posting.</div>
 {% endif %}
 
 {% if history %}
@@ -91,44 +135,59 @@
 
   <input type="hidden" id="history_id_migo105" value="{{ history_id or '' }}">
 
-  {% if resolved_vendor_name %}
-  <div class="form-row">
-    <div class="form-group">
-      <label>Vendor Name <span style="font-size:11px;color:#888;">(from Gate In — view only)</span></label>
-      <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled
-             style="background:#f5f6f8;color:#555;">
-    </div>
-  </div>
-  {% endif %}
+  <div class="xd-section-title"><span>📄 DOCUMENT DETAILS</span></div>
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      {% if resolved_vendor_name %}
+      <tr>
+        <td class="xd-lbl" rowspan="3">Details</td>
+        <td class="xd-attr-lbl">Vendor Name <span class="xd-attr-note">from Gate In — view only</span></td>
+        <td class="xd-attr-val">
+          <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled style="background:#f5f6f8;color:#555;">
+        </td>
+      </tr>
+      <tr>
+      {% else %}
+      <tr>
+        <td class="xd-lbl" rowspan="2">Details</td>
+      {% endif %}
+        <td class="xd-attr-lbl">Material Doc No. <span class="xd-attr-note">auto-filled from MIGO 103</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="materialDocNumber105" class="form-input" maxlength="10"
+             value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
+             placeholder="Material document number from MIGO 103">
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Storage Location <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <select id="storageLocation105" class="form-select" {% if step_locked %}disabled{% endif %}>
+            <option value="">Loading...</option>
+          </select>
+          <div class="field-error-msg" id="err_storageLocation105">Required</div>
+        </td>
+      </tr>
+    </table>
 
-  <div class="form-group">
-    <label>Material Document Number <span style="font-size:11px;color:#1e5ca8;">(auto-filled from MIGO 103)</span></label>
-    <input type="text" id="materialDocNumber105" class="form-input" maxlength="10"
-       value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
-       placeholder="Material document number from MIGO 103">
-  </div>
-
-  <div class="form-row">
-    <div class="form-group">
-      <label>Storage Location <span class="req">*</span></label>
-      <select id="storageLocation105" class="form-select" {% if step_locked %}disabled{% endif %}>
-        <option value="">Loading...</option>
-      </select>
-      <div class="field-error-msg" id="err_storageLocation105">Required</div>
-    </div>
-    <div class="form-group">
-      <label>Vendor Invoice Amount</label>
-      <input type="text" id="vendorInvoiceDetail105" class="form-input"
-             value="{{ (migo_data.get('migo_105_vendor_invoice') if migo_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
-             {% if step_locked %}disabled{% endif %}>
-    </div>
-  </div>
-
-  <div class="form-group">
-    <label>Remarks</label>
-    <input type="text" id="remarks105" class="form-input"
-           value="{{ (migo_data.get('migo_105_remarks') if migo_data else '') or '' }}"
-           {% if step_locked %}disabled{% endif %}>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="2">Invoice</td>
+        <td class="xd-attr-lbl">Vendor Invoice Amt</td>
+        <td class="xd-attr-val">
+          <input type="text" id="vendorInvoiceDetail105" class="form-input"
+                 value="{{ (migo_data.get('migo_105_vendor_invoice') if migo_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Remarks</td>
+        <td class="xd-attr-val">
+          <input type="text" id="remarks105" class="form-input"
+                 value="{{ (migo_data.get('migo_105_remarks') if migo_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+        </td>
+      </tr>
+    </table>
   </div>
 
   <!-- Matched Line Items from MIGO 103 -->

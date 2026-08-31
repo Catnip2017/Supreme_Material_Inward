@@ -418,7 +418,19 @@ def _apply_stock_transfer_routing(extracted: dict) -> dict:
 # needing any matching logic on the frontend.
 _ALPHANUMERIC_ONLY_FIELDS = {
     "buyer_gstin", "seller_gstin", "transporter_gstin",
-    "po_number", "ewaybill_number", "irn",
+    "ewaybill_number", "irn",
+}
+
+# FIX (2026-08-24, client request): po_number pulled out of the
+# alphanumeric-only set above and into its own numeric-only set -- this
+# client's real SAP PO numbers are always 10 digits (external POs start
+# with 4, STOs start with 6; see the "numeric purchase order number"
+# framing already in the extraction prompts below). Letters were still
+# surviving through _strip_special_characters (which only strips
+# punctuation, not letters) whenever OCR misread a digit as a letter or
+# a stray character bled in from an adjacent label -- now stripped too.
+_NUMERIC_ONLY_FIELDS = {
+    "po_number",
 }
 
 
@@ -431,13 +443,26 @@ def _strip_special_characters(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", value)
 
 
+def _strip_non_digits(value: str) -> str:
+    """Keep only digits -- for fields where a genuinely valid value is
+    always purely numeric (po_number), so any alphabetic character OCR
+    misreads into it is dropped rather than kept."""
+    if not value:
+        return value
+    return re.sub(r"[^0-9]", "", value)
+
+
 def _clean_alphanumeric_fields(extracted: dict) -> dict:
     """Apply _strip_special_characters to every field in
-    _ALPHANUMERIC_ONLY_FIELDS present in extracted, top-level only (these
+    _ALPHANUMERIC_ONLY_FIELDS, and _strip_non_digits to every field in
+    _NUMERIC_ONLY_FIELDS, present in extracted -- top-level only (these
     fields never appear inside hsn_details)."""
     for field in _ALPHANUMERIC_ONLY_FIELDS:
         if extracted.get(field):
             extracted[field] = _strip_special_characters(extracted[field])
+    for field in _NUMERIC_ONLY_FIELDS:
+        if extracted.get(field):
+            extracted[field] = _strip_non_digits(extracted[field])
     return extracted
 
 

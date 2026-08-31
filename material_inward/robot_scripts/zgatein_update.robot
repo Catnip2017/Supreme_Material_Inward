@@ -119,8 +119,50 @@ Enter Gate In And Execute
     Sleep    3s
     Dismiss Any Popup
 
+    # --- READBACK (ADDED 2026-08-29): verify the actual data, not just the
+    # status bar text -- confirmed real case (history_id=511/512, GIN
+    # 0000040889/0000040888) where SAP genuinely saved the PO number but
+    # the status bar came back completely blank, producing a false
+    # MANUAL_CHECK_REQUIRED even though nothing was actually wrong (the
+    # user independently confirmed the PO was correctly linked in SAP for
+    # both). Re-finds the grid FRESH via session.findById (not the ${grid}
+    # reference captured before Save/Execute, which may not reflect the
+    # post-Execute screen state) and reads the same cell straight back --
+    # if it now shows the PO number we just set, that is definitive proof
+    # it worked, independent of whatever the status bar does or doesn't
+    # say. Same "read back what was actually kept" pattern already used in
+    # migo_103.robot for its own MATNR verification.
+    #
+    # Wrapped in Run Keyword And Ignore Error: if the screen state isn't
+    # readable at all anymore (e.g. a genuine session-level failure), this
+    # just fails to confirm rather than crashing the whole run -- falls
+    # through to the existing status-bar logic below unchanged.
+    ${readback_status}    ${readback_value}=    Run Keyword And Ignore Error
+    ...    Evaluate
+    ...    session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell").getCellValue(0, "ZEBELN")
+    ...    namespace=${ns}
+    IF    '${readback_status}' == 'PASS'
+        Log To Console    READBACK: ZEBELN cell now shows "${readback_value}" (expected "${PO_NUMBER}")
+        ${po_clean}=          Strip String    ${PO_NUMBER}
+        ${readback_clean}=    Strip String    ${readback_value}
+        IF    '${readback_clean}' == '${po_clean}'
+            RETURN    SUCCESS
+        END
+    ELSE
+        Log To Console    READBACK: could not re-read ZEBELN cell (${readback_value}) -- falling back to status bar check.
+    END
+
     # Check status bar
-    ${status_msg}=    Get Value    wnd[0]/sbar
+    # FIX (2026-08-29): this used to be a single, immediate Get Value --
+    # confirmed real-world case (history_id=511, GIN 0000040889) where SAP
+    # had NOT yet refreshed the status bar at the exact instant this ran,
+    # so it read back empty even though the update itself may have gone
+    # through. migo_103.robot already solved this identical class of
+    # timing issue with a short retry loop (Read Status Bar With Retry) --
+    # applying the same pattern here: retry a few times over a few seconds
+    # instead of judging success/failure off a single, possibly-premature
+    # read.
+    ${status_msg}=    Read Status Bar With Retry
     Log    zgatein_update status: "${status_msg}"    level=INFO
     Log To Console    Status bar: ${status_msg}
 
@@ -146,6 +188,27 @@ Enter Gate In And Execute
         Log To Console    RESULT:GATEIN_UPDATE_STATUS:MANUAL_CHECK_REQUIRED
         RETURN    MANUAL_CHECK_REQUIRED
     END
+
+Read Status Bar With Retry
+    # ADDED (2026-08-29): mirrors migo_103.robot's keyword of the same name
+    # -- retries up to 5 times, 1s apart, instead of trusting a single
+    # possibly-premature read. Unlike migo_103.robot's version, there's no
+    # fixed digit pattern to wait for here (success is judged by keyword
+    # matching against whatever text eventually shows up, not a document
+    # number) -- so this simply keeps retrying until the status bar is
+    # non-empty, or gives up after 5 attempts and returns whatever the
+    # last (possibly still blank) read was.
+    ${msg}=    Set Variable    ${EMPTY}
+    FOR    ${attempt}    IN RANGE    1    6
+        ${msg}=    Get Value    wnd[0]/sbar
+        Log To Console    Status bar attempt ${attempt}: "${msg}"
+        ${not_empty}=    Run Keyword And Return Status    Should Not Be Empty    ${msg}
+        IF    ${not_empty}    RETURN    ${msg}
+        Sleep    1s
+    END
+    Log To Console    Status bar still empty after 5 attempts.
+    RETURN    ${msg}
+
 
 Dismiss Any Popup
     ${present}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]

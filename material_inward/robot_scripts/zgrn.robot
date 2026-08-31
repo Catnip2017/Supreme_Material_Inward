@@ -122,11 +122,36 @@ Print ZGRN Document
  
     ${print_twice_upper}=    Convert To Upper Case    ${PRINT_TWICE}
     IF    '${print_twice_upper}' == 'TRUE'
-        # --- Step 4: Second print/save -- suffix _CGD ---
-        Select Print Popup Printer And Print
-        type_save_filename    ${filename_cgd}
-        Sleep    2s
-        Log To Console    Printed TWICE: ${filename_grn}.pdf and ${filename_cgd}.pdf
+        # FIX (2026-08-27): this used to call Select Print Popup Printer And
+        # Print unconditionally for the CGD copy, assuming a second SAP print
+        # popup always appears once chkLS_CGD is ticked. Not true -- a
+        # material document that isn't actually a Capital Goods item in SAP
+        # never raises a second popup, and the old code blindly evaluated
+        # $session.findById('wnd[1]/...') anyway, which threw and crashed
+        # the whole script. That got reported to the user as a generic
+        # "hit an error, retry" failure -- but retrying a doc with no CGD
+        # can never succeed. Now checks for the popup first (with one retry
+        # for timing) and, if it genuinely never shows up, logs a status
+        # marker instead of crashing so rf_runner.py can treat "no CGD for
+        # this doc" as a normal, successful GRN-only outcome.
+        ${cgd_popup_found}=    Run Keyword And Return Status
+        ...    Element Should Be Present    wnd[1]/usr/cmbSSFPP-RQPOSNAME
+        IF    not ${cgd_popup_found}
+            Sleep    2s
+            ${cgd_popup_found}=    Run Keyword And Return Status
+            ...    Element Should Be Present    wnd[1]/usr/cmbSSFPP-RQPOSNAME
+        END
+        IF    ${cgd_popup_found}
+            # --- Step 4: Second print/save -- suffix _CGD ---
+            Select Print Popup Printer And Print
+            type_save_filename    ${filename_cgd}
+            Sleep    2s
+            Log To Console    RESULT:ZGRN_CGD_STATUS:PRINTED
+            Log To Console    Printed TWICE: ${filename_grn}.pdf and ${filename_cgd}.pdf
+        ELSE
+            Log To Console    RESULT:ZGRN_CGD_STATUS:NOT_APPLICABLE
+            Log To Console    No second print popup appeared -- this document has no Capital Goods Declaration in SAP. Printed only: ${filename_grn}.pdf
+        END
     ELSE
         Log To Console    Printed ONCE: ${filename_grn}.pdf
     END

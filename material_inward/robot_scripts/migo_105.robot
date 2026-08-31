@@ -388,8 +388,29 @@ Fill MIGO 105 And Post
  
     Click Element    wnd[0]/tbar[1]/btn[23]
     Sleep    3s
-    Dismiss Any Popup
-   ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
+
+    # ADDED (same fix as migo_103.robot -- see that file's identical comment):
+    # SAP often shows a validation popup here instead of a status-bar
+    # message. Previously this was silently clicked away by a generic
+    # Dismiss Any Popup with no record of what it said, so
+    # MANUAL_CHECK_REQUIRED gave no clue why. Capture And Dismiss Popup
+    # Message reads it first, then dismisses it.
+    ${post_popup_message}=    Capture And Dismiss Popup Message
+    Log To Console    POST POPUP MESSAGE: "${post_popup_message}"
+
+    ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
+
+    # Same popup-vs-status-bar priority as migo_103.robot: a popup is SAP's
+    # own validation dialog, and the status bar underneath it is often
+    # stale/blank while a popup is up.
+    ${popup_not_empty}=    Run Keyword And Return Status    Should Not Be Empty    ${post_popup_message}
+    IF    ${popup_not_empty}
+        ${final_message}=    Set Variable    ${post_popup_message}
+    ELSE
+        ${final_message}=    Set Variable    ${status_msg}
+    END
+    Log To Console    RESULT:MIGO105_STATUS_MSG:${final_message}
+
     @{matches}=    Get Regexp Matches    ${status_msg}    \\d{8,12}
     IF    len($matches) == 0
         Log To Console    RESULT:MIRO_DOC_NUMBER:MANUAL_CHECK_REQUIRED
@@ -460,8 +481,90 @@ Dismiss Any Popup
         Run Keyword And Ignore Error    Click Element    wnd[2]/tbar[0]/btn[0]
         Sleep    1s
     END
- 
- 
+
+
+Dump Element Texts
+    [Documentation]    Recursively collects any non-empty .Text values from
+    ...    the given live SAP GUI element (a COM object reference, not a
+    ...    path string) and its children, up to 4 levels deep. Same keyword
+    ...    as migo_103.robot -- see that file for the full explanation.
+    [Arguments]    ${element}    ${depth}=${0}
+    @{collected}=    Create List
+    IF    ${depth} > 4
+        RETURN    ${collected}
+    END
+
+    ${text_res}=    Run Keyword And Ignore Error    Evaluate    $element.Text
+    IF    '${text_res}[0]' == 'PASS'
+        ${text}=    Clean Value    ${text_res}[1]
+        ${text_not_empty}=    Run Keyword And Return Status    Should Not Be Empty    ${text}
+        IF    ${text_not_empty}
+            Append To List    ${collected}    ${text}
+        END
+    END
+
+    ${count_res}=    Run Keyword And Ignore Error    Evaluate    $element.Children.Count
+    IF    '${count_res}[0]' == 'PASS'
+        ${child_count}=    Convert To Integer    ${count_res}[1]
+        FOR    ${i}    IN RANGE    ${child_count}
+            ${child}=    Evaluate    $element.Children.ElementAt(${i})
+            @{child_texts}=    Dump Element Texts    ${child}    ${depth + 1}
+            FOR    ${t}    IN    @{child_texts}
+                Append To List    ${collected}    ${t}
+            END
+        END
+    END
+
+    RETURN    ${collected}
+
+
+Capture And Dismiss Popup Message
+    [Documentation]    ADDED -- same keyword as migo_103.robot (see that
+    ...    file for the full explanation). If a popup (wnd[1]) is present,
+    ...    reads its message text before dismissing it. Tries the standard
+    ...    single/multi-line popup fields (txtSPOP-TEXT_LINE1..4) first,
+    ...    falls back to a table-dump for SAP's "Display logs"-style popups.
+    ${popup_present}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
+    ${message}=    Set Variable    ${EMPTY}
+    IF    ${popup_present}
+        FOR    ${line}    IN    1    2    3    4
+            ${res}=    Run Keyword And Ignore Error
+            ...    Evaluate    $session.findById('wnd[1]/usr/txtSPOP-TEXT_LINE${line}').Text
+            IF    '${res}[0]' == 'PASS'
+                ${line_text}=    Clean Value    ${res}[1]
+                ${line_not_empty}=    Run Keyword And Return Status    Should Not Be Empty    ${line_text}
+                IF    ${line_not_empty}
+                    ${message}=    Catenate    SEPARATOR=${SPACE}    ${message}    ${line_text}
+                    ${message}=    Strip String    ${message}
+                END
+            END
+        END
+
+        ${message_is_empty}=    Run Keyword And Return Status    Should Be Empty    ${message}
+        IF    ${message_is_empty}
+            ${popup_root}=    Run Keyword And Ignore Error
+            ...    Evaluate    $session.findById('wnd[1]')
+            IF    '${popup_root}[0]' == 'PASS'
+                @{all_texts}=    Dump Element Texts    ${popup_root}[1]
+                Log To Console    Popup table-dump candidates: @{all_texts}
+                @{meaningful}=    Create List
+                FOR    ${t}    IN    @{all_texts}
+                    ${tlen}=    Get Length    ${t}
+                    IF    ${tlen} >= 12
+                        Append To List    ${meaningful}    ${t}
+                    END
+                END
+                ${message}=    Catenate    SEPARATOR=${SPACE}|${SPACE}    @{meaningful}
+            END
+        END
+
+        Log To Console    Popup message captured: "${message}"
+        Run Keyword And Ignore Error    Click Element    wnd[1]/tbar[0]/btn[0]
+        Sleep    1s
+    END
+    RETURN    ${message}
+
+
 Close SAP Session
     # Log    MIGO 105 finished.    level=INFO
     # RETURN

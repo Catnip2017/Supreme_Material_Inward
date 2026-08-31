@@ -214,6 +214,78 @@
 }
 .btn-row-move:hover:not(:disabled) { background:#dce7f5; }
 .btn-row-move:disabled { color:#ccc; border-color:#e0e0e0; background:#fafafa; cursor:default; }
+
+/* ───────── Visual redesign (2026-08-24): "Document Details" restyled
+   to match the xd-* design system already used by extracted_data.html
+   and gate_in.html (section-title bar + vertical-label attribute
+   tables), copied verbatim from those files -- not shared via main.css,
+   each tab template is self-contained. Every existing field id, JS
+   function, and behavior below is unchanged -- this only restyles the
+   surrounding markup. The Invoice/PO Line Item tables and Matched
+   Pairs table keep their exact existing structure (data-field-attribute
+   based JS reads them, not position) -- only their header/border colors
+   are lightly harmonized with this same palette below. ───────────── */
+.approval-banner {
+  border-radius:10px; padding:9px 18px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:13px; margin-bottom:14px;
+}
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+.xd-section-title .xd-orig-links { display:flex; align-items:center; gap:8px; }
+.xd-section-title .xd-orig-links a {
+  color:#8a6100; font-size:11px; font-weight:600; text-decoration:none;
+  letter-spacing:normal; margin-left:8px; display:inline-block;
+  background:#fff; border:1.5px solid #f0a500; border-radius:6px;
+  padding:4px 10px;
+}
+.xd-section-title .xd-orig-links a:hover { background:#fff2cf; text-decoration:none; }
+
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input, .xd-table textarea, .xd-table select {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table select { border-color:#dfe3e8; background:white; }
+.xd-table input:hover, .xd-table select:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table select:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table select:disabled { color:#4a5568; cursor:not-allowed; }
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; align-items:stretch; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
+.xd-table .field-error-msg { margin-top:2px; }
+
+/* Light palette harmonization for the existing data-grid tables -- CSS
+   only, structure/columns/data-field attributes untouched. */
+.verify-panel-header { border-radius:6px 6px 0 0; letter-spacing:0.3px; }
+.invoice-header { background:#eaf1fd; color:#1e5ca8; }
+.po-header { background:#eaf7f0; color:#00796b; }
+.verify-table thead th { background:#f7f9fc; color:#37424d; }
+.matched-section { border-color:#1e5ca8; }
+.matched-section-header { background:#1e5ca8; }
 </style>
 
 <div class="content-card">
@@ -238,9 +310,9 @@
    fetchMigo103PoItems() were already fully generic. #}
 {% set show_manual_po_fetch = True %}
 {% if not gate_in_done %}
-<div class="gate-banner">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 103.</div>
+<div class="approval-banner pending">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 103.</div>
 {% else %}
-<div class="gate-banner unlocked">✓ <strong>Gate In Done</strong> — Ready for MIGO 103 posting.</div>
+<div class="approval-banner approved">✓ <strong>Gate In Done</strong> — Ready for MIGO 103 posting.</div>
 {% endif %}
 
 {% if history %}
@@ -257,76 +329,6 @@
 {% endif %}
 
   <input type="hidden" id="history_id_migo" value="{{ history_id or '' }}">
-
-  <div class="form-row">
-    <div class="form-group">
-      <label>Purchase Order No <span class="req">*</span></label>
-      <div style="display:flex;gap:8px;align-items:flex-start;">
-        <input type="text" id="migoPoNumber" class="form-input" style="flex:1;" maxlength="10"
-               {# FIX: migo_entries has no migo_po_number column, so that
-                  first COALESCE arm was always a no-op -- this fell
-                  straight to invoice_data.po_number every time. That's the
-                  Compliance-approved OCR value, which is NOT necessarily
-                  what actually went to SAP: for a with-PO Gate In, the
-                  guard can (and does) correct the PO number right there on
-                  the Gate In form before posting (see gate_in.html's own
-                  purchaseOrder field), and that correction lives in
-                  gate_in_entries.purchase_order, not invoice_data. Prefer
-                  that guard-confirmed value now, so a Compliance mistake
-                  the guard already caught and fixed at Gate In shows up
-                  correctly here instead of the stale OCR figure. #}
-               value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
-               >
-        {% if show_manual_po_fetch %}
-        {% set fetch_po_label = '📋 Fetch PO Items' if 'without_po' in po_flow_type else '🔄 Retry PO Fetch' %}
-        <button type="button" id="fetchPoItemsBtn"
-                onclick="fetchMigo103PoItems()"
-                data-default-label="{{ fetch_po_label }}"
-                style="display:inline-flex;align-items:center;gap:5px;padding:0 14px;height:38px;
-                       background:#e67e22;color:#fff;border:none;border-radius:6px;
-                       cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;flex-shrink:0;"
-                >
-          {{ fetch_po_label }}
-        </button>
-        {% endif %}
-      </div>
-      <div class="field-error-msg" id="err_migoPoNumber">Required</div>
-    </div>
-    <div class="form-group">
-      <label>Document Date <span class="req">*</span></label>
-      <input type="date" id="migoDocDate" class="form-input"
-             value="{{ (migo_data.get('migo_doc_date') if migo_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}"
-             >
-      <div class="field-error-msg" id="err_migoDocDate">Required</div>
-    </div>
-  </div>
-
-  {% if resolved_vendor_name %}
-  <div class="form-row">
-    <div class="form-group">
-      <label>Vendor Name <span style="font-size:11px;color:#888;">(from Gate In — view only)</span></label>
-      <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled
-             style="background:#f5f6f8;color:#555;">
-    </div>
-  </div>
-  {% endif %}
-
-  <div class="form-row">
-    <div class="form-group">
-      <label>Posting Date <span class="req">*</span></label>
-      <input type="date" id="migoPostDate" class="form-input"
-             value="{{ (migo_data.get('migo_post_date') if migo_data else '') or '' }}"
-             >
-      <div class="field-error-msg" id="err_migoPostDate">Required</div>
-    </div>
-    <div class="form-group">
-      <label>Delivery Note <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Invoice No)</span></label>
-      <input type="text" id="migoDeliveryNote" class="form-input" maxlength="16"
-             value="{{ (migo_data.get('migo_delivery_note') if migo_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
-             >
-      <div class="field-error-msg" id="err_migoDeliveryNote">Required</div>
-    </div>
-  </div>
 
   {# Bill of Lading — SAP's field is hard-capped at 16 characters. Client
      request (2026-08-06): pack it as "<LR No> <Transporter Name>", where
@@ -351,36 +353,136 @@
     {% endif %}
   {% endif %}
   {% set _bol_default = _bol_default[:16] %}
-  <div class="form-row">
-    <div class="form-group">
-      <label>Bill of Lading <span style="font-size:11px;color:#888;">(LR No + Transporter, max 16 chars)</span></label>
-      <input type="text" id="migoBillOfLading" class="form-input" maxlength="16"
-             value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or _bol_default }}"
-             title="SAP limit is 16 characters: LR No, one space, then as much of the Transporter Name as fits.">
-    </div>
-    <div class="form-group">
-      <label>GR/GI Slip No</label>
-      <input type="text" id="migoGRSlipNo" class="form-input" maxlength="10"
-             value="{{ (migo_data.get('migo_gr_slip_no') if migo_data else '') or '' }}"
-             >
-    </div>
-  </div>
 
-  <div class="form-group">
-    <label>Header Text <span class="req">*</span> <span style="font-size:11px;color:#1e5ca8;">(Gate In Number)</span></label>
-    <input type="text" id="migoHeaderText" class="form-input" maxlength="25"
-           value="{{ (migo_data.get('migo_header_text') or (history.gate_in_number if history and history.gate_in_number else '')) or '' }}"
-           >
-    <div class="field-error-msg" id="err_migoHeaderText">Required</div>
+  <div class="xd-section-title"><span>📄 DOCUMENT DETAILS</span></div>
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="4">Doc details</td>
+        <td class="xd-attr-lbl">Purchase Order No <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" id="migoPoNumber" class="form-input" style="flex:1;" maxlength="10"
+                   {# FIX: migo_entries has no migo_po_number column, so that
+                      first COALESCE arm was always a no-op -- this fell
+                      straight to invoice_data.po_number every time. That's the
+                      Compliance-approved OCR value, which is NOT necessarily
+                      what actually went to SAP: for a with-PO Gate In, the
+                      guard can (and does) correct the PO number right there on
+                      the Gate In form before posting (see gate_in.html's own
+                      purchaseOrder field), and that correction lives in
+                      gate_in_entries.purchase_order, not invoice_data. Prefer
+                      that guard-confirmed value now, so a Compliance mistake
+                      the guard already caught and fixed at Gate In shows up
+                      correctly here instead of the stale OCR figure. #}
+                   value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+                   >
+            {% if show_manual_po_fetch %}
+            {% set fetch_po_label = '📋 Fetch PO Items' if 'without_po' in po_flow_type else '🔄 Retry PO Fetch' %}
+            <button type="button" id="fetchPoItemsBtn"
+                    onclick="fetchMigo103PoItems()"
+                    data-default-label="{{ fetch_po_label }}"
+                    style="display:inline-flex;align-items:center;gap:5px;padding:0 14px;height:32px;
+                           background:#e67e22;color:#fff;border:none;border-radius:6px;
+                           cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;flex-shrink:0;"
+                    >
+              {{ fetch_po_label }}
+            </button>
+            {% endif %}
+          </div>
+          <div class="field-error-msg" id="err_migoPoNumber">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Document Date <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="date" id="migoDocDate" class="form-input"
+                 value="{{ (migo_data.get('migo_doc_date') if migo_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}"
+                 >
+          <div class="field-error-msg" id="err_migoDocDate">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Posting Date <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="date" id="migoPostDate" class="form-input"
+                 {# FIX (2026-08-24, client request): this always showed
+                    whatever date was saved from the LAST attempt
+                    (migo_entries.migo_post_date), even a failed one from
+                    days earlier -- e.g. Gate In on the 22nd, first MIGO 103
+                    attempt saved post_date=22nd but failed to post, then a
+                    retry on the 24th still showed "22" here because the
+                    field wasn't empty, so the page-load script below (which
+                    only fills in today's date when the field is blank)
+                    never kicked in. Client requirement: irrespective of
+                    when Gate In was completed, Posting Date must reflect
+                    the actual current date. Only show the saved date once
+                    MIGO 103 has actually posted (history.migo_103) -- that's
+                    a real historical record worth showing. Otherwise leave
+                    it blank so today's date fills in fresh on every visit,
+                    matching the day the user is actually posting on. #}
+                 value="{{ (migo_data.get('migo_post_date') if (migo_data and history and history.migo_103) else '') or '' }}"
+                 >
+          <div class="field-error-msg" id="err_migoPostDate">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Delivery Note <span class="req">*</span> <span class="xd-attr-note">Invoice No</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoDeliveryNote" class="form-input" maxlength="16"
+                 value="{{ (migo_data.get('migo_delivery_note') if migo_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
+                 >
+          <div class="field-error-msg" id="err_migoDeliveryNote">Required</div>
+        </td>
+      </tr>
+    </table>
+
+    <table class="xd-table">
+      {% if resolved_vendor_name %}
+      <tr>
+        <td class="xd-lbl" rowspan="4">Vendor &amp; transport</td>
+        <td class="xd-attr-lbl">Vendor Name <span class="xd-attr-note">from Gate In — view only</span></td>
+        <td class="xd-attr-val">
+          <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled style="background:#f5f6f8;color:#555;">
+        </td>
+      </tr>
+      <tr>
+      {% else %}
+      <tr>
+        <td class="xd-lbl" rowspan="3">Vendor &amp; transport</td>
+      {% endif %}
+        <td class="xd-attr-lbl">Bill of Lading <span class="xd-attr-note">LR No + Transporter, max 16</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoBillOfLading" class="form-input" maxlength="16"
+                 value="{{ (migo_data.get('migo_bill_of_lading') if migo_data else '') or _bol_default }}"
+                 title="SAP limit is 16 characters: LR No, one space, then as much of the Transporter Name as fits.">
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">GR/GI Slip No</td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoGRSlipNo" class="form-input" maxlength="10"
+                 value="{{ (migo_data.get('migo_gr_slip_no') if migo_data else '') or '' }}"
+                 >
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Header Text <span class="req">*</span> <span class="xd-attr-note">Gate In Number</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoHeaderText" class="form-input" maxlength="25"
+                 value="{{ (migo_data.get('migo_header_text') or (history.gate_in_number if history and history.gate_in_number else '')) or '' }}"
+                 >
+          <div class="field-error-msg" id="err_migoHeaderText">Required</div>
+        </td>
+      </tr>
+    </table>
   </div>
 
   <!-- Compare Documents button + Line Item Verification -->
-  <div style="margin-top:28px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-      <h4 style="color:#1e5ca8;font-size:14px;margin:0;font-weight:700;">
-        📋 Line Item Verification
-      </h4>
-      <div style="display:flex;gap:8px;align-items:center;">
+  <div style="margin-top:8px;">
+    <div class="xd-section-title">
+      <span>📋 LINE ITEM VERIFICATION</span>
+      <div class="xd-orig-links">
         <span id="poStatusBadge">
           {% if po_data and po_data|length > 0 %}
           <span class="po-status-badge po-fetched">✓ {{ po_data|length }} PO line(s)</span>
@@ -388,7 +490,7 @@
           <span class="po-status-badge po-pending">⏳ PO data pending</span>
           {% endif %}
         </span>
-        <button type="button" class="btn-compare" onclick="openCompareModal()">🔍 Compare Documents</button>
+        <a href="javascript:void(0)" onclick="openCompareModal()" style="border-color:#1e5ca8;color:#1e5ca8;">🔍 Compare Documents</a>
       </div>
     </div>
 
@@ -714,7 +816,20 @@ const STEP_LOCKS_ENABLED_103 = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false
 
 (function() {
   const pd = document.getElementById('migoPostDate');
-  if (pd && !pd.value) pd.value = new Date().toISOString().split('T')[0];
+  // FIX (2026-08-24, client request): was new Date().toISOString().split('T')[0]
+  // -- toISOString() converts to UTC before formatting. India is UTC+5:30, so
+  // any time between ~00:00 and 05:30 IST, the UTC calendar date is still
+  // YESTERDAY -- this was silently pre-filling the wrong date for that whole
+  // window. Build the date from the browser's own LOCAL getters instead
+  // (getFullYear/getMonth/getDate are local-time, not UTC), so it always
+  // reflects the user's actual local today regardless of server timezone.
+  if (pd && !pd.value) {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    pd.value = `${yyyy}-${mm}-${dd}`;
+  }
 })();
 
 // ============================================================
@@ -997,6 +1112,58 @@ function confirmSingleInvoiceLine() {
 // ============================================================
 const AUTO_PAIR_MIN = {{ config.AUTO_PAIR_MIN_MATCHES if config and config.AUTO_PAIR_MIN_MATCHES else 3 }};
 const AUTO_PAIR_AMT_TOL = {{ config.AUTO_PAIR_AMOUNT_TOLERANCE if config and config.AUTO_PAIR_AMOUNT_TOLERANCE else 5 }};
+
+// ADDED (2026-08-31): Matched Pairs was only ever built live in the browser
+// from the raw Invoice/PO tables (confirmMatches(), below) -- nothing on
+// this page ever re-read the ALREADY-POSTED matched pairs back out of the
+// database, so the moment you left the page (or reopened this record
+// later), the section went blank even though the real data was sitting the
+// whole time in migo_entries.items_data (same data MIGO 105's page already
+// reads via /api/migo_matched_pairs/<id> -- see loadMatchedPairsFromDb()
+// below, which reuses that same existing endpoint, no backend change).
+// These two flags gate that: only load-from-DB once MIGO 103 has actually
+// been posted, and stop showing it once reversed (client requirement --
+// "show until MIGO 103 is reversed").
+const MIGO_103_HAS_ITEMS_IN_DB = {{ 'true' if history and history.migo_103 else 'false' }};
+const MIGO_103_IS_REVERSED = {{ 'true' if history and history.migo_103_reversed else 'false' }};
+
+// Loads the real, already-posted matched pairs straight from the database
+// (read-only -- this is history, not something to re-edit and resubmit)
+// instead of the live pair-building flow below, which only makes sense
+// before posting.
+function loadMatchedPairsFromDb(historyId) {
+  fetch(`/api/migo_matched_pairs/${historyId}`)
+    .then(r => r.json())
+    .then(data => {
+      const items = data.items || [];
+      if (items.length === 0) return;
+      const tbody = document.getElementById('matchedBody');
+      tbody.innerHTML = '';
+      items.forEach((item, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td></td>
+          <td style="font-weight:600;color:#1e5ca8;">${idx + 1}</td>
+          <td>${_esc(item.material_code || '')}</td>
+          <td class="cell-text" title="${_esc(item.short_text || '')}">${_esc(item.short_text || '')}</td>
+          <td class="cell-text" style="color:#666;" title="${_esc(item.short_text || '')}">${_esc(item.short_text || '')}</td>
+          <td>${_esc(item.hsn_sac || '')}</td>
+          <td>${_esc(item.unit || '')}</td>
+          <td>${_esc(item.qty_expected || '')}</td>
+          <td>${_esc(item.qty_actual || '')}</td>
+          <td>${_esc(item.rate || '')}</td>
+          <td>${_esc(item.amount || '')}</td>
+          <td></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      const section = document.getElementById('matchedSection');
+      section.style.display = 'block';
+      const subtitle = section.querySelector('.matched-section-header span:last-child');
+      if (subtitle) subtitle.textContent = '— Posted (read-only)';
+    })
+    .catch(err => console.error('Failed to load matched pairs from DB:', err));
+}
 
 
 function autoPair(silent) {
@@ -1493,6 +1660,19 @@ function _esc(s) {
 //   ones still go through a manual "Confirm Matches" click as a
 //   checkpoint, same as if the user had clicked Auto-Pair themselves.
 document.addEventListener('DOMContentLoaded', function() {
+  // ADDED (2026-08-31): posted records show their real, already-posted
+  // matched pairs from the database (see loadMatchedPairsFromDb() above)
+  // instead of falling through to the guess-based live pairing logic
+  // below, which only reconstructs from whatever the raw Invoice/PO
+  // tables currently look like -- not reliable for a record that's already
+  // posted (rate/amount/qty may have been hand-edited before that post).
+  // Stops showing once reversed, per client requirement.
+  if (MIGO_103_HAS_ITEMS_IN_DB && !MIGO_103_IS_REVERSED) {
+    const historyId = parseInt(document.getElementById('history_id_migo').value);
+    if (historyId) loadMatchedPairsFromDb(historyId);
+    return;
+  }
+
   const invRows = document.querySelectorAll('#invoiceItemsBody tr[data-idx]');
   const poRows  = document.querySelectorAll('#poItemsBody tr[data-idx]');
   if (invRows.length === 0 || poRows.length === 0) return;
@@ -1794,6 +1974,19 @@ function fetchMigo103PoItems() {
   const poNumber = document.getElementById('migoPoNumber').value.trim();
   if (!poNumber) {
     _showMigo103PoStatus('Enter a PO number first.', 'error');
+    return;
+  }
+  // ADDED (2026-08-26): this box pre-fills from stored gate_in/invoice data
+  // on every page load, which can silently be a non-PO value (e.g. "BY
+  // MAIL" typed in by mistake, or picked up by OCR) -- clicking Fetch
+  // without noticing would run a real SAP query guaranteed to fail. Real
+  // PO numbers are numeric only (SAP's EBELN field), so catch anything
+  // else here before it ever reaches the bot.
+  if (!/^\d+$/.test(poNumber)) {
+    _showMigo103PoStatus(
+      '"' + poNumber + '" doesn\'t look like a valid PO number (numbers only). Please correct it before fetching.',
+      'error'
+    );
     return;
   }
   const historyId = parseInt(document.getElementById('history_id_migo').value);

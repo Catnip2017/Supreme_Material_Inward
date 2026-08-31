@@ -144,6 +144,69 @@
 .po-fetch-status.info { background: #e8f0fe; color: #1e5ca8; }
 .po-fetch-status.error { background: #fee2e2; color: #b91c1c; }
 .po-fetch-status.success { background: #d1fae5; color: #065f46; }
+
+/* ── FIX (2026-08-19, client request): visual redesign to match the
+   Extracted Data tab's design system ("xd-*" classes) -- these are
+   copied from extracted_data.html's own <style> block (not shared via
+   main.css, each tab template is self-contained) since this tab now
+   reuses the same section-header / vertical-label-table / highlight-link
+   look. Every existing field id, JS function, and behavior below is
+   unchanged -- this only restyles the surrounding markup. ───────────── */
+.approval-banner {
+  border-radius:10px; padding:9px 18px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:13px; margin-bottom:14px;
+}
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+.xd-section-title .xd-orig-links a {
+  color:#8a6100; font-size:11px; font-weight:600; text-decoration:none;
+  letter-spacing:normal; margin-left:8px; display:inline-block;
+  background:#fff; border:1.5px solid #f0a500; border-radius:6px;
+  padding:4px 10px;
+}
+.xd-section-title .xd-orig-links a:hover { background:#fff2cf; text-decoration:none; }
+
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input, .xd-table textarea, .xd-table select {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table select { border-color:#dfe3e8; background:white; }
+.xd-table textarea { resize:none; line-height:1.35; }
+.xd-table input:hover, .xd-table textarea:hover, .xd-table select:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table textarea:focus, .xd-table select:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table textarea:disabled, .xd-table select:disabled { color:#4a5568; cursor:not-allowed; }
+/* Existing .field-error (red) / .po-fetch-status etc. classes from above
+   keep working unchanged inside these tables -- .field-error already sets
+   border-color, which still applies since it's a plain class selector
+   layered on top. */
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; align-items:stretch; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
 </style>
 
 <div class="content-card">
@@ -158,9 +221,9 @@
 {% set post_locked = (status != 'approved') %}
 {% set is_approved = (status == 'approved') %}
 {% if not is_approved %}
-<div class="gate-banner">⏸ <strong>Awaiting Approval</strong> — Approve the record in Extracted Data first.</div>
+<div class="approval-banner pending">⏸ <strong>Awaiting Approval</strong> — Approve the record in Extracted Data first.</div>
 {% else %}
-<div class="gate-banner unlocked">✓ <strong>Approved</strong> — Ready for Gate In posting.</div>
+<div class="approval-banner approved">✓ <strong>Approved</strong> — Ready for Gate In posting.</div>
 {% endif %}
 
   {% if history %}
@@ -176,150 +239,197 @@
   <form id="gateInForm" novalidate>
     <input type="hidden" id="history_id" value="{{ history_id or '' }}">
 
-    <h4 style="color:#1e5ca8;font-size:15px;margin-top:16px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">⏰ Gate In Timing</h4>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Gate In Date <span class="req">*</span></label>
-        <input type="date" id="gateInDate" class="form-input"
-               value="{{ (gatein_data.get('gate_in_date') if gatein_data else '') or '' }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_gateInDate">Required</div>
-      </div>
-      <div class="form-group">
-        <label>Gate In Time <span class="req">*</span></label>
-        <input type="time" id="gateInTime" class="form-input"
-               value="{{ (gatein_data.get('gate_in_time') if gatein_data else '') or '' }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_gateInTime">Required</div>
-      </div>
+    <!-- ── Gate In Date/Time ──────────────────────────────────────────────── -->
+    <div class="xd-section-title"><span>⏰ GATE IN DATE TIME</span></div>
+    <div class="xd-band-pair">
+      <table class="xd-table">
+        <tr>
+          <td class="xd-lbl" rowspan="1">Date</td>
+          <td class="xd-attr-lbl">Gate In Date <span class="req">*</span></td>
+          <td class="xd-attr-val">
+            <input type="date" id="gateInDate" class="form-input"
+                   value="{{ (gatein_data.get('gate_in_date') if gatein_data else '') or '' }}"
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <div class="field-error-msg" id="err_gateInDate">Required</div>
+          </td>
+        </tr>
+      </table>
+      <table class="xd-table">
+        <tr>
+          <td class="xd-lbl" rowspan="1">Time</td>
+          <td class="xd-attr-lbl">Gate In Time <span class="req">*</span></td>
+          <td class="xd-attr-val">
+            <input type="time" id="gateInTime" class="form-input"
+                   value="{{ (gatein_data.get('gate_in_time') if gatein_data else '') or '' }}"
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <div class="field-error-msg" id="err_gateInTime">Required</div>
+          </td>
+        </tr>
+      </table>
     </div>
 
     <!-- ── Truck Fields Section ──────────────────────────────────────────── -->
     <div id="truckFieldsSection">
-      <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🚚 Truck Details</h4>
-      <div class="form-row form-row-vendor">
-        <div class="form-group driver-dropdown-wrap">
-          <label>Vendor Name <span class="req">*</span></label>
-          <div class="vehicle-lookup-row">
-            <input type="text" id="vendorName" class="form-input" maxlength="40" autocomplete="off"
-                   value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-                   placeholder="Vendor name" oninput="onVendorNameTypeahead('')"
-                   {% if gate_in_locked %}disabled{% endif %}>
-            <button type="button" class="btn-lookup" onclick="fetchVendorCode('')"
-                    {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
-          </div>
-          <div class="driver-dropdown" id="vendorCodeDropdown"></div>
-          <div class="field-error-msg" id="err_vendorName">Required</div>
-        </div>
-        <div class="form-group">
-          <label>Vendor Code <span class="req">*</span></label>
-          <input type="text" id="vendorCode" class="form-input" maxlength="10" autocomplete="off"
-                 value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
-                 placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
-                 {% if gate_in_locked %}disabled{% endif %}>
-          <div class="field-error-msg" id="err_vendorCode">Required</div>
-        </div>
-        <div class="form-group">
-          <label>Transporter</label>
-          <input type="text" id="transporter" class="form-input" maxlength="40"
-                 value="{{ ((gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '')|truncate(40, True, '', 0) }}"
-                 {% if gate_in_locked %}disabled{% endif %}>
-        </div>
+      <div class="xd-section-title">
+        <span>🚚 TRUCK DETAILS</span>
+        <span class="xd-orig-links">
+          {% if invoice_data and invoice_data.get('filename') %}
+          <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data['filename']) }}" target="_blank">📄 View Invoice</a>
+          {% endif %}
+          {% if ewaybill_data and ewaybill_data.get('filename') %}
+          <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) }}" target="_blank">📄 View E-Way Bill</a>
+          {% endif %}
+          {% if lr_data and lr_data.get('filename') %}
+          <a href="{{ url_for('view_document', doctype='lr', filename=lr_data['filename']) }}" target="_blank">📄 View LR</a>
+          {% endif %}
+        </span>
       </div>
-
-      <!-- Container No moved above Truck No/License No (truck-only, kept
-           solo since No. of Persons stays shared with hand delivery -- see
-           gate_in tab discussion). Paired with an empty spacer so the grid
-           gives it a half-width column like every other paired row, instead
-           of stretching full width the way a lone .form-row child does. -->
-      <div class="form-row">
-        <div class="form-group">
-          <label>Container No</label>
-          <input type="text" id="containerNo" class="form-input" maxlength="20"
-                 value="{{ ((gatein_data.get('container_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
-                 {% if gate_in_locked %}disabled{% endif %}>
-        </div>
-        <div class="form-group" aria-hidden="true"></div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group driver-dropdown-wrap">
-          <label>Truck No <span class="req">*</span> <span class="manual-hint">Max 12 chars · auto-caps</span></label>
-          <div class="vehicle-lookup-row">
-            <input type="text" id="truckNo" class="form-input" maxlength="12"
-                   value="{{ ((gatein_data.get('truck_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
-                   {% if gate_in_locked %}disabled{% endif %}>
-            <button type="button" class="btn-lookup" id="fetchDriverBtn" onclick="lookupVehicle()"
-                    {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch Driver</button>
-          </div>
-          <div class="driver-dropdown" id="driverDropdown"></div>
-          <div class="field-error-msg" id="err_truckNo">Required</div>
-        </div>
-        <div class="form-group">
-          <label>License No <span class="req">*</span> <span class="manual-hint">e.g. HR06 1234567890123</span></label>
-          <input type="text" id="licenseNo" class="form-input" maxlength="20"
-                 value="{{ ((gatein_data.get('license_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
-                 placeholder="e.g. HR06 1234567890123"
-                 {% if gate_in_locked %}disabled{% endif %}>
-          <div class="field-error-msg" id="err_licenseNo">Required</div>
-        </div>
+      <div class="xd-band-pair">
+        <table class="xd-table">
+          <tr>
+            <td class="xd-lbl" rowspan="3">Vendor info</td>
+            <td class="xd-attr-lbl">Vendor Name <span class="req">*</span></td>
+            <td class="xd-attr-val driver-dropdown-wrap">
+              <div class="vehicle-lookup-row">
+                <input type="text" id="vendorName" class="form-input" maxlength="40" autocomplete="off"
+                       value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                       placeholder="Vendor name" oninput="onVendorNameTypeahead('')"
+                       {% if gate_in_locked %}disabled{% endif %}>
+                <button type="button" class="btn-lookup" onclick="fetchVendorCode('')"
+                        {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
+              </div>
+              <div class="driver-dropdown" id="vendorCodeDropdown"></div>
+              <div class="field-error-msg" id="err_vendorName">Required</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="xd-attr-lbl">Vendor Code <span class="req">*</span></td>
+            <td class="xd-attr-val">
+              <input type="text" id="vendorCode" class="form-input" maxlength="10" autocomplete="off"
+                     value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
+                     placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <div class="field-error-msg" id="err_vendorCode">Required</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="xd-attr-lbl">Container No</td>
+            <td class="xd-attr-val">
+              <input type="text" id="containerNo" class="form-input" maxlength="20"
+                     value="{{ ((gatein_data.get('container_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
+                     {% if gate_in_locked %}disabled{% endif %}>
+            </td>
+          </tr>
+        </table>
+        <table class="xd-table">
+          <tr>
+            <td class="xd-lbl" rowspan="5" id="truckVehicleDriverLbl">Vehicle &amp; driver</td>
+            <td class="xd-attr-lbl">Truck No <span class="req">*</span> <span class="xd-attr-note">Max 12 · auto-caps</span></td>
+            <td class="xd-attr-val driver-dropdown-wrap">
+              <div class="vehicle-lookup-row">
+                <input type="text" id="truckNo" class="form-input" maxlength="12"
+                       value="{{ ((gatein_data.get('truck_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
+                       {% if gate_in_locked %}disabled{% endif %}>
+                <button type="button" class="btn-lookup" id="fetchDriverBtn" onclick="lookupVehicle()"
+                        {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch Driver</button>
+              </div>
+              <div class="driver-dropdown" id="driverDropdown"></div>
+              <div class="field-error-msg" id="err_truckNo">Required</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="xd-attr-lbl">License No <span class="req">*</span></td>
+            <td class="xd-attr-val">
+              <input type="text" id="licenseNo" class="form-input" maxlength="20"
+                     value="{{ ((gatein_data.get('license_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
+                     placeholder="e.g. HR06 1234567890123"
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <div class="field-error-msg" id="err_licenseNo">Required</div>
+            </td>
+          </tr>
+          <tr id="transporterRowTruck">
+            <td class="xd-attr-lbl">Transporter</td>
+            <td class="xd-attr-val">
+              <input type="text" id="transporter" class="form-input" maxlength="40"
+                     value="{{ ((gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '')|truncate(40, True, '', 0) }}"
+                     {% if gate_in_locked %}disabled{% endif %}>
+            </td>
+          </tr>
+          <!-- ── Driver Name / No. of Persons -- default (Truck) location is
+               merged into this "Vehicle & driver" band, per client request
+               (2026-08-26). These two rows are SHARED across all delivery
+               types (unlike the rest of this table), so onDeliveryTypeChange()
+               below physically re-parents them into the Hand/Courier table
+               instead when dType != 'truck' -- they must never be nested
+               inside a mode-specific display:none wrapper (see CLAUDE.md's
+               tab-redesign notes on this exact trap), since driverName/
+               numPersons are read unconditionally at submit time regardless
+               of delivery type. ────────────────────────────────────────── -->
+          <tr id="driverNameRow">
+            <td class="xd-attr-lbl"><span id="driverNameLabelText">Driver Name</span><span class="req" id="driverNameReq"> *</span></td>
+            <td class="xd-attr-val">
+              <input type="text" id="driverName" class="form-input" maxlength="30"
+                     value="{{ ((gatein_data.get('driver_name') if gatein_data else '') or '')|truncate(30, True, '', 0) }}"
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <div class="field-error-msg" id="err_driverName">Required</div>
+            </td>
+          </tr>
+          <tr id="numPersonsRow">
+            <td class="xd-attr-lbl">No. of Persons <span class="xd-attr-note">Default 1</span></td>
+            <td class="xd-attr-val">
+              <input type="number" id="numPersons" class="form-input"
+                     value="{{ (gatein_data.get('num_persons') if gatein_data else '1') or '1' }}"
+                     min="1" max="99" {% if gate_in_locked %}disabled{% endif %}>
+            </td>
+          </tr>
+        </table>
       </div>
     </div><!-- /#truckFieldsSection -->
 
     <!-- ── Hand Delivery Fields Section ─────────────────────────────────── -->
     <div id="handFieldsSection" style="display:none;">
-      <h4 id="handSectionTitle" style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">🤝 Hand Delivery Details</h4>
-      <div class="form-row form-row-vendor">
-        <div class="form-group driver-dropdown-wrap">
-          <label>Vendor Name <span class="req">*</span></label>
-          <div class="vehicle-lookup-row">
-            <input type="text" id="vendorNameHand" class="form-input" maxlength="40" autocomplete="off"
-                   value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
-                   placeholder="Vendor name" oninput="onVendorNameTypeahead('Hand')"
+      <div class="xd-section-title"><span id="handSectionTitle">🤝 HAND DELIVERY DETAILS</span></div>
+      <table class="xd-table">
+        <tr>
+          <td class="xd-lbl" rowspan="3" id="handVendorInfoLbl">Vendor info</td>
+          <td class="xd-attr-lbl">Vendor Name <span class="req">*</span></td>
+          <td class="xd-attr-val driver-dropdown-wrap">
+            <div class="vehicle-lookup-row">
+              <input type="text" id="vendorNameHand" class="form-input" maxlength="40" autocomplete="off"
+                     value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                     placeholder="Vendor name" oninput="onVendorNameTypeahead('Hand')"
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <button type="button" class="btn-lookup" onclick="fetchVendorCode('Hand')"
+                      {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
+            </div>
+            <div class="driver-dropdown" id="vendorCodeDropdownHand"></div>
+            <div class="field-error-msg" id="err_vendorNameHand">Required</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="xd-attr-lbl">Vendor Code <span class="req">*</span></td>
+          <td class="xd-attr-val">
+            <input type="text" id="vendorCodeHand" class="form-input" maxlength="10" autocomplete="off"
+                   value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
+                   placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
                    {% if gate_in_locked %}disabled{% endif %}>
-            <button type="button" class="btn-lookup" onclick="fetchVendorCode('Hand')"
-                    {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
-          </div>
-          <div class="driver-dropdown" id="vendorCodeDropdownHand"></div>
-          <div class="field-error-msg" id="err_vendorNameHand">Required</div>
-        </div>
-        <div class="form-group">
-          <label>Vendor Code <span class="req">*</span></label>
-          <input type="text" id="vendorCodeHand" class="form-input" maxlength="10" autocomplete="off"
-                 value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
-                 placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
-                 {% if gate_in_locked %}disabled{% endif %}>
-          <div class="field-error-msg" id="err_vendorCodeHand">Required</div>
-        </div>
-        <div class="form-group">
-          <label>Transporter</label>
-          <input type="text" id="transporterHand" class="form-input" maxlength="40"
-                 value="{{ ((gatein_data.get('transporter') if gatein_data else '') or '')|truncate(40, True, '', 0) }}"
-                 {% if gate_in_locked %}disabled{% endif %}>
-        </div>
-      </div>
+            <div class="field-error-msg" id="err_vendorCodeHand">Required</div>
+          </td>
+        </tr>
+        <tr id="transporterRowHand">
+          <td class="xd-attr-lbl">Transporter</td>
+          <td class="xd-attr-val">
+            <input type="text" id="transporterHand" class="form-input" maxlength="40"
+                   value="{{ ((gatein_data.get('transporter') if gatein_data else '') or '')|truncate(40, True, '', 0) }}"
+                   {% if gate_in_locked %}disabled{% endif %}>
+          </td>
+        </tr>
+      </table>
     </div><!-- /#handFieldsSection -->
 
-    <!-- ── Shared: Driver / Person Name & No. of Persons ────────────────── -->
-    <div class="form-row">
-      <div class="form-group">
-        <label><span id="driverNameLabelText">Driver Name</span><span class="req" id="driverNameReq"> *</span> <span class="manual-hint">Manual</span></label>
-        <input type="text" id="driverName" class="form-input" maxlength="30"
-               value="{{ ((gatein_data.get('driver_name') if gatein_data else '') or '')|truncate(30, True, '', 0) }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_driverName">Required</div>
-      </div>
-      <div class="form-group">
-        <label>No. of Persons <span style="font-size:11px;color:#e17055;font-weight:600;">❗ Default is 1</span></label>
-        <input type="number" id="numPersons" class="form-input"
-               value="{{ (gatein_data.get('num_persons') if gatein_data else '1') or '1' }}"
-               min="1" max="99" {% if gate_in_locked %}disabled{% endif %}>
-      </div>
-    </div>
-
-    <!-- ── Delivery Type ─ moved below Driver Name/No. of Persons per request;
-         same radios/ids/onchange handler as before, position only changed. -->
-    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
+    <!-- ── Delivery Type ─ same radios/ids/onchange handler as before, only
+         restyled. ─────────────────────────────────────────────────────── -->
+    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin:14px 0 18px;">
       <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">🚦 Delivery Type</div>
       <div class="delivery-type-group">
         {# FIX (2026-08-10): these three -- and the poAvail radios further
@@ -349,104 +459,111 @@
       </div>
     </div>
 
-    <h4 style="color:#1e5ca8;font-size:15px;margin-top:24px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #f0f0f0;">📦 Material Details</h4>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Category <span class="req">*</span></label>
-        {# v26: preselect from Extracted Data's simplified Category
-           (gatein_category_default, mapped stores->A / sales_return->E /
-           job_work->F in app.py's view_detail()) -- but ONLY when this
-           Gate In hasn't already saved its own category (a draft in
-           progress, or an already-submitted record). A real saved value
-           always wins over the default. All 7 options stay selectable --
-           this only changes which one starts selected. See the
-           data-preselected attribute + confirm-on-change JS below. #}
-        {% set _existing_cat = (gatein_data.get('category') if gatein_data else '') or '' %}
-        {% set _effective_cat = _existing_cat or gatein_category_default or '' %}
-        <select id="category" class="form-select" data-preselected="{{ _effective_cat }}" {% if gate_in_locked %}disabled{% endif %}>
-          <option value="">Select category</option>
-          <option value="A" {% if _effective_cat=='A' %}selected{% endif %}>A — Stores</option>
-          <option value="B" {% if _effective_cat=='B' %}selected{% endif %}>B — Tankfarm</option>
-          <option value="C" {% if _effective_cat=='C' %}selected{% endif %}>C — Scrap</option>
-          <option value="D" {% if _effective_cat=='D' %}selected{% endif %}>D — Despatch</option>
-          <option value="E" {% if _effective_cat=='E' %}selected{% endif %}>E — Sales Return</option>
-          <option value="F" {% if _effective_cat=='F' %}selected{% endif %}>F — Job Work</option>
-          <option value="G" {% if _effective_cat=='G' %}selected{% endif %}>G — Despatch Scrap</option>
-        </select>
-        <div class="field-error-msg" id="err_category">Required</div>
-      </div>
-      {# v7: goods fallbacks now come from invoice hsn_details (EWB goods columns deprecated) #}
-      {% set inv_hsn = (invoice_data.get('hsn_details') if invoice_data else []) or [] %}
-      {% set inv_goods_desc = ((inv_hsn[0].get('description') or '') if inv_hsn else '') %}
-      {% if inv_hsn|length > 1 and inv_goods_desc %}
-        {% set inv_goods_desc = inv_goods_desc ~ ' +' ~ (inv_hsn|length - 1) ~ ' more' %}
-      {% endif %}
-      {% set inv_goods_qty = ((inv_hsn[0].get('quantity') or '') if inv_hsn else '') %}
-      <div class="form-group">
-        <label>Material <span class="req">*</span></label>
-        <input type="text" id="material" class="form-input" maxlength="40"
-               value="{{ ((gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '')|truncate(40, True, '', 0) }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_material">Required</div>
-      </div>
-    </div>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label>Challan No <span class="req">*</span></label>
-        <input type="text" id="challanNo" class="form-input" maxlength="20"
-               value="{{ ((gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '')|truncate(20, True, '', 0) }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_challanNo">Required</div>
-      </div>
-      <div class="form-group">
-        <label>Challan Quantity <span class="req">*</span></label>
-        <input type="text" id="challanQty" class="form-input" maxlength="20" inputmode="decimal"
-              value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(20, True, '', 0) }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_challanQty">Required</div>
-      </div>
-    </div>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label>Import BOE No</label>
-        <input type="text" id="boeNo" class="form-input" maxlength="10"
-               value="{{ ((gatein_data.get('boe_no') if gatein_data else '') or '')|truncate(10, True, '', 0) }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-      </div>
-
-      <div class="form-group" id="purchaseOrderGroup">
-        <label>Purchase Order <span class="req" id="purchaseOrderReq">*</span>
-          <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px;">
-            Click ▾ to fetch pending POs for this vendor
-          </span>
-        </label>
-        <div class="po-field-wrap" style="position:relative;">
-          <input type="text" id="purchaseOrder" class="form-input" maxlength="10"
-                 value="{{ ((gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '')|truncate(10, True, '', 0) }}"
-                 autocomplete="off" {% if gate_in_locked %}disabled{% endif %}>
-          <button type="button" class="btn-fetch-po" id="fetchPoBtn" onclick="fetchPoList()"
-                  {% if gate_in_locked %}disabled{% endif %}>
-            <span class="spinner"></span>
-            <span class="arrow-icon">▾ Fetch POs</span>
-          </button>
-          <div class="po-dropdown" id="poDropdown">
-            <div class="po-dropdown-header">
-              <span id="poDropdownTitle">Pending POs</span>
-              <span onclick="closePoDropdown()" style="cursor:pointer;color:#888;font-size:14px;">✕</span>
+    <div class="xd-section-title"><span>📦 MATERIAL DETAILS</span></div>
+    {# v26: preselect from Extracted Data's simplified Category
+       (gatein_category_default, mapped stores->A / sales_return->E /
+       job_work->F in app.py's view_detail()) -- but ONLY when this
+       Gate In hasn't already saved its own category (a draft in
+       progress, or an already-submitted record). A real saved value
+       always wins over the default. All 7 options stay selectable --
+       this only changes which one starts selected. See the
+       data-preselected attribute + confirm-on-change JS below. #}
+    {% set _existing_cat = (gatein_data.get('category') if gatein_data else '') or '' %}
+    {% set _effective_cat = _existing_cat or gatein_category_default or '' %}
+    {# v7: goods fallbacks now come from invoice hsn_details (EWB goods columns deprecated) #}
+    {% set inv_hsn = (invoice_data.get('hsn_details') if invoice_data else []) or [] %}
+    {% set inv_goods_desc = ((inv_hsn[0].get('description') or '') if inv_hsn else '') %}
+    {% if inv_hsn|length > 1 and inv_goods_desc %}
+      {% set inv_goods_desc = inv_goods_desc ~ ' +' ~ (inv_hsn|length - 1) ~ ' more' %}
+    {% endif %}
+    {% set inv_goods_qty = ((inv_hsn[0].get('quantity') or '') if inv_hsn else '') %}
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Material &amp; challan</td>
+        <td class="xd-attr-lbl">Category <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <select id="category" class="form-select" data-preselected="{{ _effective_cat }}" {% if gate_in_locked %}disabled{% endif %}>
+            <option value="">Select category</option>
+            <option value="A" {% if _effective_cat=='A' %}selected{% endif %}>A — Stores</option>
+            <option value="B" {% if _effective_cat=='B' %}selected{% endif %}>B — Tankfarm</option>
+            <option value="C" {% if _effective_cat=='C' %}selected{% endif %}>C — Scrap</option>
+            <option value="D" {% if _effective_cat=='D' %}selected{% endif %}>D — Despatch</option>
+            <option value="E" {% if _effective_cat=='E' %}selected{% endif %}>E — Sales Return</option>
+            <option value="F" {% if _effective_cat=='F' %}selected{% endif %}>F — Job Work</option>
+            <option value="G" {% if _effective_cat=='G' %}selected{% endif %}>G — Despatch Scrap</option>
+          </select>
+          <div class="field-error-msg" id="err_category">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Challan No <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="challanNo" class="form-input" maxlength="20"
+                 value="{{ ((gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '')|truncate(20, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_challanNo">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Import BOE No</td>
+        <td class="xd-attr-val">
+          <input type="text" id="boeNo" class="form-input" maxlength="10"
+                 value="{{ ((gatein_data.get('boe_no') if gatein_data else '') or '')|truncate(10, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+        </td>
+      </tr>
+    </table>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Qty &amp; PO</td>
+        <td class="xd-attr-lbl">Material <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="material" class="form-input" maxlength="40"
+                 value="{{ ((gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '')|truncate(40, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_material">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Challan Quantity <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="challanQty" class="form-input" maxlength="20" inputmode="decimal"
+                value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(20, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_challanQty">Required</div>
+        </td>
+      </tr>
+      <tr id="purchaseOrderGroup">
+        <td class="xd-attr-lbl">Purchase Order <span class="req" id="purchaseOrderReq">*</span>
+          <span class="xd-attr-note">Click ▾ to fetch pending POs</span>
+        </td>
+        <td class="xd-attr-val">
+          <div class="po-field-wrap" style="position:relative;">
+            <input type="text" id="purchaseOrder" class="form-input" maxlength="10"
+                   value="{{ ((gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '')|truncate(10, True, '', 0) }}"
+                   autocomplete="off" {% if gate_in_locked %}disabled{% endif %}>
+            <button type="button" class="btn-fetch-po" id="fetchPoBtn" onclick="fetchPoList()"
+                    {% if gate_in_locked %}disabled{% endif %}>
+              <span class="spinner"></span>
+              <span class="arrow-icon">▾ Fetch POs</span>
+            </button>
+            <div class="po-dropdown" id="poDropdown">
+              <div class="po-dropdown-header">
+                <span id="poDropdownTitle">Pending POs</span>
+                <span onclick="closePoDropdown()" style="cursor:pointer;color:#888;font-size:14px;">✕</span>
+              </div>
+              <div id="poDropdownList"></div>
             </div>
-            <div id="poDropdownList"></div>
           </div>
-        </div>
-        <div class="po-fetch-status" id="poFetchStatus"></div>
-        <div class="field-error-msg" id="err_purchaseOrder">Required</div>
-      </div>
-    </div>
+          <div class="po-fetch-status" id="poFetchStatus"></div>
+          <div class="field-error-msg" id="err_purchaseOrder">Required</div>
+        </td>
+      </tr>
+    </table>
 
-    <!-- ── PO Availability ─ moved below Purchase Order field per request;
-         same radios/ids/onchange handler as before, position only changed. -->
-    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin-bottom:18px;">
+    <!-- ── PO Availability ─ same radios/ids/onchange handler as before,
+         only restyled. ─────────────────────────────────────────────────── -->
+    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin:14px 0 18px;">
       <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">📋 Purchase Order Available?</div>
       <div class="po-avail-group">
         <label class="delivery-radio-option">
@@ -462,25 +579,26 @@
       </div>
     </div>
 
-    <div class="form-row">
-      <div class="form-group">
-        <label>Gate Pass No (RTGP)</label>
-        <input type="text" id="gatePassNo" class="form-input" maxlength="12"
-               value="{{ ((gatein_data.get('gate_pass_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
-               {% if gate_in_locked %}disabled{% endif %}>
-        <div class="field-error-msg" id="err_gatePassNo">Required</div>
-      </div>
-    </div>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-attr-lbl">Gate Pass No (RTGP)</td>
+        <td class="xd-attr-val">
+          <input type="text" id="gatePassNo" class="form-input" maxlength="12"
+                 value="{{ ((gatein_data.get('gate_pass_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_gatePassNo">Required</div>
+        </td>
+        <td class="xd-attr-lbl">Note</td>
+        <td class="xd-attr-val">
+          <textarea id="note" class="form-textarea" rows="1" maxlength="100"
+                    {% if gate_in_locked %}disabled{% endif %}>{{ ((gatein_data.get('note') if gatein_data else '') or '')|truncate(100, True, '', 0) }}</textarea>
+        </td>
+      </tr>
+    </table>
 
-    <div class="form-group">
-      <label>Note</label>
-      <textarea id="note" class="form-textarea" rows="3" maxlength="100"
-                {% if gate_in_locked %}disabled{% endif %}>{{ ((gatein_data.get('note') if gatein_data else '') or '')|truncate(100, True, '', 0) }}</textarea>
-    </div>
+    <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;margin-top:16px;font-weight:500;"></div>
 
-    <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;"></div>
-
-    <div class="action-buttons">
+    <div class="action-buttons" style="margin-top:16px;">
       <button type="submit" id="gateInSubmitBtn" class="btn btn-primary"
               {% if history and history.gate_in %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.gate_in %}✓ Gate In Done (GIN: {{ history.gate_in_number }}){% else %}💾 Save & Post Gate In{% endif %}
@@ -594,6 +712,37 @@ function onDeliveryTypeChange() {
   const reqStar   = document.getElementById('driverNameReq');
   if (labelText) labelText.textContent = (dType === 'truck') ? 'Driver Name' : 'Person Name';
   if (reqStar)   reqStar.style.display = (dType === 'truck') ? '' : 'none';
+  _placeDriverRows(dType);
+}
+
+// FIX (2026-08-26, client request): Driver Name / No. of Persons visually
+// merged into the "Vehicle & driver" band for Truck delivery. Those two
+// fields are shared across every delivery type (read unconditionally in
+// _doSubmitGateIn()), so they can't just live permanently inside the
+// Truck-only table -- that would hide them entirely (and make them
+// unreachable) whenever Hand/Courier is selected, since #truckFieldsSection
+// is display:none in that mode. Instead, physically re-parent the same two
+// <tr> nodes (ids/values/listeners all preserved -- this moves the actual
+// elements, it does not clone them) into whichever table is currently
+// visible, and toggle each table's leading "Vehicle & driver" / "Vendor
+// info" xd-lbl rowspan (3 <-> 5) to match.
+function _placeDriverRows(dType) {
+  const row1 = document.getElementById('driverNameRow');
+  const row2 = document.getElementById('numPersonsRow');
+  const truckLbl = document.getElementById('truckVehicleDriverLbl');
+  const handLbl  = document.getElementById('handVendorInfoLbl');
+  if (!row1 || !row2) return;
+  if (dType === 'truck') {
+    const anchor = document.getElementById('transporterRowTruck');
+    if (anchor && anchor.nextSibling !== row1) anchor.after(row1, row2);
+    if (truckLbl) truckLbl.rowSpan = 5;
+    if (handLbl)  handLbl.rowSpan  = 3;
+  } else {
+    const anchor = document.getElementById('transporterRowHand');
+    if (anchor && anchor.nextSibling !== row1) anchor.after(row1, row2);
+    if (handLbl)  handLbl.rowSpan  = 5;
+    if (truckLbl) truckLbl.rowSpan = 3;
+  }
 }
 
 function onPoAvailChange() {

@@ -2513,6 +2513,25 @@ def run_po_fetch(history_id):
     if not po_number:
         return jsonify({"success": False, "error": "po_number required"}), 400
 
+    # ADDED (2026-08-26): real PO numbers are purely numeric (SAP's own
+    # EBELN field). Without this check, the MIGO 103 tab's PO Number box
+    # (which pre-fills from gate_in_entries.purchase_order/invoice_data.
+    # po_number on every page load -- see migo_103.html) can silently carry
+    # a bad non-PO value (e.g. "BY MAIL", typed into that field by mistake
+    # at Gate In, or picked up by OCR) straight into po_fetch.robot on every
+    # click, running a real SAP query (and burning a SAP session/desktop
+    # lock) that's guaranteed to fail before it even starts. Backend check
+    # (not just frontend) so a direct API call can't bypass it either.
+    if not po_number.isdigit():
+        return jsonify({
+            "success": False,
+            "error": (
+                f"'{po_number}' doesn't look like a valid PO number "
+                "(should be numbers only). Please enter a real PO number "
+                "before running PO Fetch."
+            )
+        }), 400
+
     history = get_history_by_id(history_id)
     if not history:
         return jsonify({"success": False, "error": "Record not found"}), 404

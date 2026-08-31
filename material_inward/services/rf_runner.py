@@ -20,7 +20,7 @@ from dotenv import dotenv_values
  
 from config.config import config
 from config.logger import get_logger
-from services.robot_lock import acquire_robot_lock, release_robot_lock
+from services.robot_lock import acquire_robot_lock, release_robot_lock, is_robot_locked
  
 logger = get_logger(__name__)
  
@@ -473,7 +473,18 @@ def execute_gate_in_sap(data: dict) -> dict:
         extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"], "gate_in_number": None}
+        # FIX (2026-08-27): result["error"] here is _run_rf_script's own
+        # generic exit-code-failure message, which embeds the bot machine's
+        # raw internal Windows path (RF_OUTPUT_PATH/output_dir) -- see the
+        # identical fix applied to execute_zgrn_print_sap and the other
+        # execute_*_sap functions below. Logged server-side only now; the
+        # user-facing message stays generic.
+        logger.error(f"Gate In script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "Gate In did not complete — the automation hit an error before finishing. Check the RF log or try again.",
+            "gate_in_number": None
+        }
  
     gin = _extract_marked_value(result["output"], "GATE_IN_NUMBER")
     sap_msg = _extract_marked_value(result["output"], "GATE_IN_STATUS_MSG") or "No status bar message captured"
@@ -603,7 +614,15 @@ def execute_migo_103_sap(data: dict) -> dict:
         extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"], "material_doc_number": None, "item_results": []}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"MIGO 103 script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "MIGO 103 did not complete — the automation hit an error before finishing. Check the RF log or try again.",
+            "material_doc_number": None,
+            "item_results": []
+        }
 
     mat_doc = _extract_marked_value(result["output"], "MATERIAL_DOC_NUMBER")
 
@@ -748,9 +767,12 @@ def execute_migo_103_reversal_sap(data: dict) -> dict:
         extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"MIGO Reversal script failure: {result['error']}")
         return {
             "success": False,
-            "error": result["error"],
+            "error": "MIGO Reversal did not complete — the automation hit an error before finishing. Check the RF log or try again.",
             "reversal_doc_number": None,
             "raw_result": {}
         }
@@ -865,10 +887,23 @@ def execute_migo_105_sap(data: dict) -> dict:
         extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"]}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"MIGO 105 script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "MIGO 105 did not complete — the automation hit an error before finishing. Check the RF log or try again."
+        }
  
     miro_doc = _extract_marked_value(result["output"], "MIRO_DOC_NUMBER")
- 
+
+    # ADDED: same popup-capture fix as execute_migo_103_sap -- migo_105.robot
+    # now reads SAP's popup/status-bar message before dismissing it (a
+    # popup like a deficit-quantity check often carries the real reason a
+    # manual check is required, which the status bar alone won't show).
+    sap_status = _extract_marked_value(result["output"], "MIGO105_STATUS_MSG")
+    sap_status_suffix = f' SAP showed: "{sap_status}"' if sap_status else ""
+
     # ── FIX: MIGO 105 does generate a doc — missing means it didn't post ──
     if not miro_doc:
         # Same crashed-vs-ambiguous distinction as execute_gate_in_sap /
@@ -885,6 +920,7 @@ def execute_migo_105_sap(data: dict) -> dict:
                     "MIGO 105 not done — the automation script errored out "
                     "before completing (see the RF log for the exact step "
                     "and error). No SAP document was created. Try again."
+                    + sap_status_suffix
                 )
             }
         logger.error(
@@ -896,6 +932,7 @@ def execute_migo_105_sap(data: dict) -> dict:
             "error": (
                 "MIGO 105 ran but did not capture a document number from SAP. "
                 "Check SAP manually before retrying."
+                + sap_status_suffix
             )
         }
  
@@ -914,7 +951,7 @@ def execute_migo_105_sap(data: dict) -> dict:
                 "MIGO 105 was posted (Post was clicked) but no document "
                 "number could be read from the SAP status bar. Check SAP "
                 "manually before retrying -- retrying without checking "
-                "risks creating a duplicate posting."
+                f"risks creating a duplicate posting.{sap_status_suffix}"
             )
         }
     # ─────────────────────────────────────────────────────────────────
@@ -938,7 +975,13 @@ def execute_miro_sap(data: dict) -> dict:
         extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"]}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"MIRO script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "MIRO did not complete — the automation hit an error before finishing. Check the RF log or try again."
+        }
  
     fi_doc = _extract_marked_value(result["output"], "FI_DOC_NUMBER")
  
@@ -1017,7 +1060,14 @@ def execute_po_fetch_sap(data: dict) -> dict:
     # a SAP session to still be alive right after po_fetch finishes.
     _force_kill_sap()
     if not result["success"]:
-        return {"success": False, "error": result["error"], "po_items": []}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"PO Fetch script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "PO Fetch did not complete — the automation hit an error before finishing. Check the RF log or try again.",
+            "po_items": []
+        }
  
     raw_json = _extract_marked_value(result["output"], "PO_DATA")
     if not raw_json:
@@ -1074,7 +1124,14 @@ def execute_po_list_fetch_sap(data: dict) -> dict:
     variables = {"VENDOR_NAME": vendor_name}
     result = _run_rf_script("po_list_fetch.robot", variables, timeout_seconds=120, history_id=data.get("history_id"))
     if not result["success"]:
-        return {"success": False, "error": result["error"], "po_list": []}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"PO List Fetch script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "PO List Fetch did not complete — the automation hit an error before finishing. Check the RF log or try again.",
+            "po_list": []
+        }
  
     raw_json = _extract_marked_value(result["output"], "PO_LIST")
     if not raw_json:
@@ -1233,7 +1290,13 @@ def execute_migo103_link_sap(data: dict) -> dict:
         history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"]}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"migo103_link script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "migo103_link did not complete — the automation hit an error before finishing. Check the RF log or try again."
+        }
  
     status_val = _extract_marked_value(result["output"], "MIGO103_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
@@ -1261,7 +1324,13 @@ def execute_migo105_link_sap(data: dict) -> dict:
         history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"]}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"migo105_link script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "migo105_link did not complete — the automation hit an error before finishing. Check the RF log or try again."
+        }
  
     status_val = _extract_marked_value(result["output"], "MIGO105_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
@@ -1285,7 +1354,13 @@ def execute_miro_link_sap(data: dict) -> dict:
         extra_env=_sap_credential_env(data), history_id=data.get("history_id")
     )
     if not result["success"]:
-        return {"success": False, "error": result["error"]}
+        # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
+        # result["error"] leaks the bot machine's raw internal path.
+        logger.error(f"miro_link script failure: {result['error']}")
+        return {
+            "success": False,
+            "error": "miro_link did not complete — the automation hit an error before finishing. Check the RF log or try again."
+        }
  
     status_val = _extract_marked_value(result["output"], "MIRO_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
@@ -1349,12 +1424,52 @@ def execute_zgrn_print_sap(data: dict) -> dict:
         "PRINT_TWICE":    "TRUE" if print_twice else "FALSE",
     }
 
+    # ADDED (client request, 2026-08-27): dms_upload.robot (Contentverse
+    # upload) drives a real browser + a native Windows file-picker dialog
+    # on this same shared desktop, on its own independent background
+    # thread (see dms_upload_runner.py) -- not serialized through the RF
+    # queue's single worker thread the way every other SAP bot is. ZGRN's
+    # own popup/print-dialog handling is already fragile (see the several
+    # fixes in pdf_helper.py this session), so if Contentverse's dialog is
+    # open at the exact moment ZGRN starts, ZGRN's own popups could
+    # collide with it on the same screen. acquire_robot_lock() itself only
+    # waits for a holder named "password_reset" (see robot_lock.py) -- it
+    # would NOT wait for "dms_upload.robot" and would just barge in. This
+    # is a ZGRN-specific pre-check (not a change to the shared lock
+    # function, which affects every other bot too) -- polls the read-only
+    # is_robot_locked() and waits for Contentverse to finish before
+    # proceeding, same up-to-10-minute ceiling dms_upload_runner.py itself
+    # uses for the reverse direction.
+    _ZGRN_DESKTOP_WAIT_MAX_SECONDS = 600
+    _ZGRN_DESKTOP_WAIT_POLL_SECONDS = 15
+    if is_robot_locked():
+        logger.warning("ZGRN print: desktop lock held by another automation (likely dms_upload.robot) — waiting...")
+        _wait_start = time.time()
+        while is_robot_locked():
+            if time.time() - _wait_start >= _ZGRN_DESKTOP_WAIT_MAX_SECONDS:
+                logger.warning(
+                    f"ZGRN print: desktop still locked after {_ZGRN_DESKTOP_WAIT_MAX_SECONDS}s — "
+                    "proceeding anyway rather than blocking indefinitely."
+                )
+                break
+            time.sleep(_ZGRN_DESKTOP_WAIT_POLL_SECONDS)
+        else:
+            logger.info("ZGRN print: desktop free — proceeding.")
+
     # Deliberately no extra_env= -- always spl_rpa, see module comment above.
     run_started_at = time.time()
     result = _run_rf_script("zgrn.robot", variables, timeout_seconds=180, history_id=history_id)
 
     status_val = _extract_marked_value(result.get("output") or "", "ZGRN_PRINT_STATUS")
     script_reached_end = bool(status_val and status_val.upper() == "DONE")
+
+    # ADDED (2026-08-27): zgrn.robot now distinguishes "CGD popup never
+    # appeared because this doc has no Capital Goods Declaration in SAP"
+    # from a genuine failure -- see the matching FIX in zgrn.robot's Print
+    # ZGRN Document keyword. NOT_APPLICABLE means don't require a CGD file
+    # to exist for this run to count as successful.
+    cgd_status = _extract_marked_value(result.get("output") or "", "ZGRN_CGD_STATUS")
+    cgd_not_applicable = bool(cgd_status and cgd_status.upper() == "NOT_APPLICABLE")
 
     today = datetime.now().strftime("%d%m%Y")
     grn_path = os.path.join(config.ZGRN_PRINT_FOLDER, f"{mat_doc}_{today}_GRN.pdf")
@@ -1376,15 +1491,27 @@ def execute_zgrn_print_sap(data: dict) -> dict:
             return False
 
     grn_exists = _fresh(grn_path)
-    cgd_exists = _fresh(cgd_path) if print_twice else True  # not expected if print_twice is False
+    cgd_exists = _fresh(cgd_path)
+    # FIX (2026-08-27): CGD is only REQUIRED when print_twice was asked for
+    # AND zgrn.robot didn't report NOT_APPLICABLE -- previously this used
+    # cgd_exists := True as a blanket "don't check" bypass whenever
+    # print_twice was False, but reused that same bypass incorrectly for
+    # the new not-applicable case too, which would have also (wrongly)
+    # reported files["cgd"] = cgd_path even though no such file was ever
+    # written. Now tracks "does the file actually exist" and "is it
+    # required" as two separate things.
+    cgd_required = print_twice and not cgd_not_applicable
 
     files = {
         "grn": grn_path if grn_exists else None,
-        "cgd": (cgd_path if cgd_exists and print_twice else None),
+        "cgd": (cgd_path if cgd_exists else None),
     }
 
-    if grn_exists and (not print_twice or cgd_exists):
-        return {"success": True, "error": None, "files": files}
+    if grn_exists and (not cgd_required or cgd_exists):
+        note = None
+        if print_twice and cgd_not_applicable:
+            note = "No Capital Goods Declaration applies to this document — only the GR Certificate was printed."
+        return {"success": True, "error": None, "files": files, "note": note}
 
     if not script_reached_end and not result["success"]:
         return {
@@ -1398,13 +1525,24 @@ def execute_zgrn_print_sap(data: dict) -> dict:
         }
 
     missing = "GRN" if not grn_exists else "CGD"
+    # FIX (2026-08-27): this used to interpolate config.ZGRN_PRINT_FOLDER
+    # (the bot machine's raw internal Windows path, e.g.
+    # "C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\...") straight
+    # into the user-facing error message -- _process_zgrn_print()
+    # (rf_queue_worker.py) passes this string through unchanged to the
+    # frontend, so end users were seeing a full internal server path with
+    # no benefit to them. The path is still useful for debugging, so it's
+    # logged server-side only now; the user-facing message stays generic.
+    logger.error(
+        f"ZGRN print: expected {missing} PDF not found in "
+        f"{config.ZGRN_PRINT_FOLDER} after the run."
+    )
     return {
         "success": False,
         "error": (
-            f"ZGRN print ran but the expected {missing} PDF was not found "
-            f"in {config.ZGRN_PRINT_FOLDER} afterward -- the print/save "
-            "dialog may not have completed as expected. Check SAP manually "
-            "(TCODE: zgrn) before retrying."
+            f"ZGRN print ran but the expected {missing} PDF was not created. "
+            "The print/save dialog may not have completed as expected. "
+            "Check SAP manually (TCODE: zgrn) before retrying."
         ),
         "files": files,
     }

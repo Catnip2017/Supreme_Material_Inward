@@ -31,9 +31,17 @@ from database.db_operations import (
     update_history_step, get_history_details_by_id, set_dms_status,
     get_dms_document_link, mark_migo_103_reversed,
 )
+# ADDED: auto re-open MIGO 103 the moment a reversal completes -- see
+# _process_migo_103_reversal below. Reuses the exact same clean-slate
+# logic the admin panel's manual "Reset MIGO 103" button already used
+# (database/admin_operations.py), so this is the same, already-tested
+# reset path -- just triggered automatically instead of requiring a
+# SuperAdmin to click it for every reversed record.
+from database.admin_operations import reset_migo_103_step
 from services.doc_consolidator import consolidate_documents, write_staging_sidecar
 from services.dms_upload_runner import trigger_dms_upload_for
 from database.gatein_operations import update_gatein_rf_result, get_gatein_entry
+from database.vehicle_master_operations import upsert_vehicle_master_from_gate_in
 from database.pending_po_operations import upsert_pending_po_update, mark_pending_po_resolved
 from database.notifications_operations import create_notification
 from database.migo_operations import (
@@ -86,6 +94,26 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
         )
         update_history_step(history_id, "gate_in", generated_number=gin)
         upsert_migo_entry(history_id, {"migoHeaderText": gin})
+
+        # ADDED (client request, 2026-08-26): accumulate driver data into
+        # vehicle_master so the next Gate In for the same truck+driver
+        # auto-fills, even if this combo was never in the client's
+        # original Excel load -- see vehicle_master_operations.py's
+        # upsert_vehicle_master_from_gate_in() docstring. Best-effort,
+        # wrapped so any failure here can never affect Gate In's own
+        # already-recorded success.
+        try:
+            upsert_vehicle_master_from_gate_in(
+                truck_number=payload.get("truckNo", ""),
+                driver_name=payload.get("driverName", ""),
+                transporter_name=payload.get("transporter", ""),
+                licence_number=payload.get("licenseNo", ""),
+            )
+        except Exception as exc:
+            logger.error(
+                f"vehicle_master upsert failed for history_id={history_id}: {exc}",
+                exc_info=True
+            )
 
         details = get_history_details_by_id(history_id)
         inv     = details.get("invoice_data") or {}
@@ -524,13 +552,43 @@ def _process_migo_103_reversal(history_id: int, payload: dict) -> dict:
             f"MIGO 103 reversed — history_id={history_id} "
             f"original_matdoc={original_mat_doc} reversal_doc={reversal_doc_number}"
         )
+
+        # ADDED (client request, 2026-08-26): previously a reversed record
+        # stayed permanently blocked from a fresh MIGO 103 until a
+        # SuperAdmin manually clicked "Reset MIGO 103" in the admin panel
+        # (app.py's _check_step_allowed blocks re-posting migo_103 while
+        # history.migo_103 is still true, and blocks migo_105/miro while
+        # migo_103_reversed is true -- see that function's comments).
+        # Client wants this immediate and automatic: the moment a reversal
+        # succeeds, the record should be postable again right away, no
+        # manual admin step. reset_migo_103_step is the exact same
+        # clean-slate logic the manual admin action already used (clears
+        # history.migo_103/material_doc_number/migo_103_reversed* together,
+        # resets migo_entries, drops any stale queued migo_103 job) --
+        # reused here as-is rather than duplicating that logic. Client has
+        # explicitly confirmed the old material doc / reversal doc numbers
+        # do not need to be preserved anywhere after this.
+        reset_ok = reset_migo_103_step(history_id, performed_by=reversed_by or "system (auto-reversal)")
+        if reset_ok:
+            logger.info(
+                f"MIGO 103 auto-reset after reversal — history_id={history_id} "
+                "is postable again immediately."
+            )
+        else:
+            logger.error(
+                f"MIGO 103 auto-reset FAILED after reversal — history_id={history_id}. "
+                "Record may still show as blocked; use the admin panel's manual "
+                "Reset MIGO 103 action as a fallback."
+            )
+
         create_notification(
             history_id=history_id,
             title="MIGO 103 Reversed",
             message=(
                 f"MIGO 103 (material doc {original_mat_doc}) was reversed in SAP"
                 + (f" — new document {reversal_doc_number}" if reversal_doc_number else "")
-                + ". MIGO 105 and MIRO are now blocked for this record."
+                + ". MIGO 103 can now be posted again for this record; "
+                + "MIGO 105 and MIRO stay blocked until it is."
             ),
             notification_type="migo_103_reversal",
             role_target="migo_103",
