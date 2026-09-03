@@ -1,12 +1,22 @@
 
 *** Settings ***
 Documentation     Gate In SAP Automation — TCODE: zmmtmn
+...
+...               MULTI-BOT COORDINATION (2026-09-03): login/close now go
+...               through sap_coordination.resource instead of an
+...               unconditional taskkill on the way in and out -- this
+...               script never touched the SAP session object directly
+...               (only SapGuiLibrary's own high-level keywords, which
+...               already bind correctly), so this is the only change
+...               needed here. See sap_coordination.resource for the full
+...               reasoning.
 Library           SapGuiLibrary
 Library           Process
 Library           OperatingSystem
 Library           String
 Library           DateTime
 Library           Collections
+Resource          sap_coordination.resource
  
 *** Variables ***
 ${SAP_LOGON_PATH}       ${EMPTY}
@@ -72,45 +82,12 @@ Initialize SAP And Login
     Should Not Be Empty    ${CLIENT}         SAP_CLIENT not found in .env file at: ${env_path}
     Should Not Be Empty    ${USERNAME}       SAP username not resolved (no override, and SAP_USERNAME not found in .env)
     Should Not Be Empty    ${PASSWORD}       SAP password not resolved (no override, and SAP_PASSWORD not found in .env)
- 
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Sleep    2s
- 
-    Start Process    ${LOGON_PATH}
-    Sleep    5s
- 
-    Connect To Session
-    Open Connection    ${CONN_NAME}
- 
-    Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
-    Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
-    Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
-    Click Element     wnd[0]/tbar[0]/btn[0]
-    # --- Handle possible popup after login ---
-   
-    Sleep    3s
- 
-    ${login_popup}=    Run Keyword And Return Status
-    ...    Element Should Be Present
-    ...    wnd[1]
- 
-    IF    ${login_popup}
- 
-     Run Keyword And Ignore Error
-     ...    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
- 
-     Run Keyword And Ignore Error
-     ...    Click Element    wnd[1]/tbar[0]/btn[0]
- 
-     Sleep    2s
- 
-     Log    Login popup handled successfully    level=INFO
-    END
- 
-    Sleep    8s
-    Dismiss Any Popup
-    Maximize Window    0
- 
+
+    # MULTI-BOT FIX (2026-09-03): used to unconditionally taskkill
+    # saplogon.exe here every run -- see sap_coordination.resource for why
+    # that's no longer safe under concurrency.
+    Coordinated SAP Login    ${CLIENT}    ${CONN_NAME}    ${LOGON_PATH}    ${USERNAME}    ${PASSWORD}
+
 Fill Gate In Form And Submit
     # --- Data Cleaning ---
     ${vendor_clean}         Clean Value      ${VENDOR_NAME}
@@ -280,11 +257,5 @@ Dismiss Any Popup
 #     RETURN
 
 Close SAP Session
-    Log    Closing SAP session...
-    Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
-    Run Keyword And Ignore Error    Send VKey     wnd[0]    0
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
+    Coordinated SAP Close
     Log    SAP session closed and process terminated.    level=INFO

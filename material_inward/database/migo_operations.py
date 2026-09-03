@@ -8,11 +8,12 @@ v4 changes:
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 import psycopg2.extras
 
 from database.connection import get_connection
+from config.config import config
 from config.logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,16 +23,18 @@ logger = get_logger(__name__)
 # bare, this fallback would compute "today" from UTC, silently landing
 # on the WRONG calendar date for any request made between ~00:00 and
 # 05:30 IST (same underlying bug as migo_103.html's client-side
-# toISOString() default, fixed there separately). India is a fixed
-# UTC+5:30 offset (no DST), so adding it directly is correct and doesn't
-# need a timezone database.
-_IST_OFFSET = timedelta(hours=5, minutes=30)
-
-
+# toISOString() default, fixed there separately).
+#
+# UPDATED (2026-08-31, Silent Hours feature): this used to hardcode its
+# own "+5:30, always" offset directly in this file. Now delegates to
+# config.Config.get_ist_now(), which reads the new UTC_TIMEZONE .env flag
+# -- one shared answer to "is this server on UTC" instead of two
+# independent places that could silently drift apart (the Silent Hours
+# window check in config/config.py reads that same flag).
 def _today_ist() -> str:
-    """Today's date as YYYY-MM-DD in India time, computed from this UTC
-    server's clock."""
-    return (datetime.utcnow() + _IST_OFFSET).strftime("%Y-%m-%d")
+    """Today's date as YYYY-MM-DD in India time, computed from this
+    server's clock via config.Config.get_ist_now()."""
+    return config.get_ist_now().strftime("%Y-%m-%d")
 
 
 def upsert_migo_entry(history_id: int, data: dict) -> bool:

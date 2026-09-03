@@ -21,6 +21,7 @@ Library             OperatingSystem
 Library             DateTime
 Library             String
 Library             Collections
+Resource            sap_coordination.resource
 
 Suite Setup         Initialize Logging And Environment
 Suite Teardown      Finalize Logging
@@ -36,6 +37,10 @@ ${LOGS_FOLDER}                 %{USERPROFILE}\\Agent logs\\migo invoice logs
 ${LOG_FILE}                    ${EMPTY}
 ${FIRST_LOGIN}                 ${TRUE}
 ${session}                     ${NONE}
+# MULTI-BOT FIX (2026-09-03): see migo103_link.robot's identical guard --
+# flags whichever of Close SAP On Error / "05 Logout" runs first, so the
+# other becomes a no-op instead of double-decrementing the shared refcount.
+${_sap_closed}                 ${FALSE}
 
 # ---------- MIGO (sample defaults -- rf_runner.py always overrides both via
 # --variable when this is run from the app; only used if run standalone) ----------
@@ -141,52 +146,28 @@ Get Invoice Title
     ${title}=    Set Variable    Invoice_${day}_${month}
     RETURN    ${title}
 
-Connect To Sap Session
-    # Attaches to the SAME live SAP GUI Scripting session that
-    # SapGuiLibrary already opened and logged into (no separate library file,
-    # just the standard pywin32 package used inline via Evaluate).
-    ${session}=    Evaluate
-    ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
-    Set Suite Variable    ${session}
-    Write Log    INFO    SAP Session    Attached to live SAP GUI scripting session
-
 SAP Login Steps
     [Arguments]    ${log_context}
-    IF    not ${FIRST_LOGIN}
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
-        Sleep    2s
-    END
-    Set Suite Variable    ${FIRST_LOGIN}    ${FALSE}
-    Start Process    ${SAP_LOGON_PATH}
-    Sleep    15s
-    Write Log    INFO    ${log_context}    SAP Logon Pad started
-    Wait Until Keyword Succeeds    5x    3s    SapGuiLibrary.Connect To Session
-    Wait Until Keyword Succeeds    5x    3s    SapGuiLibrary.Open Connection    ${SAP_CONNECTION_NAME}
+    # MULTI-BOT FIX (2026-09-03): see migo103_link.robot's identical
+    # keyword for the full explanation -- Coordinated SAP Login replaces
+    # the unconditional taskkill + buggy Children(0).Children(0) session
+    # bind with a reuse-aware login that binds ${session} correctly
+    # (Bind SAP Session). ${FIRST_LOGIN} is no longer needed.
+    Coordinated SAP Login    ${CLIENT}    ${SAP_CONNECTION_NAME}    ${SAP_LOGON_PATH}    ${USERNAME}    ${PASSWORD}
     Write Log    INFO    ${log_context}    Opened connection: ${SAP_CONNECTION_NAME}
-    SapGuiLibrary.Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
-    SapGuiLibrary.Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
-    SapGuiLibrary.Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
-    SapGuiLibrary.Click Element     wnd[0]/tbar[0]/btn[0]
-    Sleep    5s
-    # FIX: OPT1 -> OPT2 -- see miro_link.robot's identical comment.
-    ${status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[1]
-    IF    ${status}
-        SapGuiLibrary.Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
-        SapGuiLibrary.Click Element          wnd[1]/tbar[0]/btn[0]
-        Sleep    3s
-    END
-    Connect To Sap Session
-    Evaluate    $session.findById('wnd[0]').maximize()
 
 Close SAP On Error
     [Arguments]    ${log_context}    ${error}
     Write Log    ERROR    ${log_context}    ${error}
-    Run Keyword And Ignore Error    SapGuiLibrary.Run Transaction    /nex
-    Sleep    1s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
+    # MULTI-BOT FIX (2026-09-03): see migo103_link.robot's identical
+    # keyword -- guarded by ${_sap_closed} so this and "05 Logout" can
+    # never both decrement the shared refcount for one login.
+    IF    not ${_sap_closed}
+        Set Suite Variable    ${_sap_closed}    ${TRUE}
+        Run Keyword And Ignore Error    SapGuiLibrary.Run Transaction    /nex
+        Sleep    1s
+        Coordinated SAP Close
+    END
 
 
 *** Test Cases ***
@@ -292,15 +273,15 @@ Close SAP On Error
 # ═══════════════════════════════════════════════════════════════
 
 05 Logout
-    Write Log    INFO    Logout    Closing SAP session
-    TRY
-        SapGuiLibrary.Run Transaction    /nex
-        Sleep    2s
-        Write Log    SUCCESS    Logout    SAP session closed
-    EXCEPT    AS    ${error}
-        Write Log    ERROR    Logout    ${error}
+    IF    not ${_sap_closed}
+        Set Suite Variable    ${_sap_closed}    ${TRUE}
+        Write Log    INFO    Logout    Closing SAP session
+        TRY
+            Coordinated SAP Close
+            Write Log    SUCCESS    Logout    SAP session closed
+        EXCEPT    AS    ${error}
+            Write Log    ERROR    Logout    ${error}
+        END
+    ELSE
+        Write Log    INFO    Logout    SAP session was already closed by an earlier error handler -- skipping.
     END
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
-    Write Log    INFO    Logout    SAP processes terminated

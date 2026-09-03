@@ -3,31 +3,37 @@
 Documentation     PO Fetch — SAP ME23N PO Line Items Extractor
 ...               Enters PO number, reads all line items from the grid,
 ...               navigates to India tab per item for HSN/SAC.
-...               Amount logic:
-...                 - Multiple lines: amount per line = qty x net_price, total = sum
-...                 - Single line: qty = quantity, amount = net_price as-is
+...               Amount logic (FIXED 2026-09-02, history_id=517): amount
+...               per row = qty x net_price, every row, single or many --
+...               the old "single row -> amount = net_price as-is" special
+...               case is gone, see STEP 5 below for the full history.
 ...               Outputs: RESULT:PO_DATA:<json_array>
 ...
-...               MULTI-BOT COORDINATION (added 2026-08-21): this bot may run
-...               concurrently with other SAP bots (MIGO 103, MIGO 105, MIRO,
-...               reversal, etc.) sharing one SAP Logon process. Credentials
-...               are UNCHANGED -- still loaded from .env, still the shared
-...               spl_rpa account, no per-run overrides. What's new is purely
-...               coordination: each bot increments a shared counter file on
-...               start and decrements it on finish. SAP processes are only
-...               actually killed when the counter reaches 0 -- i.e. when
-...               EVERY bot that registered has finished. A bot finishing
-...               early just closes its own session tab (/nex) and leaves the
-...               shared processes running for the others. The login+
-...               session-bind sequence is serialized under a lock so two
-...               bots can never open connections at the same instant and
-...               race each other for "which connection is mine". Also
-...               self-healing: if reusing an existing SAP Logon process
-...               fails to connect after a real attempt, it's treated as
-...               stale, killed, and a fresh one started.
+...               MULTI-BOT COORDINATION (added 2026-08-21, moved into the
+...               shared sap_coordination.resource on 2026-09-03 so every
+...               SAP bot uses the same one implementation): this bot may
+...               run concurrently with other SAP bots (MIGO 103, MIGO 105,
+...               MIRO, reversal, ZGRN, etc.) sharing one SAP Logon process.
+...               Credentials are UNCHANGED -- still loaded from .env,
+...               still the shared spl_rpa account, no per-run overrides.
+...               What's new is purely coordination: each bot increments a
+...               shared counter file on start and decrements it on finish.
+...               SAP processes are only actually killed when the counter
+...               reaches 0 -- i.e. when EVERY bot that registered has
+...               finished. A bot finishing early just closes its own
+...               session tab (/nex) and leaves the shared processes
+...               running for the others. The login+session-bind sequence
+...               is serialized under a lock so two bots can never open
+...               connections at the same instant and race each other for
+...               "which connection is mine". Also self-healing: if reusing
+...               an existing SAP Logon process fails to connect after a
+...               real attempt, it's treated as stale, killed, and a fresh
+...               one started. See sap_coordination.resource for the full
+...               implementation shared by every SAP bot.
 ...
 ...               Counter file: C:\temp\sap_bot_refcount.txt
 ...               Lock (mutex) dir: C:\temp\sap_bot_refcount.lock
+Resource          sap_coordination.resource
 Library           SapGuiLibrary
 Library           Process
 Library           OperatingSystem
@@ -86,13 +92,10 @@ ${COL_ITEM}    1
 ${F_DELFLAG}      btnMEPO1211-STATUSICON
 ${COL_DELFLAG}    0
 ${session}    ${NONE}
- 
-# --- Multi-bot coordination (added 2026-08-21) ------------------------------
-${REFCOUNT_FILE}           C:\\temp\\sap_bot_refcount.txt
-${REFCOUNT_LOCK_DIR}       C:\\temp\\sap_bot_refcount.lock
- 
- 
- 
+# Note: ${REFCOUNT_FILE}/${REFCOUNT_LOCK_DIR} now come from
+# sap_coordination.resource (imported above) -- no longer declared here.
+
+
 *** Test Cases ***
 Execute PO Fetch
     [Setup]    Initialize SAP And Login
@@ -108,7 +111,7 @@ Initialize SAP And Login
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
     ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
     ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
- 
+
     # v16: PO Fetch (ME23N line-item read) ALWAYS uses the shared spl_rpa
     # .env account below -- unlike gate_in/migo_103/migo_105/miro/
     # zgatein_update, this bot never checks for a per-user SAP_USER_OVERRIDE/
@@ -118,166 +121,14 @@ Initialize SAP And Login
     # by client decision, not an oversight. See .env for the full comment.
     ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
     ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
- 
-    Register Bot Start
- 
-    # MULTI-BOT FIX (2026-08-21): this used to unconditionally taskkill
-    # saplogon.exe here, every run -- fine standalone, but under concurrency
-    # that kills whatever session another bot already has open. Now: only
-    # start fresh if SAP Logon isn't already running; otherwise reuse the
-    # existing process and just open a new connection window under it. The
-    # whole open-connection + login + session-bind sequence runs under the
-    # refcount lock so two bots can never race for "which connection is
-    # mine" (see Connect To Sap Session).
-    Acquire Refcount Lock
- 
-    ${tasklist_result}=    Run Process    tasklist    /FI    IMAGENAME eq saplogon.exe
-    ${already_running}=    Run Keyword And Return Status
-    ...    Should Contain    ${tasklist_result.stdout}    saplogon.exe
- 
-    IF    ${already_running}
-        Log To Console    SAP Logon already open -- reusing existing process, opening a new connection window under it.
-    ELSE
-        Log To Console    SAP Logon not running -- starting fresh.
-        Start Process    ${LOGON_PATH}
-        Sleep    5s
-    END
- 
-    # Retries instead of failing on the first attempt -- SAP Logon Pad's
-    # scripting engine can take a moment to be ready right after launch.
-    # SELF-HEALING: if this still can't connect after a real attempt, the
-    # process we're trying to reuse is stale/orphaned (e.g. left over from
-    # an earlier killed run) rather than just slow. Kill it and start a
-    # truly fresh one rather than retrying forever.
-    ${connected}=    Run Keyword And Return Status
-    ...    Wait Until Keyword Succeeds    5x    2s    Connect To Session
-    IF    not ${connected}
-        Log To Console    Could not connect to the existing SAP Logon process -- treating it as stale, killing it and starting fresh.
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe    /T
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe    /T
-        Sleep    2s
-        Start Process    ${LOGON_PATH}
-        Sleep    5s
-        Wait Until Keyword Succeeds    10x    2s    Connect To Session
-    END
- 
-    Open Connection    ${CONN_NAME}
- 
-    Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
-    Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
-    Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
-    Click Element     wnd[0]/tbar[0]/btn[0]
- 
-    # FIX: same reordering as gate_in.robot/migo_103.robot/migo_105.robot --
-    # see migo_103.robot's comment for the full explanation. Generic
-    # Dismiss Any Popup used to run first and would already close the
-    # multi-logon dialog with SAP's default choice before this specific
-    # OPT1 selection could run. Kept as OPT1 here (unchanged from
-    # production -- NOT switched to OPT2; that's an unreconciled
-    # discrepancy in the reference bot and wasn't part of what was asked
-    # to change, so production's already-working choice is preserved).
-    Sleep    3s
-    ${multi}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
-    IF    ${multi}
-       Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
-       Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
-       Sleep    2s
-    END
- 
-    Dismiss Any Popup
-    Maximize Window    0
-    Connect To Sap Session
- 
-    # Only release the lock once THIS bot's own session is fully bound --
-    # from here on, another bot is free to open its own connection without
-    # any chance of grabbing this bot's window by mistake.
-    Release Refcount Lock
- 
- 
-Connect To Sap Session
-    # MULTI-BOT FIX (2026-08-21): previously used
-    # GetScriptingEngine.Children(0).Children(0), which always grabs the
-    # FIRST connection/session that exists -- wrong bot under concurrency.
-    # SapGuiLibrary itself already knows exactly which connection/session
-    # THIS bot's own Open Connection call just created, so reuse that
-    # instead of re-deriving it by index.
-    ${lib}=    Get Library Instance    SapGuiLibrary
-    ${sess}=    Set Variable    ${lib.session}
-    Set Suite Variable    ${session}    ${sess}
- 
- 
-Acquire Refcount Lock
-    # Directory creation is atomic on Windows -- used as a simple mutex.
-    # Retries for up to ~30s (150 x 0.2s) since the critical section covers
-    # the full login sequence, not just a quick counter-file write.
-    FOR    ${attempt}    IN RANGE    1    150
-        ${status}=    Run Keyword And Return Status
-        ...    Create Directory    ${REFCOUNT_LOCK_DIR}
-        IF    ${status}
-            RETURN
-        END
-        Sleep    0.2s
-    END
-    Log    Could not acquire refcount lock after retries -- proceeding anyway to avoid deadlock.    level=WARN
- 
- 
-Release Refcount Lock
-    Run Keyword And Ignore Error    Remove Directory    ${REFCOUNT_LOCK_DIR}
- 
- 
-Register Bot Start
-    # Increments the shared counter. Creates the counter file at 0 first
-    # if this is the very first bot to ever run. Uses its own short-lived
-    # lock acquisition (separate from the login-sequence lock) so
-    # registering doesn't hold the lock any longer than necessary.
-    Create Directory    C:\\temp
-    Acquire Refcount Lock
- 
-    ${exists}=    Run Keyword And Return Status
-    ...    File Should Exist    ${REFCOUNT_FILE}
-    ${current}=    Set Variable    ${0}
-    IF    ${exists}
-        ${raw}=    Get File    ${REFCOUNT_FILE}
-        ${raw}=    Strip String    ${raw}
-        IF    '${raw}' != ''
-            ${current}=    Convert To Integer    ${raw}
-        END
-    END
- 
-    ${new_count}=    Evaluate    ${current} + 1
-    ${new_count_str}=    Convert To String    ${new_count}
-    Create File    ${REFCOUNT_FILE}    ${new_count_str}
- 
-    Log To Console    SAP bot refcount: ${current} -> ${new_count} (this bot registered as active)
- 
-    Release Refcount Lock
- 
- 
-Register Bot End
-    # Decrements the shared counter and returns the count remaining AFTER
-    # this bot's decrement. If it returns 0, this bot was the last one
-    # active and should be the one to close SAP.
-    Acquire Refcount Lock
- 
-    ${exists}=    Run Keyword And Return Status
-    ...    File Should Exist    ${REFCOUNT_FILE}
-    IF    ${exists}
-        ${current}=    Get File    ${REFCOUNT_FILE}
-        ${current}=    Convert To Integer    ${current}
-    ELSE
-        ${current}=    Set Variable    ${0}
-    END
- 
-    ${new_count}=    Evaluate    max(0, ${current} - 1)
-    ${new_count_str}=    Convert To String    ${new_count}
-    Create File    ${REFCOUNT_FILE}    ${new_count_str}
- 
-    Log To Console    SAP bot refcount: ${current} -> ${new_count} (this bot deregistering)
- 
-    Release Refcount Lock
-    RETURN    ${new_count}
- 
+
+    # MOVED (2026-09-03): the reuse-or-fresh-login, refcount-registration,
+    # and session-bind logic that used to live here directly now lives in
+    # sap_coordination.resource, shared by every SAP bot instead of being
+    # copy-pasted per file. Behaviour is unchanged.
+    Coordinated SAP Login    ${CLIENT}    ${CONN_NAME}    ${LOGON_PATH}    ${USERNAME}    ${PASSWORD}
+
+
 Dump Delflag Property
     [Documentation]    TEMP DIAGNOSTIC — run once per test PO, then remove.
     FOR    ${r}    IN RANGE    0    1
@@ -613,8 +464,7 @@ Fetch PO Line Items
     END
     # --------------------------------------------------------
     # STEP 5: Calculate amounts and build JSON output
-    # Single row  → amount = net_price as-is
-    # Multiple rows → amount per row = qty × net_price
+    # amount per row = qty × net_price, every row, single or many.
     #                 append TOTAL row at end
     # --------------------------------------------------------
     @{json_items}=    Create List
@@ -643,17 +493,27 @@ Fetch PO Line Items
  
         # If the Rate/Net Price column doesn't exist for this PO type at
         # all, leave amount blank too rather than showing a fabricated 0.
+        #
+        # FIX (confirmed against history_id=517, 2026-09-02): amount must
+        # always be qty x net_price. The old single-row branch just copied
+        # net_price straight into amount with no multiplication at all --
+        # only correct by coincidence when qty happens to be 1. Real case:
+        # PO 4100035913, one line, qty=150 kg @ rate 32.00/kg, showed
+        # Amount=32.00 in the PO Line Items panel instead of 4800.00. The
+        # invoice/OCR side's own amount (correctly 4800.00) is what
+        # actually got posted to SAP that time -- migo_103.html prefers the
+        # invoice amount whenever it's present (confirmMatches()'s
+        # inv.amount || po.amount) -- so nothing wrong reached SAP here,
+        # but any record with no usable OCR amount would have silently
+        # fallen back to this wrong PO-side value instead. Now qty x
+        # net_price unconditionally, single row or many.
         IF    '${price_str}' == '${EMPTY}'
             ${line_amount}=    Set Variable    ${EMPTY}
         ELSE
-            IF    ${total_rows} == 1
-                ${line_amount}=    Set Variable    ${price_str}
-            ELSE
-                ${line_amount}=    Evaluate
-                ...    str(round(float('${qty_clean}' or '0') * float('${price_clean}' or '0'), 2))
-                ${running_total}=    Evaluate
-                ...    round(${running_total} + float('${qty_clean}' or '0') * float('${price_clean}' or '0'), 2)
-            END
+            ${line_amount}=    Evaluate
+            ...    str(round(float('${qty_clean}' or '0') * float('${price_clean}' or '0'), 2))
+            ${running_total}=    Evaluate
+            ...    round(${running_total} + float('${qty_clean}' or '0') * float('${price_clean}' or '0'), 2)
         END
  
         # FIX (2026-08-21): this used to be a synthetic guess --
@@ -770,50 +630,9 @@ Clean SAP Value
     RETURN    ${val}
  
  
-Dismiss Any Popup
-    ${p1}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
-    IF    ${p1}
-        Run Keyword And Ignore Error    Click Element    wnd[1]/tbar[0]/btn[0]
-        Sleep    1s
-    END
-    ${p2}=    Run Keyword And Return Status    Element Should Be Present    wnd[2]
-    IF    ${p2}
-        Run Keyword And Ignore Error    Click Element    wnd[2]/tbar[0]/btn[0]
-        Sleep    1s
-    END
- 
- 
+# MOVED (2026-09-03): Dismiss Any Popup and Close SAP Session's bodies now
+# live in sap_coordination.resource (as Dismiss Any Popup / Coordinated SAP
+# Close), shared by every SAP bot. Behaviour is unchanged; Close SAP
+# Session below just forwards to the shared keyword.
 Close SAP Session
-    ${remaining}=    Register Bot End
- 
-    # Always close THIS bot's own SAP session/tab (log off this window),
-    # regardless of whether other bots are still active.
-    Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
-    Run Keyword And Ignore Error    Send VKey     wnd[0]    0
-    Sleep    2s
- 
-    IF    ${remaining} > 0
-        Log To Console    Another bot (or bots) still active (refcount=${remaining}) -- this bot's tab is closed, but the shared SAP processes stay running for the other bot(s).
-    ELSE
-        # FIX: this only ever killed saplogon.exe (twice, redundantly) -- never
-        # saplgpad.exe or sapgui.exe, which is what's actually running/showing
-        # the SAP GUI window once a session is logged in. Every other script in
-        # this codebase (gate_in.robot's Close SAP On Error, migo103_link.robot,
-        # migo_103.robot, etc.) kills all three on close/error; this one was
-        # simply out of sync with that pattern. That's the real, confirmed cause
-        # of "the bot finished, looped through everything, but SAP was still
-        # open at the end" -- /nex + saplogon.exe alone can leave the actual GUI
-        # window/process sitting there untouched. Matches the 3-process pattern
-        # used everywhere else now. Now gated on being the LAST active bot
-        # (2026-08-21) -- killing SAP out from under another still-running
-        # bot was the exact collision this refcount system exists to prevent.
-        Log    This was the last active bot -- shutting down all SAP processes fully...
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
-        Sleep    2s
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe    /T
-        Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe    /T
-        Log    SAP session closed and process terminated.    level=INFO
-    END
+    Coordinated SAP Close

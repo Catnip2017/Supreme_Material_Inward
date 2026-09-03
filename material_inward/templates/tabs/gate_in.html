@@ -159,6 +159,7 @@
 }
 .approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
 .approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+.approval-banner.silent-hours { background:#fdf1e0; color:#a3560c; border:1px solid #f0b060; }
 
 .xd-section-title {
   display:flex; justify-content:space-between; align-items:center;
@@ -220,7 +221,9 @@
    that used to require it. #}
 {% set post_locked = (status != 'approved') %}
 {% set is_approved = (status == 'approved') %}
-{% if not is_approved %}
+{% if silent_hours_mode %}
+<div class="approval-banner silent-hours">🌙 <strong>Silent Hours</strong> — post Gate In directly; documents get uploaded and OCR'd later during business hours.</div>
+{% elif not is_approved %}
 <div class="approval-banner pending">⏸ <strong>Awaiting Approval</strong> — Approve the record in Extracted Data first.</div>
 {% else %}
 <div class="approval-banner approved">✓ <strong>Approved</strong> — Ready for Gate In posting.</div>
@@ -599,10 +602,15 @@
     <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;margin-top:16px;font-weight:500;"></div>
 
     <div class="action-buttons" style="margin-top:16px;">
+      {% if silent_hours_mode %}
+      <button type="button" id="gateInSaveBtn" class="btn btn-secondary" onclick="_doSaveSilentHours()">💾 Save</button>
+      <button type="button" id="gateInPostBtn" class="btn btn-primary" onclick="_doPostSilentHours()">🚀 Post to SAP</button>
+      {% else %}
       <button type="submit" id="gateInSubmitBtn" class="btn btn-primary"
               {% if history and history.gate_in %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.gate_in %}✓ Gate In Done (GIN: {{ history.gate_in_number }}){% else %}💾 Save & Post Gate In{% endif %}
       </button>
+      {% endif %}
       <button type="button" class="btn btn-secondary" onclick="clearGateInForm()" {% if gate_in_locked %}disabled{% endif %}>🔄 Clear Form</button>
     </div>
   </form>
@@ -637,6 +645,12 @@ const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
 // addInvoiceRow, onInvPairClick, the matching logic, all of it), not just
 // the step-lock check. Renamed per-tab so they can never collide again.
 const STEP_LOCKS_ENABLED_GATEIN = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+// ADDED (2026-08-31, Silent Hours feature): true only on the
+// /silent_hours_gate_in walk-in entry route (app.py) -- drives which
+// action buttons render above (Save + Post to SAP instead of the single
+// Submit) and disables the normal submit-on-Enter path below, since that
+// path assumes a history_id already exists.
+const SILENT_HOURS_MODE = {{ 'true' if silent_hours_mode else 'false' }};
 
 
 (function() {
@@ -934,6 +948,11 @@ function validateGateIn() {
 
 document.getElementById('gateInForm').addEventListener('submit', function(e) {
   e.preventDefault();
+  if (SILENT_HOURS_MODE) {
+    // Enter-key submit in Silent Hours mode -- use the Save / Post to SAP
+    // buttons instead, they're not wired to this listener at all.
+    return;
+  }
   if (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED_GATEIN) {
     showToast('⏸ Record must be approved before Gate In can be posted.', 'warning');
     return;
@@ -1057,6 +1076,145 @@ function clearGateInForm() {
   if (dd) dd.classList.remove('show');
 }
 
+// ============================================================
+// SILENT HOURS GATE-IN -- Save / Post to SAP (client request, 2026-08-31)
+//
+// Save collects whatever the guard has filled in so far, with NO
+// field-level validation, and either creates the history record (first
+// Save for this walk-in -- history_id starts blank) or re-saves it
+// (later Saves, history_id already set). Post to SAP runs the exact same
+// full-field validation the normal single-button flow uses, auto-saving
+// first if the guard clicks Post without having Saved yet, then posts to
+// SAP via the same _execute_gate_in_post() path /save_gatein uses.
+// ============================================================
+
+function _collectGateInPayload(historyId) {
+  const dType    = document.querySelector('input[name="deliveryType"]:checked');
+  const delivery = dType ? dType.value : 'truck';
+  const poFlowType = _getPoFlowType();
+  let vendorName, vendorCode, transporter;
+  if (delivery === 'truck') {
+    vendorName  = document.getElementById('vendorName').value;
+    vendorCode  = document.getElementById('vendorCode').value;
+    transporter = document.getElementById('transporter').value;
+  } else {
+    vendorName  = document.getElementById('vendorNameHand').value;
+    vendorCode  = document.getElementById('vendorCodeHand').value;
+    transporter = document.getElementById('transporterHand').value;
+  }
+  return {
+    history_id:    historyId || undefined,
+    gateInDate:    document.getElementById('gateInDate').value,
+    gateInTime:    document.getElementById('gateInTime').value,
+    vendorName:    vendorName,
+    vendorCode:    vendorCode,
+    transporter:   transporter,
+    truckNo:       (delivery === 'truck') ? document.getElementById('truckNo').value    : '',
+    driverName:    document.getElementById('driverName').value,
+    licenseNo:     (delivery === 'truck') ? document.getElementById('licenseNo').value.replace(/\s/g, '') : '',
+    containerNo:   (delivery === 'truck') ? document.getElementById('containerNo').value : '',
+    numPersons:    document.getElementById('numPersons').value,
+    category:      document.getElementById('category').value,
+    material:      document.getElementById('material').value,
+    challanNo:     _stripToNumeric(document.getElementById('challanNo').value),
+    challanQty:    document.getElementById('challanQty').value,
+    boeNo:         document.getElementById('boeNo').value,
+    purchaseOrder: document.getElementById('purchaseOrder').value,
+    gatePassNo:    document.getElementById('gatePassNo').value,
+    note:          document.getElementById('note').value,
+    po_flow_type:  poFlowType,
+  };
+}
+
+function _doSaveSilentHours(onSaved) {
+  const statusEl = document.getElementById('gateInStatus');
+  const saveBtn  = document.getElementById('gateInSaveBtn');
+  const historyId = parseInt(document.getElementById('history_id').value) || 0;
+  const payload = _collectGateInPayload(historyId);
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Saving...'; }
+  fetch('/api/save_gatein_silent_hours', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 Save'; }
+      if (!data || !data.success) {
+        const msg = (data && data.error) || 'Save failed.';
+        if (statusEl) {
+          statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+          statusEl.textContent   = `❌ ${msg}`;
+        }
+        showToast('❌ ' + msg, 'error');
+        return;
+      }
+      document.getElementById('history_id').value = data.history_id;
+      if (statusEl) {
+        statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+        statusEl.textContent   = `✓ Saved (Record #${data.history_id}). Post to SAP when ready.`;
+      }
+      showToast('✓ Saved.', 'success');
+      if (onSaved) onSaved(data.history_id);
+    })
+    .catch(err => {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 Save'; }
+      console.error('Silent Hours save error:', err);
+      showToast('❌ Network error while saving.', 'error');
+    });
+}
+
+function _doPostSilentHours() {
+  if (!validateGateIn()) {
+    const firstError = document.querySelector('.field-error');
+    if (firstError) firstError.scrollIntoView({ behavior:'smooth', block:'center' });
+    return;
+  }
+  showConfirm(
+    'Confirm Gate In Posting',
+    'You are about to post Gate In to SAP. Make sure all fields are correct — this cannot be undone from the portal.',
+    () => {
+      const existingId = parseInt(document.getElementById('history_id').value) || 0;
+      if (existingId) {
+        _executePostSilentHours(existingId);
+      } else {
+        // Not saved yet -- save first (same guard, same click), then post.
+        _doSaveSilentHours((newId) => _executePostSilentHours(newId));
+      }
+    }
+  );
+}
+
+function _executePostSilentHours(historyId) {
+  const payload  = _collectGateInPayload(historyId);
+  const btn      = document.getElementById('gateInPostBtn');
+  const saveBtn  = document.getElementById('gateInSaveBtn');
+  const statusEl = document.getElementById('gateInStatus');
+  if (saveBtn) saveBtn.disabled = true;
+  submitAndPoll('/api/post_gatein_silent_hours', payload, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `✓ Gate In posted! Gate In Number: ${result.gate_in_number || '—'}`;
+      btn.textContent        = `✓ Gate In Done (GIN: ${result.gate_in_number || ''})`;
+      btn.style.background   = '#00b894';
+      btn.disabled = true;
+      // Record now behaves like any other -- send the guard to its normal
+      // record view (Documents tab etc.) so paperwork can be uploaded once
+      // it's on hand, same as the rest of the workflow from here on.
+      setTimeout(() => { window.location.href = '/view/' + historyId; }, 1800);
+    },
+    onFailure: (error) => {
+      if (saveBtn) saveBtn.disabled = false;
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      if (saveBtn) saveBtn.disabled = false;
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
 // ============================================================
 // v26: Category dropdown confirm-on-change. The field loads preselected
 // (see data-preselected on the <select> above, either a real saved

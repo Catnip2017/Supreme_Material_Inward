@@ -95,6 +95,42 @@
         }
         .new-invoice-btn:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(102,126,234,0.6); }
 
+        /* ADDED (2026-08-31, Silent Hours feature): appears automatically
+           for Gate Security during Silent Hours -- config.is_silent_hours()
+           -- no toggle or setup needed, it's just there when the window is
+           open and gone the moment it closes. Deliberately NOT styled like
+           new-invoice-btn above -- amber/orange instead of the usual blue,
+           plus a pulsing dot -- so it reads as "this is only available
+           right now" rather than a permanent nav item. */
+        .silent-hours-btn {
+            background:linear-gradient(135deg,#f39c12 0%,#e67e22 100%);
+            color:white; border:none; padding:12px 28px;
+            border-radius:8px; font-size:15px; font-weight:600;
+            cursor:pointer; transition:all 0.3s;
+            box-shadow:0 4px 15px rgba(230,126,34,0.45);
+            display:flex; align-items:center; gap:8px;
+        }
+        .silent-hours-btn:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(230,126,34,0.65); }
+        .silent-hours-pulse-dot {
+            width:8px; height:8px; border-radius:50%; background:#fff;
+            box-shadow:0 0 0 rgba(255,255,255,0.6);
+            animation:silentHoursPulse 1.6s infinite;
+        }
+        @keyframes silentHoursPulse {
+            0%   { box-shadow:0 0 0 0 rgba(255,255,255,0.6); }
+            70%  { box-shadow:0 0 0 7px rgba(255,255,255,0); }
+            100% { box-shadow:0 0 0 0 rgba(255,255,255,0); }
+        }
+        .status-awaiting-docs-sh { background:linear-gradient(135deg,#f8b500,#e67e22); color:white; }
+        /* Permanent origin marker (never clears, unlike the status above)
+           -- a small moon badge next to the record ID on any row that
+           started as a Silent Hours walk-in, visible to every viewer of
+           History regardless of role. */
+        .silent-hours-origin-mark {
+            display:inline-block; margin-left:6px; color:#e67e22; font-size:12px;
+            cursor:default;
+        }
+
         /* Search/filter bar */
         /* FIX (2026-08-13): switched from a 4-column grid (which forced the
            date filter's Apply button to wrap onto its own line, making that
@@ -288,6 +324,13 @@
             <i class="fas fa-plus-circle"></i> New Invoice
         </button>
         {% endif %}
+        {% if (is_superadmin or has_role('gate_in')) and config.is_silent_hours() %}
+        <button class="silent-hours-btn" onclick="window.location.href='/silent_hours_gate_in'"
+                title="Outside business hours -- post Gate In directly, documents come later.">
+            <span class="silent-hours-pulse-dot"></span>
+            <i class="fas fa-moon"></i> Silent Hours: Create Gate In Entry
+        </button>
+        {% endif %}
     </div>
 
     <!-- Search and filter bar -->
@@ -309,6 +352,7 @@
                 <option value="migo_105_done">MIGO 105 Done</option>
                 <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>
+                <option value="awaiting_documents_silent_hours">Awaiting Documents (Silent Hours)</option>
             </select>
         </div>
         <!-- FIX (2026-08-13): date-only now (no time-of-day picker) -- see
@@ -584,7 +628,7 @@ function renderTable(records) {
             : '';
         return `
         <tr${isProcessing ? ' class="history-row-processing" data-history-id="' + r.id + '"' : ''}>
-            <td>${r.id}</td>
+            <td>${r.id}${r.silent_hours_entry ? '<span class="silent-hours-origin-mark" title="Started as a Silent Hours walk-in entry"><i class="fas fa-moon"></i></span>' : ''}</td>
             <td>${cell(r.invoice_number)}</td>
             <td>${cell(r.vendor_name)}</td>
             <td>${cell(r.vehicle_number)}</td>
@@ -678,6 +722,7 @@ function getStatusBadge(status) {
         'MIGO 105 Done': '<span class="status-badge status-migo">✓ MIGO 105 Done</span>',
         'MIGO 103 Done': '<span class="status-badge status-migo">✓ MIGO 103 Done</span>',
         'Gate In Done':  '<span class="status-badge status-gate-in">✓ Gate In Approved</span>',
+        'Awaiting Documents (Silent Hours)': '<span class="status-badge status-awaiting-docs-sh"><i class="fas fa-moon"></i> Awaiting Documents (Silent Hours)</span>',
         'Data Approved': '<span class="status-badge status-data-approved">✓ Data Approved</span>',
         'Pending':       '<span class="status-badge status-pending">⏳ Pending</span>',
     };

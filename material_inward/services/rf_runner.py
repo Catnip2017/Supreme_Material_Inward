@@ -20,7 +20,7 @@ from dotenv import dotenv_values
  
 from config.config import config
 from config.logger import get_logger
-from services.robot_lock import acquire_robot_lock, release_robot_lock, is_robot_locked
+from services.robot_lock import acquire_robot_lock, release_robot_lock
  
 logger = get_logger(__name__)
  
@@ -106,6 +106,80 @@ def _force_kill_sap() -> None:
         time.sleep(2)
     except Exception as e:
         logger.warning(f"SAP cleanup note: {e}")
+
+
+# MULTI-BOT FIX (2026-09-03): scripts that have been converted to
+# sap_coordination.resource's Coordinated SAP Login/Close (so far:
+# po_fetch.robot, migo_103.robot) register themselves in the shared
+# refcount file (C:\temp\sap_bot_refcount.txt) and only fully kill SAP
+# when they're the last one registered. A script NOT in this set never
+# calls Register Bot Start, so it was never counted there -- treating it
+# as coordinated here would wrongly decrement some OTHER, real bot's
+# registration instead of its own. Grows as each remaining bot (gate_in,
+# miro, migo_105, migo103_link, migo105_link, miro_link, zgrn) gets the
+# same conversion; until then they keep the old unconditional-kill
+# behavior below, which is no worse than before this fix for them.
+_COORDINATED_SCRIPTS = {"po_fetch.robot", "migo_103.robot"}
+
+_REFCOUNT_FILE = r"C:\temp\sap_bot_refcount.txt"
+_REFCOUNT_LOCK_DIR = r"C:\temp\sap_bot_refcount.lock"
+
+
+def _acquire_refcount_lock(max_wait_seconds: float = 30) -> bool:
+    """
+    Python-side equivalent of sap_coordination.resource's Acquire Refcount
+    Lock -- same directory-creation-as-mutex convention, same paths, so a
+    Python-side cleanup here can never race an RF bot's own
+    register/deregister call.
+    """
+    deadline = time.time() + max_wait_seconds
+    while time.time() < deadline:
+        try:
+            os.makedirs(_REFCOUNT_LOCK_DIR)
+            return True
+        except FileExistsError:
+            time.sleep(0.2)
+        except Exception:
+            return False
+    return False
+
+
+def _release_refcount_lock() -> None:
+    try:
+        os.rmdir(_REFCOUNT_LOCK_DIR)
+    except Exception:
+        pass
+
+
+def _deregister_bot_and_get_remaining() -> int:
+    """
+    Python-side equivalent of sap_coordination.resource's Register Bot
+    End -- used when a script is force-terminated from this side (a
+    subprocess.run() timeout) and therefore never gets to run its own
+    Coordinated SAP Close. Without this, that bot's registration would
+    leak forever: the counter would never come back down to 0, so no
+    future bot would ever be recognized as "the last one out," and SAP
+    would never get fully shut down again through the normal path.
+    Decrements the same counter file the RF side uses, under the same
+    lock, and returns the count remaining after the decrement.
+    """
+    got_lock = _acquire_refcount_lock()
+    try:
+        try:
+            with open(_REFCOUNT_FILE) as f:
+                current = int((f.read() or "0").strip() or "0")
+        except Exception:
+            current = 0
+        new_count = max(0, current - 1)
+        try:
+            with open(_REFCOUNT_FILE, "w") as f:
+                f.write(str(new_count))
+        except Exception as e:
+            logger.warning(f"Could not update SAP bot refcount file: {e}")
+        return new_count
+    finally:
+        if got_lock:
+            _release_refcount_lock()
  
  
 def _wake_sap_session() -> None:
@@ -157,17 +231,20 @@ def _run_rf_script(
     extra_env: Optional[dict] = None,
     history_id=None
 ) -> dict:
-    if script_name == "po_fetch.robot":
-        _force_kill_sap()
+    # MULTI-BOT FIX (2026-09-03): this used to (a) unconditionally
+    # taskkill SAP before every po_fetch.robot run, and (b) refuse to even
+    # start ANY script for up to 240s if saplogon.exe was already running
+    # for ANY reason, failing the job outright afterward. Both were built
+    # for a world where only one script ever ran at a time -- under real
+    # concurrency (spl_rpa running up to 6 windows at once), "SAP is
+    # already running" is the NORMAL, expected state, not a busy signal to
+    # wait out. Every SAP bot now handles "is SAP already open" itself via
+    # sap_coordination.resource's Coordinated SAP Login (reuse the running
+    # process, open a new window under it, only kill-and-restart if it's
+    # genuinely stale) -- so this Python-side gate has nothing left to do
+    # except get in the way. Removed outright rather than reworked.
     _wake_sap_session()
 
-    sap_free = _wait_for_sap_free(max_wait_seconds=240, check_interval=30)
-    if not sap_free:
-        return {
-            "success": False,
-            "error": "SAP is currently in use. Please try again in a few minutes.",
-            "output": ""
-        }
     script_path = os.path.join(config.RF_SCRIPTS_PATH, script_name)
     if not os.path.exists(script_path):
         msg = f"RF script not found: {script_path}"
@@ -306,7 +383,39 @@ def _run_rf_script(
         # but this same orphaning risk applies to a timeout on ANY script, so
         # the cleanup belongs here centrally rather than only in
         # execute_po_fetch_sap.
-        _force_kill_sap()
+        #
+        # MULTI-BOT FIX (2026-09-03): this used to always fully kill SAP
+        # here, unconditionally -- fine when only one script ever ran at a
+        # time, but under real concurrency a timeout in ONE bot must not
+        # nuke every OTHER bot's still-active session too. For a
+        # coordinated script (see _COORDINATED_SCRIPTS above), deregister
+        # it from the shared refcount on its behalf (it never got to do
+        # this itself -- the process was hard-killed before its own
+        # Coordinated SAP Close could run) and only fully kill SAP if that
+        # was the last bot still registered. Note: this bot's OWN window
+        # may still be left open as an orphan even when other bots are
+        # correctly left running -- there's no way from here to identify
+        # and close just that one window, unlike the RF-side close which
+        # has ${session} bound. Worth an occasional manual/scheduled check
+        # for leftover orphaned windows, same as always.
+        if script_name in _COORDINATED_SCRIPTS:
+            remaining = _deregister_bot_and_get_remaining()
+            if remaining > 0:
+                logger.warning(
+                    f"RF script '{script_name}' timed out, but {remaining} "
+                    "other SAP bot(s) are still registered as active -- "
+                    "leaving SAP running for them rather than killing "
+                    "everything. This bot's own SAP window may be left "
+                    "orphaned; a manual check may be needed."
+                )
+            else:
+                logger.warning(
+                    f"RF script '{script_name}' timed out and no other SAP "
+                    "bot is registered as active -- fully clearing SAP."
+                )
+                _force_kill_sap()
+        else:
+            _force_kill_sap()
         return {"success": False, "error": msg, "output": timeout_combined, "output_dir": output_dir}
     except Exception as e:
         msg = f"Unexpected error running '{script_name}': {e}"
@@ -1048,17 +1157,18 @@ def execute_po_fetch_sap(data: dict) -> dict:
     # but raising this to a realistic ceiling is the actual fix: no
     # legitimate PO should need anywhere near 2700s.
     result = _run_rf_script("po_fetch.robot", variables, timeout_seconds=2700, history_id=data.get("history_id"))
-    # FIX: real root cause of "bot finished, looped through everything, but
-    # SAP was still open at the end" -- po_fetch.robot's own Close SAP
-    # Session only killed saplogon.exe, never saplgpad.exe/sapgui.exe (fixed
-    # directly in that file now, to match every other script's pattern).
-    # This is a Python-side backstop on top of that fix, not a replacement
-    # for it: mirrors the existing _force_kill_sap() already called before
-    # po_fetch runs (see the top of _run_rf_script) with a matching one
-    # after, regardless of success/failure -- every other bot does its own
-    # fresh login at the start of its own run, so nothing downstream expects
-    # a SAP session to still be alive right after po_fetch finishes.
-    _force_kill_sap()
+    # MULTI-BOT FIX (2026-09-03): this used to unconditionally force-kill
+    # SAP here after every po_fetch run, success or failure -- built for a
+    # world where po_fetch always logged in fresh and nothing downstream
+    # expected SAP to still be open afterward. That's no longer true:
+    # po_fetch.robot's own Close SAP Session (via sap_coordination.resource's
+    # Coordinated SAP Close) already correctly closes just its own window
+    # and only fully kills SAP if it was the last bot still registered.
+    # This blind kill was undoing that on every single run, regardless of
+    # whether other bots were still active. Removed outright -- the
+    # script's own teardown is the one source of truth for this now. (A
+    # timeout, which skips that teardown entirely, is still handled
+    # separately in _run_rf_script's own TimeoutExpired handler above.)
     if not result["success"]:
         # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
         # result["error"] leaks the bot machine's raw internal path.
@@ -1345,13 +1455,21 @@ def execute_migo105_link_sap(data: dict) -> dict:
  
  
 def execute_miro_link_sap(data: dict) -> dict:
+    # FIX (2026-08-31, client decision): removed extra_env=_sap_credential_env(data)
+    # -- miro_link should always use the shared spl_rpa login, same as its
+    # two siblings (migo103_link/migo105_link, see the identical FIX note
+    # on execute_migo103_link_sap above). Previously this was the one
+    # inconsistent bot in the "link" family -- it still accepted a
+    # per-user LDAP credential override if one happened to be attached to
+    # the job, unlike migo103_link/migo105_link which were deliberately
+    # forced to spl_rpa. Confirmed with client this was not intentional.
     variables = {
         "MATERIAL_DOC_NUMBER": data.get("material_doc_number", ""),
         "DOCUMENT_LINK":       data.get("document_link", ""),
     }
     result = _run_rf_script(
         "miro_link.robot", variables, timeout_seconds=180,
-        extra_env=_sap_credential_env(data), history_id=data.get("history_id")
+        history_id=data.get("history_id")
     )
     if not result["success"]:
         # FIX (2026-08-27): see execute_gate_in_sap's identical fix above --
@@ -1375,7 +1493,8 @@ def execute_miro_link_sap(data: dict) -> dict:
 
 
 # ============================================================
-# ZGRN PRINT — GR Certificate printing to PDF (ADDED 2026-08-14)
+# ZGRN PRINT — GR Certificate download to PDF (ADDED 2026-08-14,
+# REWRITTEN 2026-09-03)
 #
 # Frontend: a "Print" button next to MIGO 103's Post button (only
 # meaningful once MIGO 103 has actually posted -- needs a real material
@@ -1383,30 +1502,49 @@ def execute_miro_link_sap(data: dict) -> dict:
 # (mirrors po_fetch/po_list_fetch's existing exception, not the MIGO
 # 103/105/MIRO per-user pattern).
 #
-# zgrn.robot has no SAP status-bar/error text to key off -- its actual
-# "result" is a PDF file landing on disk via a native Windows Print-to-PDF
-# save dialog, not a screen message. So unlike every other execute_*_sap
-# function here, success is NOT decided by a RESULT: marker alone --
-# that only confirms the script reached its last keyword without an
-# unhandled exception. The real check is whether the expected file(s)
-# actually exist in ZGRN_PRINT_FOLDER afterward, computed with the exact
-# same <MIGO_NUMBER>_<DDMMYYYY>_<GRN|CGD>.pdf naming the robot itself
-# uses -- a hung/misdirected print dialog could let the robot "finish"
-# without ever producing a file, and only checking the marker would miss
-# that entirely.
+# REWRITTEN (2026-09-03): zgrn.robot no longer prints to PDF via a native
+# Windows Save dialog at all -- it ticks SAP's own "Download for MIP"
+# checkbox (chkLC_MIP) alongside "Capital Goods Declaration" (chkLS_CGD),
+# which makes SAP write the PDF(s) straight into ZGRN_PRINT_FOLDER itself.
+# That removes almost the entire native-dialog surface that made the old
+# flow fragile (see pdf_helper.py's history) -- the one dialog left is a
+# same-day-reprint overwrite confirmation, handled inside the robot script
+# itself now, not here.
+#
+# Like before, zgrn.robot has no SAP status-bar/error text to key off, so
+# success still isn't decided by a RESULT: marker alone -- that only
+# confirms the script reached a known-good point, not that a file was
+# actually produced. The real check is still whether the expected file(s)
+# exist in ZGRN_PRINT_FOLDER afterward, with a fresh-enough mtime. What
+# changed is the naming: SAP itself now names the files, deterministically,
+# as "<material_doc_number>_GRN.pdf" and "<material_doc_number>_GCD.pdf"
+# (confirmed against a real run, 2026-09-03) -- note GCD, not CGD, and no
+# date component, unlike the old script's own self-chosen naming.
 # ============================================================
 
 def execute_zgrn_print_sap(data: dict) -> dict:
     """
-    Run zgrn.robot to print a posted MIGO 103 document's GR Certificate
-    (and Certificate of Goods Delivery, if print_twice) to PDF.
+    Run zgrn.robot to download a posted MIGO 103 document's GR Certificate
+    (and Goods Certificate of Delivery, when SAP produces one) as PDFs.
 
     data: {"material_doc_number": str, "history_id": int,
-           "print_twice": bool (default True)}
+           "print_twice": bool (default True) -- see note below}
 
     Returns {"success": bool, "error": str|None, "files": {"grn": path|None,
-    "cgd": path|None}} -- rf_queue_worker.py's _process_zgrn_print() reads
-    `files` to know what to copy into UPLOAD_FOLDER and attach.
+    "cgd": path|None}, "note": str|None} -- rf_queue_worker.py's
+    _process_zgrn_print() reads `files` to know what to copy into
+    UPLOAD_FOLDER and attach. The "cgd" key name is kept as-is even though
+    the real file/SAP term is GCD -- it's just this app's own existing
+    internal doc_type label (zgrn_cgd), unrelated to SAP's filename.
+
+    print_twice no longer controls the robot's behaviour (the new script
+    always ticks both checkboxes in a single execute -- there's no
+    separate print pass to skip). Kept as an input here only to decide
+    whether a missing GCD file is worth a note: the new script has no
+    "this document has no GCD component" signal the way the old one did
+    (ZGRN_CGD_STATUS:NOT_APPLICABLE) -- SAP silently decides that on its
+    own, so a missing GCD file is no longer treated as a failure requiring
+    a retry, only flagged for a human to glance at if one was expected.
     """
     mat_doc = str(data.get("material_doc_number", "") or "").strip()
     history_id = data.get("history_id", "")
@@ -1419,98 +1557,90 @@ def execute_zgrn_print_sap(data: dict) -> dict:
 
     print_twice = bool(data.get("print_twice", True))
     variables = {
-        "MIGO_NUMBER":    mat_doc,
-        "OUTPUT_FOLDER":  config.ZGRN_PRINT_FOLDER,
-        "PRINT_TWICE":    "TRUE" if print_twice else "FALSE",
+        "MIGO_NUMBER": mat_doc,
     }
+    # Note: OUTPUT_FOLDER/PRINT_TWICE are no longer read by zgrn.robot --
+    # the download folder is fixed SAP-side (C:\zgrn_print\, see
+    # config.ZGRN_MIP_FOLDER -- NOT config.ZGRN_PRINT_FOLDER, that was the
+    # old app-root-derived path used by the Print-to-PDF flow this
+    # replaced, and no longer matches where files actually land), and both
+    # checkboxes are always ticked in one execute -- so they're no longer
+    # passed as RF variables here.
 
-    # ADDED (client request, 2026-08-27): dms_upload.robot (Contentverse
-    # upload) drives a real browser + a native Windows file-picker dialog
-    # on this same shared desktop, on its own independent background
-    # thread (see dms_upload_runner.py) -- not serialized through the RF
-    # queue's single worker thread the way every other SAP bot is. ZGRN's
-    # own popup/print-dialog handling is already fragile (see the several
-    # fixes in pdf_helper.py this session), so if Contentverse's dialog is
-    # open at the exact moment ZGRN starts, ZGRN's own popups could
-    # collide with it on the same screen. acquire_robot_lock() itself only
-    # waits for a holder named "password_reset" (see robot_lock.py) -- it
-    # would NOT wait for "dms_upload.robot" and would just barge in. This
-    # is a ZGRN-specific pre-check (not a change to the shared lock
-    # function, which affects every other bot too) -- polls the read-only
-    # is_robot_locked() and waits for Contentverse to finish before
-    # proceeding, same up-to-10-minute ceiling dms_upload_runner.py itself
-    # uses for the reverse direction.
-    _ZGRN_DESKTOP_WAIT_MAX_SECONDS = 600
-    _ZGRN_DESKTOP_WAIT_POLL_SECONDS = 15
-    if is_robot_locked():
-        logger.warning("ZGRN print: desktop lock held by another automation (likely dms_upload.robot) — waiting...")
-        _wait_start = time.time()
-        while is_robot_locked():
-            if time.time() - _wait_start >= _ZGRN_DESKTOP_WAIT_MAX_SECONDS:
-                logger.warning(
-                    f"ZGRN print: desktop still locked after {_ZGRN_DESKTOP_WAIT_MAX_SECONDS}s — "
-                    "proceeding anyway rather than blocking indefinitely."
-                )
-                break
-            time.sleep(_ZGRN_DESKTOP_WAIT_POLL_SECONDS)
-        else:
-            logger.info("ZGRN print: desktop free — proceeding.")
-
+    # REMOVED (2026-09-03, client instruction): this used to pre-wait on
+    # is_robot_locked() before starting, to avoid colliding with
+    # dms_upload.robot's own native file-picker dialog on the same
+    # desktop. Removed now because it was checking the WRONG thing since
+    # this session's robot_lock.py rewrite: that lock is now a shared
+    # refcount (multiple Material-Inward bots are meant to hold it at
+    # once -- that's the whole point of the multi-bot concurrency work),
+    # so is_robot_locked() just meant "at least one bot of any kind is
+    # currently running somewhere," not "the desktop is genuinely busy in
+    # a way that would collide with ZGRN." It was pointlessly delaying
+    # ZGRN's Print button (up to 10 minutes) any time an unrelated SAP job
+    # for a different user happened to be in flight, with no real
+    # collision protection to show for it. _run_rf_script() below still
+    # acquires/releases robot_lock around this run itself, same as every
+    # other bot -- that part is unchanged.
+    #
+    # Genuinely still possible (accepted per client decision): if
+    # dms_upload.robot's own native file dialog/browser happens to be on
+    # screen at the exact same moment ZGRN's own native "overwrite
+    # confirmation" dialog (same-day reprint) pops up, the two could
+    # interfere with each other. Both windows are brief, and the client
+    # has chosen to accept this small, narrow overlap risk rather than
+    # keep the wait.
+    #
     # Deliberately no extra_env= -- always spl_rpa, see module comment above.
     run_started_at = time.time()
     result = _run_rf_script("zgrn.robot", variables, timeout_seconds=180, history_id=history_id)
 
-    status_val = _extract_marked_value(result.get("output") or "", "ZGRN_PRINT_STATUS")
-    script_reached_end = bool(status_val and status_val.upper() == "DONE")
+    output = result.get("output") or ""
+    # New script's vocabulary: SUCCESS / SUCCESS_OVERWRITTEN / NO_FILE_CREATED
+    # (never "DONE" -- that was the old script's marker). Any of the three
+    # means the script reached a known-good point; absence means it
+    # crashed/errored before getting there.
+    status_val = _extract_marked_value(output, "ZGRN_PRINT_STATUS")
+    script_reached_end = bool(status_val)
 
-    # ADDED (2026-08-27): zgrn.robot now distinguishes "CGD popup never
-    # appeared because this doc has no Capital Goods Declaration in SAP"
-    # from a genuine failure -- see the matching FIX in zgrn.robot's Print
-    # ZGRN Document keyword. NOT_APPLICABLE means don't require a CGD file
-    # to exist for this run to count as successful.
-    cgd_status = _extract_marked_value(result.get("output") or "", "ZGRN_CGD_STATUS")
-    cgd_not_applicable = bool(cgd_status and cgd_status.upper() == "NOT_APPLICABLE")
-
-    today = datetime.now().strftime("%d%m%Y")
-    grn_path = os.path.join(config.ZGRN_PRINT_FOLDER, f"{mat_doc}_{today}_GRN.pdf")
-    cgd_path = os.path.join(config.ZGRN_PRINT_FOLDER, f"{mat_doc}_{today}_CGD.pdf")
+    grn_path = os.path.join(config.ZGRN_MIP_FOLDER, f"{mat_doc}_GRN.pdf")
+    gcd_path = os.path.join(config.ZGRN_MIP_FOLDER, f"{mat_doc}_GCD.pdf")
 
     def _fresh(path):
-        # FIX (2026-08-21): the GRN filename is fully deterministic, so a
-        # same-day reprint (retry after a failed/timed-out first attempt,
-        # or an intentional reprint) lands on the exact same path an
-        # earlier run may have already written. os.path.isfile() alone
-        # can't tell "this run wrote it" from "a stale file from an
-        # earlier run is still sitting there" -- a run that hangs or fails
-        # would still be reported as success purely because an old file
-        # already existed. Now also requires the file's mtime to be after
-        # this run started.
+        # Same reasoning as before the rewrite: the filename is fully
+        # deterministic, so a same-day reprint (or SAP's own
+        # overwrite-in-place) lands on the exact same path an earlier run
+        # may have already written. Requires the file's mtime to be after
+        # this run started, not just that it exists, so a stale leftover
+        # file can't masquerade as this run's success.
         try:
             return os.path.isfile(path) and os.path.getmtime(path) >= run_started_at
         except OSError:
             return False
 
     grn_exists = _fresh(grn_path)
-    cgd_exists = _fresh(cgd_path)
-    # FIX (2026-08-27): CGD is only REQUIRED when print_twice was asked for
-    # AND zgrn.robot didn't report NOT_APPLICABLE -- previously this used
-    # cgd_exists := True as a blanket "don't check" bypass whenever
-    # print_twice was False, but reused that same bypass incorrectly for
-    # the new not-applicable case too, which would have also (wrongly)
-    # reported files["cgd"] = cgd_path even though no such file was ever
-    # written. Now tracks "does the file actually exist" and "is it
-    # required" as two separate things.
-    cgd_required = print_twice and not cgd_not_applicable
+    gcd_exists = _fresh(gcd_path)
 
     files = {
         "grn": grn_path if grn_exists else None,
-        "cgd": (cgd_path if cgd_exists else None),
+        "cgd": (gcd_path if gcd_exists else None),
     }
 
-    if grn_exists and (not cgd_required or cgd_exists):
+    # GRN is always required. GCD is attached when present, but its
+    # absence is no longer a hard failure -- see docstring for why we can
+    # no longer reliably tell "no GCD applies here" apart from "GCD
+    # silently didn't download." Attach what we got and note the gap
+    # rather than force a retry that may just be re-confirming a document
+    # that never had a GCD to begin with.
+    if grn_exists:
         note = None
-        if print_twice and cgd_not_applicable:
-            note = "No Capital Goods Declaration applies to this document — only the GR Certificate was printed."
+        if print_twice and not gcd_exists:
+            note = (
+                "GR Certificate downloaded. No Certificate of Goods "
+                "Delivery was found for this document — either it does "
+                "not apply here, or it didn't download; check SAP "
+                "manually (TCODE: zgrn) if one was expected."
+            )
         return {"success": True, "error": None, "files": files, "note": note}
 
     if not script_reached_end and not result["success"]:
@@ -1524,25 +1654,19 @@ def execute_zgrn_print_sap(data: dict) -> dict:
             "files": files,
         }
 
-    missing = "GRN" if not grn_exists else "CGD"
-    # FIX (2026-08-27): this used to interpolate config.ZGRN_PRINT_FOLDER
-    # (the bot machine's raw internal Windows path, e.g.
-    # "C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\...") straight
-    # into the user-facing error message -- _process_zgrn_print()
-    # (rf_queue_worker.py) passes this string through unchanged to the
-    # frontend, so end users were seeing a full internal server path with
-    # no benefit to them. The path is still useful for debugging, so it's
-    # logged server-side only now; the user-facing message stays generic.
+    # FIX (2026-08-27, still applies): don't leak the bot machine's raw
+    # internal path to the frontend -- _process_zgrn_print()
+    # (rf_queue_worker.py) passes this string through unchanged. Logged
+    # server-side only; the user-facing message stays generic.
     logger.error(
-        f"ZGRN print: expected {missing} PDF not found in "
-        f"{config.ZGRN_PRINT_FOLDER} after the run."
+        f"ZGRN print: expected GRN PDF not found in "
+        f"{config.ZGRN_MIP_FOLDER} after the run. Status marker: {status_val!r}"
     )
     return {
         "success": False,
         "error": (
-            f"ZGRN print ran but the expected {missing} PDF was not created. "
-            "The print/save dialog may not have completed as expected. "
-            "Check SAP manually (TCODE: zgrn) before retrying."
+            "ZGRN print ran but the expected GR Certificate PDF was not "
+            "created. Check SAP manually (TCODE: zgrn) before retrying."
         ),
         "files": files,
     }

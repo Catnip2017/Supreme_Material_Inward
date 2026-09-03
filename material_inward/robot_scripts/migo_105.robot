@@ -1,11 +1,21 @@
 *** Settings ***
 Documentation     MIGO 105 SAP Automation — Release GR Blocked Stock
+...
+...               MULTI-BOT COORDINATION (2026-09-03): login/close now go
+...               through sap_coordination.resource instead of an
+...               unconditional taskkill on the way in and out. Also fixes
+...               Connect To Sap Session below -- despite its comment
+...               claiming parity with migo_103.robot, it was still using
+...               the old Children(0).Children(0) index-based lookup, not
+...               the fixed version. See sap_coordination.resource for the
+...               full reasoning on both.
 Library           SapGuiLibrary
 Library           Process
 Library           OperatingSystem
 Library           String
 Library           DateTime
 Library           Collections
+Resource          sap_coordination.resource
  
 *** Variables ***
 ${MATERIAL_DOC_NUMBER}    ${EMPTY}
@@ -50,39 +60,14 @@ Initialize SAP And Login
         Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
     END
  
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Sleep    2s
-    Start Process    ${LOGON_PATH}
-    Sleep    5s
- 
-    Connect To Session
-    Open Connection    ${CONN_NAME}
- 
-    Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
-    Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
-    Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
-    Click Element     wnd[0]/tbar[0]/btn[0]
- 
-    # FIX: same reordering as migo_103.robot -- see that file's comment for
-    # the full explanation. Generic Dismiss Any Popup used to run BEFORE
-    # this specific check and would already close the multi-logon dialog
-    # (submitting SAP's default radio choice) before OPT2 could be
-    # selected. Also aligned OPT1 -> OPT2 to match gate_in.robot's
-    # proven-working "continue without ending other sessions" choice.
-    Sleep    3s
-    ${multi}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
-    IF    ${multi}
-        Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
-        Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
-        Sleep    2s
-    END
- 
-    Sleep    5s
-    Dismiss Any Popup
-    Maximize Window    0
-    Connect To Sap Session
- 
- 
+    # MULTI-BOT FIX (2026-09-03): used to unconditionally taskkill
+    # saplogon.exe here every run -- see sap_coordination.resource for why
+    # that's no longer safe under concurrency. Coordinated SAP Login also
+    # binds ${session} correctly (Bind SAP Session), replacing the old
+    # Connect To Sap Session call below.
+    Coordinated SAP Login    ${CLIENT}    ${CONN_NAME}    ${LOGON_PATH}    ${USERNAME}    ${PASSWORD}
+
+
 Get Firstline Path
     # The Action combo box subscreen can render as either :0003 or :0007
     # depending on MIGO's current internal state -- a hardcoded path
@@ -194,15 +179,6 @@ Ensure Header And Detail Open
         Log To Console    Item detail already open -- leaving as is.
 
     END
- 
-Connect To Sap Session
-    # Attaches to the same live SAP GUI Scripting session SapGuiLibrary is
-    # already driving -- see migo_103.robot's identical keyword for the
-    # full explanation.
-    ${sess}=    Evaluate
-    ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
-    Set Suite Variable    ${session}    ${sess}
- 
  
 Dismiss Overview Tree Sidebar
     # INTEGRATION: same fix as migo_103.robot -- see that file's identical
@@ -566,13 +542,4 @@ Capture And Dismiss Popup Message
 
 
 Close SAP Session
-    # Log    MIGO 105 finished.    level=INFO
-    # RETURN
- 
-    Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
-    Run Keyword And Ignore Error    Send VKey     wnd[0]    0
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Log    SAP session closed and process terminated.    level=INFO
+    Coordinated SAP Close

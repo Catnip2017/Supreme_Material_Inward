@@ -157,6 +157,7 @@ All settings read from .env — never hardcode credentials.
 """
 
 import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # FIX: load_dotenv() with no argument searches for .env starting from the
@@ -227,6 +228,37 @@ class Config:
     SAP_USERNAME: str = os.getenv("SAP_USERNAME", "")
     SAP_PASSWORD: str = os.getenv("SAP_PASSWORD", "")
 
+    # --- SAP multi-bot concurrency caps (ADDED 2026-09-03, REVISED same day) ---
+    # Client decision (revised): each distinct SAP login gets its OWN
+    # independent pool of concurrency slots -- NOT one shared global total.
+    # The shared spl_rpa service account gets its own pool of up to 6 jobs
+    # in flight at once (any mix -- gate-in, po_fetch, line updates...).
+    # Every OTHER distinct SAP username (a real person's own LDAP-based
+    # login) gets its OWN separate pool, independent of spl_rpa's and of
+    # every other individual user's -- starting at 4 each, deliberately
+    # easy to raise later purely by observation (bump this .env value, no
+    # code change) once real usage shows it's safe to go higher. There is
+    # NO flat shared ceiling across everyone combined any more -- the true
+    # system-wide total simply scales with however many distinct SAP
+    # usernames happen to be active at once (spl_rpa's 6, plus 4 per extra
+    # person logged in and running something right now). Enforced by
+    # rf_queue_worker.py's per-username dispatcher (_active_by_username /
+    # _cap_for_bucket), which buckets by the ACTUAL SAP username each job
+    # runs under, not by a single "ldap" catch-all.
+    MAX_CONCURRENT_SPL_RPA: int = int(os.getenv("MAX_CONCURRENT_SPL_RPA", 6))
+    MAX_CONCURRENT_PER_LDAP_USER: int = int(os.getenv("MAX_CONCURRENT_PER_LDAP_USER", 4))
+
+    # Generous, non-binding safety valve only -- see
+    # database/rf_queue_operations.py's claim_next_pending_job() docstring.
+    # This does NOT enforce the per-username design above (that's entirely
+    # rf_queue_worker.py's job); it only stops the DB from piling up an
+    # unbounded number of 'running' rows if something unexpected happens
+    # (e.g. a bug spawning far more distinct concurrent SAP usernames than
+    # the bot machine could ever really run at once). Set comfortably above
+    # any realistic combination of the pools above -- should never actually
+    # bind during normal operation, however busy.
+    MAX_CONCURRENT_TOTAL_SAFETY_CEILING: int = int(os.getenv("MAX_CONCURRENT_TOTAL_SAFETY_CEILING", 30))
+
     # --- Active Directory / LDAP (login) ---
     # Same spl.com domain / server used by the Password Reset app and the
     # Ecosystem Dashboard -- confirmed with the client to be the correct
@@ -293,16 +325,26 @@ class Config:
     GST_EDGE_PROFILE_ROOT: str  = os.path.join(APP_ROOT, "gst_edge_profile")
 
     # --- ZGRN print bot (robot_scripts/zgrn.robot) ---
-    # ADDED (2026-08-14): where zgrn.robot's "Microsoft Print to PDF" saves
-    # the GRN/CGD PDFs it produces, before services/rf_queue_worker.py
-    # copies them into UPLOAD_FOLDER for the app to serve. Was hardcoded in
-    # the uploaded script to a specific individual's own Downloads folder
-    # (C:\Users\ctn_ravi\Downloads\migo_print) -- not appropriate for a
-    # shared bot machine, so this follows the same APP_ROOT-derived,
-    # environment-aware pattern as GST_SCREENSHOTS_ROOT/GST_EDGE_PROFILE_ROOT
-    # above instead. Passed to the robot via --variable OUTPUT_FOLDER:...
-    # (see execute_zgrn_print_sap()), overriding the script's own default.
+    # ADDED (2026-08-14), SUPERSEDED (2026-09-03): where zgrn.robot's
+    # "Microsoft Print to PDF" used to save the GRN/CGD PDFs it produced,
+    # before services/rf_queue_worker.py copies them into UPLOAD_FOLDER.
+    # Was app-root-derived (environment-aware, like GST_SCREENSHOTS_ROOT)
+    # because the OLD script's Print-to-PDF flow let us choose the output
+    # path via --variable OUTPUT_FOLDER:.... No longer used by
+    # execute_zgrn_print_sap() -- kept only in case something else still
+    # references it -- see ZGRN_MIP_FOLDER below for the path actually in
+    # use now.
     ZGRN_PRINT_FOLDER: str = os.path.join(APP_ROOT, "zgrn_print")
+
+    # ADDED (2026-09-03): zgrn.robot now uses SAP's own "Download for MIP"
+    # feature instead of Print-to-PDF -- SAP decides the download folder
+    # itself (fixed, confirmed against a real run: C:\zgrn_print), not
+    # something this app passes in or can redirect via APP_ROOT the way
+    # ZGRN_PRINT_FOLDER above was. Hardcoded to match zgrn.robot's own
+    # ${MIP_FOLDER} variable exactly -- if that ever needs to change, it
+    # has to change in both places together (this app has no way to make
+    # SAP write somewhere else).
+    ZGRN_MIP_FOLDER: str = r"C:\zgrn_print"
 
     # --- Document keyword detection ---
     # Filenames arrive as INVOICENO_<KEYWORD>.pdf (any case) -- e.g.
@@ -345,6 +387,53 @@ class Config:
 
     ENABLE_STEP_LOCKS: bool = os.getenv('ENABLE_STEP_LOCKS', 'true').lower() == 'true'
 
+    # --- Timezone (Silent Hours Gate-In + IST-dependent date/time logic) ---
+    # true if THIS SERVER's system clock is UTC (needs +5:30 added to get
+    # real India time) -- confirmed true for this deployment. false would
+    # mean the server's own clock is already IST, so no offset is added.
+    # Single shared source of truth for "is the server on UTC": both the
+    # existing Posting Date fix (database/migo_operations.py) and the new
+    # Silent Hours window check below read this same flag, instead of
+    # each independently hardcoding its own answer to the same question.
+    UTC_TIMEZONE: bool = os.getenv('UTC_TIMEZONE', 'true').lower() == 'true'
+    _IST_OFFSET = timedelta(hours=5, minutes=30)
+
+    # --- Silent Hours override (client request, 2026-09-02) ---
+    # true = the Silent Hours walk-in Gate-In entry point is available
+    # around the clock, not only nights/weekends -- is_silent_hours()
+    # below returns True unconditionally while this is set, instead of
+    # checking the day/time window.
+    #
+    # TO REVERT: set SILENT_HOURS_ALWAYS_OPEN=false (or just delete this
+    # line) in .env, then restart the Flask service. That's the whole
+    # revert -- no code change needed, and the original weekday-evening/
+    # weekend-only window (is_silent_hours()'s own logic below) is still
+    # there untouched, it just resumes being checked again.
+    SILENT_HOURS_ALWAYS_OPEN: bool = os.getenv('SILENT_HOURS_ALWAYS_OPEN', 'false').lower() == 'true'
+
+    @classmethod
+    def get_ist_now(cls) -> datetime:
+        """Current India time. Adds the fixed +5:30 offset (India has no
+        DST, so a flat offset is correct) only when UTC_TIMEZONE=true;
+        returns the server's own clock unmodified when the server is
+        already running on IST."""
+        if cls.UTC_TIMEZONE:
+            return datetime.utcnow() + cls._IST_OFFSET
+        return datetime.now()
+
+    @classmethod
+    def is_silent_hours(cls) -> bool:
+        """Silent Hours window: all day Saturday/Sunday, or weekdays from
+        17:00 IST onward -- UNLESS SILENT_HOURS_ALWAYS_OPEN (.env) is set,
+        in which case this always returns True. Drives whether Gate
+        Security's walk-in Gate-In entry point (app.py) is offered."""
+        if cls.SILENT_HOURS_ALWAYS_OPEN:
+            return True
+        now = cls.get_ist_now()
+        if now.weekday() >= 5:  # Monday=0 ... Saturday=5, Sunday=6
+            return True
+        return now.hour >= 17
+
 
 config = Config()
 
@@ -362,6 +451,7 @@ for _dir in (
     os.path.join(config.GST_EDGE_PROFILE_ROOT, "einvoice"),
     os.path.join(config.GST_EDGE_PROFILE_ROOT, "taxpayer"),
     config.ZGRN_PRINT_FOLDER,
+    config.ZGRN_MIP_FOLDER,
     os.path.join(config.APP_ROOT, "logs"),
 ):
     try:

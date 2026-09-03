@@ -39,7 +39,10 @@ from database.db_operations import (
 # SuperAdmin to click it for every reversed record.
 from database.admin_operations import reset_migo_103_step
 from services.doc_consolidator import consolidate_documents, write_staging_sidecar
-from services.dms_upload_runner import trigger_dms_upload_for
+# NOTE (2026-09-03): trigger_dms_upload_for import removed -- the per-event
+# DMS trigger (_enqueue_dms_upload, called after every gate_in/po_fetch)
+# was removed in favor of dms_upload_runner.py's hourly in-process
+# scheduler (start_dms_hourly_scheduler(), started from app.py).
 from database.gatein_operations import update_gatein_rf_result, get_gatein_entry
 from database.vehicle_master_operations import upsert_vehicle_master_from_gate_in
 from database.pending_po_operations import upsert_pending_po_update, mark_pending_po_resolved
@@ -79,6 +82,49 @@ logger = get_logger(__name__)
 
 POLL_INTERVAL_SECONDS = 5
 STUCK_JOB_TIMEOUT_MINUTES = 15
+
+# MULTI-BOT FIX (2026-09-03): the worker used to be a single loop that
+# claimed one job, ran it to completion (blocking on the robot subprocess
+# the whole time), then looped back for the next -- genuinely one job at a
+# time, on top of database/rf_queue_operations.py's own "only one 'running'
+# row allowed" gate and every robot script's own unconditional taskkill.
+# All three had to change together (see that module's docstring and
+# sap_coordination.resource) for concurrency to do anything. This is the
+# in-process half: once claim_next_pending_job() can hand out more than one
+# job, something has to actually run them in parallel while keeping each
+# distinct SAP username's own jobs within ITS OWN pool -- that's what
+# _active_by_username / _held_jobs / _dispatch_if_capacity below do.
+#
+# REVISED (2026-09-03, same day): client design is that every distinct SAP
+# username gets its OWN independent concurrency pool -- spl_rpa up to 6,
+# every other individual LDAP username up to
+# config.MAX_CONCURRENT_PER_LDAP_USER (4) each, with NO shared total across
+# usernames. _active_by_username is already keyed by the real bucket string
+# (the literal SAP username, or the _SPL_RPA_BUCKET sentinel below) rather
+# than a single generic "ldap" bucket, so this was already the right shape
+# -- a new, previously-unseen username simply gets its own fresh entry in
+# this dict the first time one of its jobs is dispatched, with its own
+# independent cap, never competing with spl_rpa's or any other user's
+# count. The system-wide total is therefore not a fixed number -- it scales
+# with however many distinct SAP usernames are concurrently active (spl_rpa's
+# 6, plus 4 more per additional person actually running something right
+# now). database/rf_queue_operations.py's DB-level check is now only a
+# generous, non-binding total safety valve, not a real cap -- see that
+# module's docstring.
+#
+# "spl_rpa" here is a fixed bucket key for every job NOT running under an
+# individual LDAP user's own credential (the shared service account jobs
+# use one username in practice, but the exact string doesn't matter --
+# this key just needs to be distinct from any real LDAP username, which it
+# is, since real usernames never collide with this literal).
+_SPL_RPA_BUCKET = "spl_rpa"
+
+# Guards _active_by_username (mutated by the dispatcher thread AND by every
+# spawned job thread's completion). _held_jobs is only ever touched by the
+# single dispatcher thread (main _worker_loop), so it needs no lock.
+_active_lock = threading.Lock()
+_active_by_username: dict = {}
+_held_jobs: list = []
 
 
 def _process_gate_in(history_id: int, payload: dict) -> dict:
@@ -243,11 +289,15 @@ def _process_gate_in(history_id: int, payload: dict) -> dict:
                 f"Gate In done — po_flow_type={po_flow_type}, "
                 f"skipping auto po_fetch for history_id={history_id}"
             )
-            # v18: without_po flows never get a po_fetch job, which is the
-            # normal trigger point for dms_upload below -- so it has to be
-            # enqueued directly from here instead, or Contentverse upload
-            # would never fire for these records at all.
-            _enqueue_dms_upload(history_id)
+            # v18: without_po flows never got a po_fetch job, which used to
+            # be the normal trigger point for dms_upload -- so this file's
+            # staging used to need triggering directly from here instead.
+            # REMOVED (2026-09-03): dms_upload no longer runs per-event at
+            # all -- it's a single hourly in-process sweep of the whole
+            # staging folder now (see dms_upload_runner.py's
+            # start_dms_hourly_scheduler()), so every staged file is picked
+            # up regardless of po_flow_type without any special-casing
+            # here. Nothing to enqueue.
     else:
         # v20: was silently relying on the raw RF-subprocess log inside
         # rf_runner.py for this -- no clearly-labeled failure line at this
@@ -305,7 +355,6 @@ def _process_po_fetch(history_id: int, payload: dict) -> dict:
                 f"failed — history_id={history_id}. PO line items will NOT "
                 f"be available on the MIGO 103 tab until this is retried."
             )
-            _enqueue_dms_upload(history_id)
             return {
                 "success": False,
                 "po_items": po_items,
@@ -333,32 +382,18 @@ def _process_po_fetch(history_id: int, payload: dict) -> dict:
             f"PO fetch failed for history_id={history_id}: "
             f"{result.get('error')}"
         )
-    # v18: enqueue dms_upload regardless of whether PO fetch itself
-    # succeeded — Contentverse upload only depends on the PDF already
-    # staged at Gate In (see _process_gate_in), not on PO Fetch's own
-    # result, so a PO Fetch failure must not also block the DMS link.
-    _enqueue_dms_upload(history_id)
+    # v18: dms_upload used to be enqueued here regardless of whether PO
+    # fetch itself succeeded -- Contentverse upload only depends on the PDF
+    # already staged at Gate In (see _process_gate_in), not on PO Fetch's
+    # own result, so a PO Fetch failure must not also block the DMS link.
+    # REMOVED (2026-09-03): dms_upload no longer runs per-event -- it's a
+    # single hourly in-process sweep of the whole staging folder now (see
+    # dms_upload_runner.py's start_dms_hourly_scheduler()), so this file
+    # gets picked up on the next hourly run regardless of PO Fetch's
+    # outcome, with no per-call trigger needed here.
     # Return actual success/failure so complete_rf_job records it correctly
     return result
 
-
-def _enqueue_dms_upload(history_id: int) -> None:
-    """
-    CHANGED (2026-08-14): no longer chains onto rf_queue. Client decision —
-    Contentverse upload is Selenium/browser automation (dms_upload.robot),
-    not SAP GUI scripting, so it doesn't need to sit behind SAP jobs in the
-    single-worker rf_queue the way it did under the v18 design (see
-    dms_upload_runner.py's trigger_dms_upload_for() docstring for the full
-    reasoning, including why it's still safe re: the shared desktop lock).
-    Runs on its own background thread instead, same pattern as
-    gst_runner.py's per-record threads. Best-effort, same as before — a
-    failure here must never affect the step that just genuinely succeeded.
-    """
-    try:
-        trigger_dms_upload_for(history_id)
-        logger.info(f"DMS upload triggered (async) — history_id={history_id}")
-    except Exception as e:
-        logger.error(f"Failed to trigger dms_upload for history_id={history_id}: {e}", exc_info=True)
 
 def _process_po_list_fetch(history_id: int, payload: dict) -> dict:
     result = execute_po_list_fetch_sap(payload)
@@ -728,15 +763,18 @@ def _enqueue_link_attach(history_id: int, step: str, material_doc_number: str, u
     v18: shared enqueue logic for migo103_link / migo105_link / miro_link.
 
     Looks up the Contentverse link for this history_id right now. If it's
-    already there (the common case, now that dms_upload is chained
-    immediately after gate_in/po_fetch instead of waiting on a timer --
-    see _enqueue_dms_upload), enqueue the attach job immediately. If it
-    isn't there yet (Contentverse upload failed or hasn't run for this
-    record for some other reason -- NOT a normal race under the current
-    design, see _enqueue_dms_upload's docstring), mark this step
-    'skipped_no_link' rather than failing or blocking anything -- the
-    posting step that called this has already recorded its own success
-    and must not be affected either way.
+    already there, enqueue the attach job immediately. If it isn't there
+    yet, mark this step 'skipped_no_link' rather than failing or blocking
+    anything -- the posting step that called this has already recorded its
+    own success and must not be affected either way.
+
+    UPDATED (2026-09-03): DMS upload now runs on an hourly in-process
+    cadence (dms_upload_runner.py's start_dms_hourly_scheduler()) instead
+    of immediately after every gate_in/po_fetch -- so "link not there yet"
+    is now the ORDINARY case for any MIGO 103/105/MIRO posted less than an
+    hour after its Gate In, not a rare race. That's fine: the backfill
+    mechanism below already exists for exactly this, it just used to
+    handle a rare edge case and now handles the common one.
 
     services/dms_links_import.py's run_dms_links_import() is the other
     half of this: when a link lands late, it checks for any of these three
@@ -983,11 +1021,14 @@ def _process_zgrn_print(history_id: int, payload: dict) -> dict:
 
 
 # _process_dms_upload REMOVED (2026-08-14): dms_upload no longer runs as an
-# rf_queue step at all -- see _enqueue_dms_upload() above, which now calls
-# dms_upload_runner.py's trigger_dms_upload_for() directly on its own
-# background thread instead of enqueue_rf_job(). Nothing polls a job_id for
-# this anymore; outcome is logs + this record's own dms_status, same as
-# when this ran under Task Scheduler pre-v18.
+# rf_queue step at all. Nothing polls a job_id for this; outcome is logs +
+# this record's own dms_status.
+# UPDATED (2026-09-03): the v18 per-event trigger (_enqueue_dms_upload(),
+# called from _process_gate_in/_process_po_fetch on every completion) is
+# also removed now -- dms_upload_runner.py's run_dms_upload() runs on a
+# single hourly in-process cadence instead (start_dms_hourly_scheduler(),
+# started from app.py). See that module's docstring for the full
+# reasoning.
 
 
 STEP_HANDLERS = {
@@ -1004,6 +1045,133 @@ STEP_HANDLERS = {
     "miro_link":          _process_miro_link,
     "zgrn_print":         _process_zgrn_print,
 }
+
+
+def _resolve_job_bucket(job_id, payload: dict):
+    """Returns (bucket_key, error_message). bucket_key is either the LDAP
+    user's own username (their personal concurrency bucket) or the
+    _SPL_RPA_BUCKET sentinel for the shared service account -- mirrors the
+    exact credential-resolution logic that used to live inline in the old
+    single-job loop. error_message is set (bucket_key is meaningless) only
+    when an LDAP job's credential was lost to an app restart while it sat
+    queued (see credential_cache.py's module docstring) -- that job must
+    fail cleanly here, before ever being dispatched, exactly as before.
+    get_job_credential() is a plain read (never consumes/pops the entry --
+    see credential_cache.py), so calling it here and again inside
+    _execute_job is safe and returns the same value both times."""
+    cred = get_job_credential(job_id)
+    if cred:
+        return cred[0], None
+    if payload.get("_submitted_by_auth_type") == "ldap":
+        return None, (
+            "SAP credential unavailable (the app restarted while this "
+            "job was queued). Please resubmit — no fallback to the "
+            "shared account is used for LDAP-authenticated jobs."
+        )
+    return _SPL_RPA_BUCKET, None
+
+
+def _cap_for_bucket(bucket: str) -> int:
+    """Each bucket (spl_rpa, or one specific person's own SAP username) has
+    its OWN independent cap -- this never compares against or shares
+    capacity with any other bucket. spl_rpa's pool is sized larger (6)
+    because every user's shared/backend jobs funnel through it; every
+    other bucket is one real person's own login, capped smaller (4,
+    raise via MAX_CONCURRENT_PER_LDAP_USER in .env as observation
+    supports it)."""
+    return config.MAX_CONCURRENT_SPL_RPA if bucket == _SPL_RPA_BUCKET else config.MAX_CONCURRENT_PER_LDAP_USER
+
+
+def _execute_job(job: dict) -> None:
+    """Runs one already-claimed job to completion and records the result.
+    Safe to call from any thread -- each job only ever touches its own
+    row/payload/credential, and complete_rf_job/clear_job_credential are
+    each keyed by this job's own id."""
+    job_id     = job["id"]
+    history_id = job["history_id"]
+    step       = job["step"]
+    payload    = job["payload"]
+
+    # ADDED (2026-08-21): guarantees every execute_*_sap() call in
+    # rf_runner.py can rely on data.get("history_id") being present
+    # -- used to segregate RF logs per record (_run_rf_script's
+    # output_dir). Previously only some handlers bothered to set
+    # this key in their own payload before calling execute_*_sap;
+    # setting it once, centrally, here means it's never missing
+    # regardless of which handler runs. Never overwrites a
+    # differing value if one's already there (shouldn't happen --
+    # this IS that job's own history_id -- but never second-guess
+    # data a handler deliberately set).
+    payload.setdefault("history_id", history_id)
+
+    logger.info(
+        f"Worker processing job_id={job_id} history_id={history_id} "
+        f"step={step} (SAP bucket: {job.get('_sap_bucket')})"
+    )
+
+    handler = STEP_HANDLERS.get(step)
+    if not handler:
+        logger.error(f"No handler for step '{step}' — job_id={job_id}")
+        complete_rf_job(job_id, False, {"error": f"Unknown step: {step}"})
+        return
+
+    # v16: attach this job's per-user SAP credential (LDAP users only --
+    # see credential_cache.py + app.py's _enqueue_sap_job). The
+    # error/restart case was already handled by _resolve_job_bucket()
+    # before this job was ever dispatched to a thread -- reaching here
+    # means either cred exists, or this is a normal shared-account job.
+    cred = get_job_credential(job_id)
+    if cred:
+        payload["_sap_username"], payload["_sap_password"] = cred
+
+    try:
+        result = handler(history_id, payload)
+        success = result.get("success", False)
+    except Exception as e:
+        logger.error(
+            f"Handler crashed for job_id={job_id} step={step}: {e}",
+            exc_info=True
+        )
+        result = {"success": False, "error": str(e)}
+        success = False
+    finally:
+        complete_rf_job(job_id, success, result)
+        # v16: this job's credential (if any) has done its work --
+        # never let it linger in memory past this point.
+        clear_job_credential(job_id)
+
+
+def _run_job_in_thread(job: dict) -> None:
+    """Thread target for one dispatched job. Always frees its concurrency
+    slot when done, even if _execute_job somehow raises past its own
+    internal try/except (belt and braces)."""
+    bucket = job["_sap_bucket"]
+    try:
+        _execute_job(job)
+    except Exception as e:
+        logger.error(
+            f"Unexpected error running job_id={job.get('id')}: {e}",
+            exc_info=True
+        )
+    finally:
+        with _active_lock:
+            _active_by_username[bucket] = max(0, _active_by_username.get(bucket, 0) - 1)
+
+
+def _dispatch_if_capacity(job: dict) -> bool:
+    """Starts job now in its own thread if its SAP-username bucket has a
+    free slot. Returns True if dispatched, False if the bucket is at
+    capacity (caller should hold the job and retry on a later poll)."""
+    bucket = job["_sap_bucket"]
+    with _active_lock:
+        if _active_by_username.get(bucket, 0) >= _cap_for_bucket(bucket):
+            return False
+        _active_by_username[bucket] = _active_by_username.get(bucket, 0) + 1
+    threading.Thread(
+        target=_run_job_in_thread, args=(job,), daemon=True,
+        name=f"RFJob-{job['id']}"
+    ).start()
+    return True
 
 
 def _worker_loop() -> None:
@@ -1035,9 +1203,9 @@ def _worker_loop() -> None:
     # 20-minute staleness auto-clear (see _STALE_LOCK_SECONDS), but a job
     # that was killed by an app restart shortly after acquiring the lock
     # left it sitting there well under 20 minutes old -- so every SAP/DMS
-    # robot attempted after a restart (dms_upload_runner.py's
-    # _wait_for_desktop_free, plus every _run_rf_script call) had to sit
-    # and wait out the rest of that 20-minute window before the lock
+    # robot attempted after a restart (every _run_rf_script call, plus
+    # dms_upload_runner.py's own acquire around its subprocess run) had to
+    # sit and wait out the rest of that 20-minute window before the lock
     # self-cleared, even though nothing was actually holding it anymore.
     # Same reasoning as reset_stuck_running_jobs(minutes=0) above: a fresh
     # process boot means nothing could have survived to still legitimately
@@ -1052,72 +1220,54 @@ def _worker_loop() -> None:
                 reset_stuck_running_jobs(minutes=STUCK_JOB_TIMEOUT_MINUTES)
                 last_stuck_check = now
 
+            # MULTI-BOT FIX (2026-09-03): retry any jobs held earlier
+            # because their SAP-username bucket was at capacity -- a slot
+            # may have freed up since (another job for that same bucket
+            # finished). These are already marked 'running' in the DB (they
+            # were genuinely claimed), so this is purely an in-process
+            # retry, not a new claim.
+            global _held_jobs
+            if _held_jobs:
+                still_held = []
+                for held in _held_jobs:
+                    if not _dispatch_if_capacity(held):
+                        still_held.append(held)
+                _held_jobs = still_held
+
             job = claim_next_pending_job()
             if not job:
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
-            job_id     = job["id"]
-            history_id = job["history_id"]
-            step       = job["step"]
-            payload    = job["payload"]
+            job_id  = job["id"]
+            step    = job["step"]
+            payload = job["payload"]
 
-            # ADDED (2026-08-21): guarantees every execute_*_sap() call in
-            # rf_runner.py can rely on data.get("history_id") being present
-            # -- used to segregate RF logs per record (_run_rf_script's
-            # output_dir). Previously only some handlers bothered to set
-            # this key in their own payload before calling execute_*_sap;
-            # setting it once, centrally, here means it's never missing
-            # regardless of which handler runs. Never overwrites a
-            # differing value if one's already there (shouldn't happen --
-            # this IS that job's own history_id -- but never second-guess
-            # data a handler deliberately set).
-            payload.setdefault("history_id", history_id)
-
-            logger.info(f"Worker processing job_id={job_id} history_id={history_id} step={step}")
-
-            handler = STEP_HANDLERS.get(step)
-            if not handler:
+            if not STEP_HANDLERS.get(step):
                 logger.error(f"No handler for step '{step}' — job_id={job_id}")
                 complete_rf_job(job_id, False, {"error": f"Unknown step: {step}"})
                 continue
 
-            # v16: attach this job's per-user SAP credential (LDAP users
-            # only -- see credential_cache.py + app.py's _enqueue_sap_job).
-            # payload["_submitted_by_auth_type"] == "ldap" is written into
-            # rf_queue.payload at enqueue time (not sensitive, just a
-            # marker) and survives an app restart even though the actual
-            # credential never does -- that's what lets us tell "local job,
-            # never had one, fine" apart from "LDAP job that lost its
-            # credential to a restart, must NOT fall back to spl_rpa."
-            cred = get_job_credential(job_id)
-            if cred:
-                payload["_sap_username"], payload["_sap_password"] = cred
-            elif payload.get("_submitted_by_auth_type") == "ldap":
-                error_msg = (
-                    "SAP credential unavailable (the app restarted while this "
-                    "job was queued). Please resubmit — no fallback to the "
-                    "shared account is used for LDAP-authenticated jobs."
-                )
-                logger.error(f"job_id={job_id} step={step}: {error_msg}")
-                complete_rf_job(job_id, False, {"error": error_msg})
+            # v16: resolve which SAP-username bucket this job belongs to
+            # (LDAP users only -- see credential_cache.py + app.py's
+            # _enqueue_sap_job). A restart-lost LDAP credential fails the
+            # job right here, before it's ever dispatched -- same as before
+            # this change, just moved earlier so capacity is never spent on
+            # a job that can't run anyway.
+            bucket, cred_error = _resolve_job_bucket(job_id, payload)
+            if cred_error:
+                logger.error(f"job_id={job_id} step={step}: {cred_error}")
+                complete_rf_job(job_id, False, {"error": cred_error})
                 continue
 
-            try:
-                result = handler(history_id, payload)
-                success = result.get("success", False)
-            except Exception as e:
-                logger.error(
-                    f"Handler crashed for job_id={job_id} step={step}: {e}",
-                    exc_info=True
+            job["_sap_bucket"] = bucket
+            if not _dispatch_if_capacity(job):
+                logger.info(
+                    f"job_id={job_id} step={step}: SAP bucket '{bucket}' "
+                    f"already at its concurrency cap ({_cap_for_bucket(bucket)}) "
+                    "-- holding until a slot frees up."
                 )
-                result = {"success": False, "error": str(e)}
-                success = False
-            finally:
-                complete_rf_job(job_id, success, result)
-                # v16: this job's credential (if any) has done its work --
-                # never let it linger in memory past this point.
-                clear_job_credential(job_id)
+                _held_jobs.append(job)
 
         except Exception as e:
             logger.error(f"Unexpected error in RF worker loop: {e}", exc_info=True)

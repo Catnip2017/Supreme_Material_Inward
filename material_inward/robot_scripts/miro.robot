@@ -17,8 +17,9 @@ Library           String
 Library           DateTime
 Library           Collections
 Library           SapGuiLibrary    screenshots_on_failure=False
+Resource          sap_coordination.resource
 *** Variables ***
- 
+
 ${POSTING_DATE}           ${EMPTY}
 ${DATE_FROM}              ${EMPTY}
 ${DATE_TO}                ${EMPTY}
@@ -26,6 +27,14 @@ ${CLIENT}                 ${EMPTY}
 ${USERNAME}               ${EMPTY}
 ${PASSWORD}               ${EMPTY}
 ${CONN_NAME}              ${EMPTY}
+${LOGON_PATH}             ${EMPTY}
+# MULTI-BOT FIX (2026-09-03): this used to be re-derived by raw index
+# (GetScriptingEngine.Children(0).Children(0)) at 3 separate call sites in
+# this file every time the grid needed to be read directly -- always grabbed
+# the FIRST SAP connection/session on the machine, which under concurrency
+# could silently be a DIFFERENT bot's open window. Now bound once at login
+# via Bind SAP Session (see sap_coordination.resource) and reused from here.
+${session}                ${NONE}
 # Passed from rf_runner.py
 # ${MATERIAL_DOC_NUMBER}    ${EMPTY}    # From MIGO 103 DB — used to find the right row in list
 ${REFERENCE_NUMBER}       ${EMPTY}    # Invoice number — verified against document after 105
@@ -70,40 +79,22 @@ Initialize SAP and Login
         Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
     END
 
-    # Kill any existing SAP processes
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
-    Sleep    2s
- 
-    # Launch SAP — hardcoded path, no spaces issue
-    Start Process    C:\\Program Files\\SAP\\FrontEnd\\SAPGUI\\saplogon.exe
-    Sleep    5s
- 
-    # Connect to SAP GUI session
-    SapGuiLibrary.Connect To Session
-    SapGuiLibrary.Open Connection    ${CONN_NAME}
- 
-    # Fill credentials
-    SapGuiLibrary.Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
-    SapGuiLibrary.Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
-    SapGuiLibrary.Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
-    SapGuiLibrary.Click Element     wnd[0]/tbar[0]/btn[0]
+    ${LOGON_PATH}=    Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
+    # Every other bot in this app requires SAP_LOGON_PATH from .env with no
+    # code-level fallback (see gate_in.robot/migo_105.robot/etc.) -- this
+    # used to be the one script with its own hardcoded saplogon.exe path
+    # instead of reading .env at all. Matching the same convention here
+    # rather than hand-writing an escaped Windows path inside this Evaluate
+    # call, which is its own source of subtle escaping bugs.
+    Should Not Be Empty    ${LOGON_PATH}    SAP_LOGON_PATH not found in .env
 
-    # FIX: this login keyword had NO multi-logon popup handling at all --
-    # unlike gate_in.robot/migo_103.robot/migo_105.robot, a "continue with
-    # this logon?" dialog here would just sit unhandled and the run would
-    # stall/time out. Ported the same check gate_in.robot uses (OPT2 =
-    # "continue without ending other sessions", the safe choice).
-    Sleep    3s
-    ${multi}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[1]
-    IF    ${multi}
-        Run Keyword And Ignore Error    SapGuiLibrary.Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
-        Run Keyword And Ignore Error    SapGuiLibrary.Click Element         wnd[1]/tbar[0]/btn[0]
-        Sleep    2s
-    END
-
-    Sleep    2s
-    Dismiss Any Popup
+    # MULTI-BOT FIX (2026-09-03): used to unconditionally taskkill
+    # saplogon.exe/saplgpad.exe here every run -- see sap_coordination.resource
+    # for why that's no longer safe under concurrency. Also now binds
+    # ${session} correctly (Coordinated SAP Login -> Bind SAP Session)
+    # instead of the 3 separate raw Children(0).Children(0) lookups this
+    # file used to do further down whenever it needed the grid directly.
+    Coordinated SAP Login    ${CLIENT}    ${CONN_NAME}    ${LOGON_PATH}    ${USERNAME}    ${PASSWORD}
 
     Log    SAP login successful    level=INFO
  
@@ -194,10 +185,13 @@ Delete Second TDS Row
     ${tbl_path}=    Set Variable
     ...    wnd[0]/usr/subHEADER_AND_ITEMS:SAPLMR1M:6005/tabsHEADER/tabpHEADER_WT/ssubHEADER_SCREEN:SAPLFDCB:0080/subSUB_WT:SAPLFWTD:0120/tblSAPLFWTDWT_DIALOG
  
-    ${engine}=    Evaluate
-    ...    win32com.client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
-    ...    modules=win32com.client
- 
+    # MULTI-BOT FIX (2026-09-03): ${engine} used to be re-derived here via
+    # Children(0).Children(0) but was never actually used anywhere in this
+    # keyword (the FOR loop below only ever calls SapGuiLibrary's own
+    # Element Should Be Present / Get Value / Set Focus keywords, which use
+    # SapGuiLibrary's own already-correctly-bound session) -- removed as
+    # dead code rather than fixed, since it did nothing either way.
+
     FOR    ${row_idx}    IN RANGE    1    10
  
         ${cell_path}=    Set Variable
@@ -266,13 +260,14 @@ Debug Find Delete Button
     Click Element    wnd[0]/usr/subHEADER_AND_ITEMS:SAPLMR1M:6005/tabsHEADER/tabpHEADER_WT
     Sleep    2s
  
-    ${engine}=    Evaluate
-    ...    win32com.client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
-    ...    modules=win32com.client
- 
+    # MULTI-BOT FIX (2026-09-03): this debug-only keyword (not called from
+    # the live "Execute MIRO" flow -- see the commented-out call in
+    # *** Test Cases ***) used to re-derive its own session via
+    # Children(0).Children(0). Fixed for consistency even though dead code,
+    # so nobody re-enables it later with the buggy pattern still in place.
     # Get all children of the WT subscreen to find buttons
     ${sub}=    Evaluate
-    ...    $engine.findById('wnd[0]/usr/subHEADER_AND_ITEMS:SAPLMR1M:6005/tabsHEADER/tabpHEADER_WT/ssubHEADER_SCREEN:SAPLFDCB:0080/subSUB_WT:SAPLFWTD:0120')
+    ...    $session.findById('wnd[0]/usr/subHEADER_AND_ITEMS:SAPLMR1M:6005/tabsHEADER/tabpHEADER_WT/ssubHEADER_SCREEN:SAPLFDCB:0080/subSUB_WT:SAPLFWTD:0120')
  
     ${count}=    Evaluate    $sub.Children.Count
  
@@ -339,8 +334,16 @@ Execute MIRO Flow
    
  
     # ── DIAGNOSTIC: print all columns and rows ──
+    # MULTI-BOT FIX (2026-09-03): used to re-derive the session by raw
+    # index (Children(0).Children(0)) right here -- always the FIRST SAP
+    # connection/session on the machine, which under concurrency could
+    # silently be a DIFFERENT bot's open window. This is the live grid
+    # this keyword actually clicks/double-clicks into further down, so
+    # this was the most dangerous of the 3 spots in this file. ${session}
+    # is now bound once at login (Coordinated SAP Login -> Bind SAP
+    # Session) to the connection THIS bot's own login just created.
     ${grid}=    Evaluate
-    ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0).findById('wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell')
+    ...    $session.findById('wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell')
  
     ${rows}=    Evaluate    $grid.RowCount
     ${cols}=    Evaluate    $grid.ColumnCount
@@ -461,11 +464,7 @@ Execute MIRO Flow
 # ─────────────────────────────────────────────
  
 Close SAP Session
-    [Documentation]    Gracefully exits SAP and kills the process.
-    Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
-    Run Keyword And Ignore Error    Send VKey     wnd[0]    0
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Log    SAP session closed and process terminated.    level=INFO
+    [Documentation]    Gracefully exits SAP; only kills the shared SAP
+    ...    processes if no other bot is still active (see
+    ...    sap_coordination.resource).
+    Coordinated SAP Close

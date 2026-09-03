@@ -882,10 +882,11 @@ let _pairs          = [];     // [{invIdx, poIdx, pairNum}]
 // to cross-reference the two tables manually. Short Text is
 // deliberately excluded — OCR wording and SAP's short text rarely
 // match verbatim and were never meant to be an exact-match field.
-// UOM IS included even though PO's column is currently always blank
-// (po_fetch.robot doesn't scrape it yet) -- teammate is adding that
-// separately, and until then a blank-vs-populated Unit is a real,
-// useful thing to flag anyway (see _fieldsMismatch below).
+// UOM IS included -- po_fetch.robot has scraped a real PO unit-of-measure
+// value since 2026-08-07 (see the PO table's Jinja comment above), so this
+// mismatch check is meaningful for any PO fetched since that change; a
+// blank-vs-populated Unit on older, already-fetched records is still a
+// real, useful thing to flag (see _fieldsMismatch below).
 // ============================================================
 const MISMATCH_FIELDS = ['material_code', 'qty', 'unit', 'rate', 'amount', 'hsn_sac'];
 
@@ -1517,7 +1518,13 @@ function confirmMatches() {
     // mismatch between what the invoice says and what SAP's PO says is
     // still plainly visible -- only which one gets STORED has changed.
     // Qty/Rate/Amount are unchanged (still inv-or-po, still user-editable
-    // inputs) -- only these three "ground truth" fields switched.
+    // inputs) -- only these "ground truth" fields switched.
+    //
+    // FIX (2026-09-03, client instruction): UOM joins the PO-only group
+    // above -- always po.unit, never inv.unit, even if the PO's own unit
+    // happens to be blank. Previously this cell read inv.unit || po.unit
+    // (invoice-preferred), which is exactly backwards for a field where
+    // SAP's PO is the ground truth and OCR is the guess.
     tr.innerHTML = `
       <td>
         <div class="row-move-btns">
@@ -1530,7 +1537,7 @@ function confirmMatches() {
       <td class="cell-text" title="${_esc(inv.short_text)}">${_esc(inv.short_text)}</td>
       <td class="cell-text" style="color:#666;" title="${_esc(po.short_text)}">${_esc(po.short_text)}</td>
       <td>${_esc(po.hsn_sac)}</td>
-      <td>${_esc(inv.unit || po.unit)}</td>
+      <td>${_esc(po.unit)}</td>
       <td><input type="text" class="form-input" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
       <td><input type="text" class="form-input matched-dn-qty" value="${_esc(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
       <td><input type="text" class="form-input" value="${_esc(inv.rate || po.rate)}" style="width:80px;"></td>
@@ -1645,7 +1652,7 @@ function _esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-{% if not (history and history.migo_103) %}
+// FIX (2026-09-01, client report -- "MIGO 103 line items don't show matched on revisit"): this whole DOMContentLoaded block used to be wrapped in a Jinja if/endif that only kept the block in the page when history.migo_103 was falsy -- so on any already-posted record the block was stripped out of the HTML ENTIRELY, and the loadMatchedPairsFromDb() call below (added 2026-08-31, guarded by the MIGO_103_HAS_ITEMS_IN_DB runtime check) never even ran, since that flag can only be true in exactly the render pass where this whole block used to be omitted. The runtime check below already does the right thing (load-from-DB branch vs. live auto-pairing branch), so the server-side gate was redundant and actively broke the posted-record case -- removed.
 // v22: auto-matching on page load.
 // - Exactly 1 invoice line + 1 PO line: there is only one possible
 //   pairing, so no risk in matching it automatically -- pair the two rows
@@ -1702,7 +1709,6 @@ document.addEventListener('DOMContentLoaded', function() {
     autoPair(true);
   }
 });
-{% endif %}
 
 
 

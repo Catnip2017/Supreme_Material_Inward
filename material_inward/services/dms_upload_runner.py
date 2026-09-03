@@ -1,14 +1,25 @@
 """
 services/dms_upload_runner.py — Scheduled trigger for dms_upload.robot.
 
-Run by Windows Task Scheduler on its own interval (e.g. every 15-30 min --
-not tied to any single Gate In event). Staging (consolidate + sidecar,
-dms_status='staged') now happens immediately after each Gate In posts (see
-rf_queue_worker.py._process_gate_in(), v16) rather than in a nightly batch,
-so this script's own docstring previously describing a fixed "stage at
-9:30pm, upload at 10pm" nightly relationship is stale -- dms_scheduler.py
-is now only a defensive fallback (see its own updated docstring) that
-should normally find zero records. This script just needs to run
+RUN CADENCE (updated 2026-09-03): run_dms_upload() now runs on an HOURLY
+cadence from an in-process scheduler started by app.py at Flask startup --
+see start_dms_hourly_scheduler() near the bottom of this file. It no
+longer needs to be scheduled via Windows Task Scheduler at all (Task
+Scheduler's only remaining job on this machine, per client confirmation,
+is dms_scheduler.py's separate NIGHTLY defensive fallback -- a different
+script, a different failure mode -- see that module's own docstring).
+Every automatic per-Gate-In/per-PO-Fetch trigger (the old
+trigger_dms_upload_for() call sites in rf_queue_worker.py) has also been
+removed -- staging (consolidate + sidecar, dms_status='staged') still
+happens immediately after each Gate In posts, same as before, but the
+actual upload batch now only runs on the hourly cadence, plus on-demand
+via the existing manual /api/dms_upload/retry/<id> endpoint. This script's
+own `python dms_upload_runner.py` entry point at the bottom still works
+unchanged, for a manual one-off run if ever needed.
+
+Staging (consolidate + sidecar, dms_status='staged') happens immediately
+after each Gate In posts (see rf_queue_worker.py._process_gate_in(),
+v16) rather than in a nightly batch. This script just needs to run
 frequently enough, independently, to sweep up whatever's accumulated in
 DMS_STAGING_FOLDER since its last run -- how fresh the DMS-hosted copies
 and their sharing links are is entirely a function of how often this is
@@ -23,19 +34,12 @@ services/dms_links_import.py's import in the same process -- the DB is
 never more stale than the upload cadence itself; there's no second
 schedule to keep in sync separately.
 
-Two safety measures added on top of the basic "run the robot" flow:
+One safety measure remains on top of the basic "run the robot" flow
+(a second one — pre-emptively waiting for any other automation to finish
+before starting — was REMOVED 2026-09-03 per client instruction; see the
+note above _batch_lock below for why):
 
-  1. Desktop-lock coordination — dms_upload.robot drives a real native
-     Windows file-open dialog (via file_dialog.py/pywinauto) and an Edge
-     browser, both of which need real desktop/window focus. If a SAP robot
-     (Gate In / MIGO / MIRO / etc.) happens to still be running at trigger
-     time, colliding on the same desktop would corrupt both runs. Before
-     starting, this script waits for services.robot_lock's lock file to be
-     clear (regardless of which script holds it — not just "password_reset"
-     as robot_lock.py's own cross-app logic does), then holds the lock itself
-     for the duration of the upload run.
-
-  2. Staged-only quarantine — dms_upload.robot's native "select all files in
+  1. Staged-only quarantine — dms_upload.robot's native "select all files in
      folder" step (via the Windows Open dialog) uploads literally every PDF
      physically sitting in DMS_STAGING_FOLDER at that moment, with no
      awareness of database state. If a MIGO 103 completes between the 9:30
@@ -78,7 +82,7 @@ from database.db_operations import (
     get_staged_dms_records, set_dms_status, get_history_details_by_id
 )
 from database.connection import init_pool
-from services.robot_lock import acquire_robot_lock, release_robot_lock, is_robot_locked
+from services.robot_lock import acquire_robot_lock, release_robot_lock
 from services.dms_links_import import run_dms_links_import
 from config.logger import get_logger
 
@@ -89,38 +93,41 @@ logger = get_logger(__name__)
 
 TIMEOUT_SECONDS = 1800  # 30 min — bulk upload of a whole folder can take a while
 
-# How long to wait for a SAP robot that's already running to finish before
-# giving up and skipping this run entirely (better than colliding on desktop).
-_DESKTOP_WAIT_MAX_SECONDS = 600   # 10 min
-_DESKTOP_WAIT_POLL_SECONDS = 15
-
 HOLD_SUBDIR = "_not_yet_staged"  # under DMS_STAGING_FOLDER — temp quarantine
 
+# MULTI-BOT FIX (2026-09-03): moved up from next to trigger_dms_upload_for()
+# (further below) so run_dms_upload() itself can guard with it -- see that
+# function's docstring. Used to only be acquired by trigger_dms_upload_for()'s
+# own wrapper, which meant a caller that invoked run_dms_upload() directly
+# (the new hourly scheduler, and the __main__ entry point) bypassed it
+# entirely -- two such calls overlapping would both list/move the same
+# DMS_STAGING_FOLDER at once. Non-reentrant (plain threading.Lock), so it is
+# only ever acquired in exactly one place now (run_dms_upload() itself) --
+# never nested.
+_batch_lock = threading.Lock()
 
-def _wait_for_desktop_free() -> bool:
-    """
-    Wait for robot_lock's lock file to be clear, regardless of holder.
-    Unlike robot_lock.acquire_robot_lock() (which only yields to a holder
-    named "password_reset"), this waits for ANY in-progress automation —
-    needed because dms_upload_runner runs as its own OS process outside the
-    RF queue's single worker thread, so it's the one new source of
-    same-desktop concurrency this app didn't have before.
-    """
-    if not is_robot_locked():
-        return True
-    logger.warning("[DMS Upload] Desktop lock held by another automation — waiting...")
-    start = time.time()
-    while is_robot_locked():
-        elapsed = time.time() - start
-        if elapsed >= _DESKTOP_WAIT_MAX_SECONDS:
-            logger.error(
-                f"[DMS Upload] Desktop still locked after {_DESKTOP_WAIT_MAX_SECONDS}s — "
-                "skipping this run rather than risking a collision."
-            )
-            return False
-        time.sleep(_DESKTOP_WAIT_POLL_SECONDS)
-    logger.info("[DMS Upload] Desktop free — proceeding.")
-    return True
+# REMOVED (2026-09-03, client instruction): a _wait_for_desktop_free()
+# pre-check used to sit here, waiting for services.robot_lock's lock file
+# to be completely clear (regardless of holder) before starting, since
+# this script drives a real native Windows file-open dialog and an Edge
+# browser that need real desktop focus. Removed because it was checking
+# the wrong thing since this session's robot_lock.py rewrite: that lock is
+# now a shared refcount that MULTIPLE Material-Inward bots are meant to
+# hold at once (the whole point of the multi-bot concurrency work), so
+# "is_robot_locked()" only ever meant "at least one bot of any kind is
+# currently running somewhere" -- it was pointlessly delaying every hourly
+# DMS run (up to 10 minutes) any time an unrelated SAP job happened to be
+# in flight for a completely different user, with no real desktop-collision
+# protection to show for it. acquire_robot_lock()/release_robot_lock()
+# below (around the actual subprocess run) are unchanged -- this only
+# removed the "wait before even starting" step.
+#
+# Genuinely still possible (accepted per client decision): if a bot like
+# ZGRN print or MIRO happens to need real native/keyboard focus at the
+# exact same moment this script's own file dialog or browser is on
+# screen, the two could interfere with each other. Both windows are
+# brief and this overlap is rare in practice; the client has chosen to
+# accept it rather than keep the wait.
 
 
 def _quarantine_unstaged_files(staged_records: list) -> list:
@@ -182,6 +189,30 @@ def _restore_quarantined_files(moved: list) -> None:
 
 
 def run_dms_upload() -> None:
+    """Runs the full staged-files batch upload against DMS_STAGING_FOLDER.
+
+    Safe to call from anywhere -- the hourly scheduler, the manual retry
+    endpoint (via trigger_dms_upload_for), or a direct `python
+    dms_upload_runner.py` run -- because this self-guards with
+    _batch_lock: a caller that finds a run already in progress just
+    returns immediately rather than starting a second one that would list
+    /move the same folder at the same time. Nothing is lost either way --
+    the run already in progress (or the next call, hourly at the latest)
+    picks up anything currently staged."""
+    if not _batch_lock.acquire(blocking=False):
+        logger.info(
+            "[DMS Upload] Batch already running elsewhere — skipping this "
+            "call (the run already in progress will pick up anything "
+            "currently staged)."
+        )
+        return
+    try:
+        _run_dms_upload_locked()
+    finally:
+        _batch_lock.release()
+
+
+def _run_dms_upload_locked() -> None:
     logger.info("DMS upload trigger started")
 
     staged_records = get_staged_dms_records()
@@ -192,9 +223,6 @@ def run_dms_upload() -> None:
     script_path = os.path.join(config.RF_SCRIPTS_PATH, "dms_upload.robot")
     if not os.path.exists(script_path):
         logger.error(f"dms_upload.robot not found at {script_path}")
-        return
-
-    if not _wait_for_desktop_free():
         return
 
     quarantined = _quarantine_unstaged_files(staged_records)
@@ -299,11 +327,9 @@ def run_dms_upload() -> None:
 # Windows "Choose File" dialog (file_dialog.py) that a browser's own
 # upload button triggers — that's a real OS-level dialog outside the page
 # DOM, unreachable by Selenium, so it still needs real desktop/keyboard
-# focus for the few seconds it's open. _wait_for_desktop_free() below
-# already exists to handle exactly that handoff (it predates this change —
-# written for back when this ran as an independent Task Scheduler process,
-# before v18 temporarily folded it into the RF queue) and is unaffected by
-# this change: run_dms_upload() still calls it before touching anything.
+# focus for the few seconds it's open. A pre-check used to wait here for
+# that handoff -- REMOVED 2026-09-03 per client instruction, see the note
+# above _batch_lock further up this file for why.
 #
 # What IS new here: run_dms_upload() processes the WHOLE staging folder in
 # one batch (not scoped to one history_id), so two concurrent triggers
@@ -317,9 +343,6 @@ def run_dms_upload() -> None:
 # dms_scheduler.py's own defensive periodic sweep.
 # ============================================================
 
-_batch_lock = threading.Lock()
-
-
 def trigger_dms_upload_for(history_id: int) -> None:
     """
     Fire-and-forget: starts run_dms_upload() on its own background thread
@@ -327,14 +350,14 @@ def trigger_dms_upload_for(history_id: int) -> None:
     returns immediately. Does not go through rf_queue — no job_id, no
     polling; the outcome is only in the logs and in this record's own
     dms_status, same as it always was for the Task-Scheduler-driven path.
+
+    MULTI-BOT FIX (2026-09-03): no longer does its own _batch_lock
+    acquire/release here -- run_dms_upload() now self-guards with that
+    same lock (see its docstring), so every caller gets the same
+    never-overlap guarantee automatically without each one having to
+    remember to apply it.
     """
     def _run():
-        if not _batch_lock.acquire(blocking=False):
-            logger.info(
-                f"[DMS Upload] Batch already running — history_id={history_id}'s "
-                "staged file will be picked up by that run (or the next trigger)."
-            )
-            return
         try:
             run_dms_upload()
         except Exception as e:
@@ -342,8 +365,6 @@ def trigger_dms_upload_for(history_id: int) -> None:
                 f"[DMS Upload] Batch run crashed (triggered by history_id={history_id}): {e}",
                 exc_info=True
             )
-        finally:
-            _batch_lock.release()
 
         # Report this specific record's outcome — matches what
         # rf_queue_worker.py's old _process_dms_upload() used to log.
@@ -363,6 +384,63 @@ def trigger_dms_upload_for(history_id: int) -> None:
             )
 
     threading.Thread(target=_run, daemon=True, name=f"DMSUpload-{history_id}").start()
+
+
+# ============================================================
+# IN-PROCESS HOURLY SCHEDULER (ADDED 2026-09-03)
+#
+# Replaces the per-event trigger above (every Gate In / PO Fetch
+# completion used to call trigger_dms_upload_for() -- see rf_queue_worker.py,
+# where those 3 call sites are now removed) with a single hourly cadence
+# running inside the main Flask app itself, instead of a separate Windows
+# Task Scheduler entry.
+#
+# Why this is safe and correct: run_dms_upload() already processes the
+# WHOLE staging folder as one idempotent batch (skips anything not
+# genuinely staged, skips files already uploaded) -- that design predates
+# this change and was built for exactly this kind of periodic sweep, it
+# just didn't have anything calling it on an hourly cadence on its own.
+# Client confirmation (2026-09-03): Windows Task Scheduler was originally
+# meant only for dms_scheduler.py's separate NIGHTLY defensive fallback
+# (catching files that somehow never got staged at all -- a different
+# failure mode, see that module's own docstring) -- not for this upload
+# step. dms_scheduler.py is completely untouched by this change and keeps
+# running on its own existing nightly schedule.
+#
+# Started once at app startup (see app.py, same pattern as
+# rf_queue_worker.start_worker()) -- a daemon thread with its own sleep
+# loop, living for the process lifetime. Deliberately a fixed delay AFTER
+# each run finishes (not a wall-clock "every :00" cron) so two runs can
+# never overlap even if one happens to take a while -- matches
+# _batch_lock's existing non-overlap guarantee for the per-event trigger
+# path, just simpler since there's only ever one caller now.
+# ============================================================
+
+_DMS_HOURLY_INTERVAL_SECONDS = 60 * 60  # 1 hour, per client instruction
+_DMS_INITIAL_DELAY_SECONDS = 120        # let the app finish starting up first
+
+
+def _dms_hourly_loop() -> None:
+    logger.info(
+        f"[DMS Upload] Hourly in-process scheduler started — first run in "
+        f"{_DMS_INITIAL_DELAY_SECONDS}s, then every "
+        f"{_DMS_HOURLY_INTERVAL_SECONDS // 60} min after each run completes."
+    )
+    time.sleep(_DMS_INITIAL_DELAY_SECONDS)
+    while True:
+        try:
+            run_dms_upload()
+        except Exception as e:
+            logger.error(f"[DMS Upload] Hourly run crashed: {e}", exc_info=True)
+        time.sleep(_DMS_HOURLY_INTERVAL_SECONDS)
+
+
+def start_dms_hourly_scheduler() -> threading.Thread:
+    """Call once at app startup (see app.py). Returns the daemon thread."""
+    thread = threading.Thread(target=_dms_hourly_loop, daemon=True, name="DMSHourlyScheduler")
+    thread.start()
+    logger.info("DMS hourly upload scheduler thread started.")
+    return thread
 
 
 if __name__ == "__main__":

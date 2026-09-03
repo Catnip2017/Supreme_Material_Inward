@@ -28,7 +28,7 @@ Suite Teardown    Close Browser
 Library    Collections
 
 *** Variables ***
-${URL}        https://srv203-092.spl.co.in/CVWeb/cvLgn
+${URL}        https://srv203-092.spl.com/CVWeb/cvLgn
 ${BROWSER}    edge
 ${USERNAME}   ${EMPTY}
 ${PASSWORD}   ${EMPTY}

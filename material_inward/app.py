@@ -41,7 +41,7 @@ from database.db_operations import (
     set_approval_status, set_hold_status,
     set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
     set_dms_status, set_po_flow_type,
-    get_dms_document_link
+    get_dms_document_link, set_silent_hours_created
 )
 from database.scenario_operations import (
     get_history_extras, set_goods_delivery_mode, set_ewb_exemption_reasons,
@@ -85,6 +85,7 @@ from database.admin_operations import (
 )
 from services.extract import process_document
 from services.rf_queue_worker import start_worker
+from services.dms_upload_runner import start_dms_hourly_scheduler
 from services.mail_service import send_approval_notification
 from services.credential_cache import (
     store_session_credential, get_session_credential,
@@ -128,6 +129,13 @@ with app.app_context():
         logger.critical(f"DB pool failed: {e}")
 
 _rf_worker = start_worker()  # noqa: F841
+
+# ADDED (2026-09-03): DMS upload now runs on its own hourly in-process
+# cadence instead of Windows Task Scheduler -- see
+# dms_upload_runner.py's module docstring / start_dms_hourly_scheduler()
+# for the full reasoning. dms_scheduler.py's separate nightly defensive
+# fallback is untouched and keeps running via Task Scheduler as before.
+_dms_hourly_scheduler = start_dms_hourly_scheduler()  # noqa: F841
 
 _intake_method = config.INTAKE_METHOD
 if _intake_method == "folder":
@@ -510,7 +518,17 @@ def _check_step_allowed(history: dict, step: str) -> tuple:
         # here) is removed. GST Verification is now a fully independent,
         # on-demand tab; it can be run before, during, or after Gate In
         # and has no bearing on whether Gate In is allowed.
-        if (history.get("approval_status") or "pending") != "approved":
+        #
+        # UPDATED (2026-08-31, Silent Hours feature): a record saved via
+        # the Silent Hours walk-in entry point (silent_hours_entry=1 --
+        # schema_migration_v28.sql, set by save_gatein_silent_hours()) is
+        # exempt from this approval gate entirely -- that's the whole
+        # point of Silent Hours: Gate Security posts Gate In first, with
+        # the truck's paperwork physically on hand, and it gets uploaded/
+        # OCR'd/approved later during business hours. Every other guard in
+        # this function (duplicate-post above, MIGO 103 reversal) still
+        # applies unconditionally regardless of this flag.
+        if not history.get("silent_hours_entry") and (history.get("approval_status") or "pending") != "approved":
             return False, "Documents pending verification & approval."
     elif step == "migo_103":
         if not history.get("gate_in"):
@@ -1954,25 +1972,16 @@ def api_upload_missing_document(history_id, doctype):
 # WORKFLOW ENDPOINTS — Gate In / MIGO 103 / MIGO 105 / MIRO
 # ============================================================
 
-@app.route("/save_gatein", methods=["POST"])
-@api_login_required
-def save_gatein():
-    blocked = _require_role_edit("gate_in")
-    if blocked:
-        return blocked
-    data = request.get_json(silent=True) or {}
-    history_id = data.get("history_id")
-    if not history_id:
-        return jsonify({"success": False, "error": "Missing history_id"}), 400
-
-    history = get_history_by_id(history_id)
-    if not history:
-        return jsonify({"success": False, "error": "Record not found"}), 404
-
-    allowed, reason = _check_step_allowed(history, "gate_in")
-    if not allowed:
-        return jsonify({"success": False, "error": reason}), 400
-
+def _execute_gate_in_post(history_id, data):
+    """
+    Shared validation + upsert + SAP-enqueue tail for a Gate In posting.
+    Used by both the normal /save_gatein flow and the new Silent Hours
+    /api/post_gatein_silent_hours flow (2026-08-31) -- pulled out of
+    /save_gatein unchanged so the well-tested normal path keeps behaving
+    exactly as before. Callers must already have loaded `history`, run
+    _check_step_allowed(history, "gate_in"), and (for the Silent Hours
+    caller) confirmed the ownership check first.
+    """
     # v17.1: server-side mirror of validateGateIn() in gate_in.html --
     # see _validate_required_fields()'s docstring for why this was added.
     po_flow_type = (data.get("po_flow_type") or "truck_with_po").strip()
@@ -2039,6 +2048,175 @@ def save_gatein():
     if not job_id:
         return jsonify({"success": False, "error": "Gate In already processing."}), 409
     return jsonify({"success": True, "job_id": job_id, "poll_url": f"/api/queue_status/{job_id}"})
+
+
+@app.route("/save_gatein", methods=["POST"])
+@api_login_required
+def save_gatein():
+    blocked = _require_role_edit("gate_in")
+    if blocked:
+        return blocked
+    data = request.get_json(silent=True) or {}
+    history_id = data.get("history_id")
+    if not history_id:
+        return jsonify({"success": False, "error": "Missing history_id"}), 400
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+
+    allowed, reason = _check_step_allowed(history, "gate_in")
+    if not allowed:
+        return jsonify({"success": False, "error": reason}), 400
+
+    return _execute_gate_in_post(history_id, data)
+
+
+# ============================================================
+# SILENT HOURS GATE-IN (client request, 2026-08-31)
+#
+# Outside business hours (weekdays after 17:00 IST, or any time on
+# Saturday/Sunday -- config.Config.is_silent_hours()), Gate Security can
+# post a Gate In directly, without the record having gone through
+# Documents -> OCR -> Extracted Data approval first. The truck's actual
+# paperwork is physically on hand and gets uploaded/OCR'd later, during
+# business hours, same as any other record from that point on.
+#
+# History ID is only ever consumed once the guard actually clicks Save
+# (save_gatein_silent_hours() below) -- there is no earlier "reserve a
+# blank record" step, so a walk-in the guard never gets around to
+# starting never shows up as a stray row (see schema_migration_v28.sql).
+#
+# Save and Post are two separate buttons (client-specified) so a guard
+# can save a partially-filled form and come back to it, then Post once
+# it's complete -- normally moments apart, done by the same person, which
+# is why Post enforces that the same guard who Saved is the one Posting.
+# ============================================================
+
+@app.route("/silent_hours_gate_in")
+@login_required
+def silent_hours_gate_in():
+    """Silent Hours walk-in entry point. No history record exists yet at
+    this point -- same zero-DB-write pattern as /new_entry above; the
+    record is only created once Save is actually clicked (see
+    save_gatein_silent_hours() below)."""
+    if not _is_superadmin() and "gate_in" not in _current_roles():
+        return redirect(url_for("history_page"))
+    if not config.is_silent_hours():
+        return redirect(url_for("history_page"))
+    session.pop("current_history_id", None)
+    return render_template(
+        "index.html",
+        history=None, history_id=None,
+        invoice_data=None, ewaybill_data=None, lr_data=None,
+        gatein_data=None, migo_data=None, miro_data=None,
+        po_data=None,
+        resolved_vendor_name=None, gatein_category_default=None,
+        username=session.get("username"),
+        role=session.get("role"),
+        from_history=False,
+        can_view_documents=False,
+        can_view_extracted=False,
+        can_view_gst=False,
+        can_view_gate_in=True,
+        can_view_migo_103=False,
+        can_view_migo_105=False,
+        can_view_miro=False,
+        default_tab_id="gateIn",
+        silent_hours_mode=True,
+    )
+
+
+@app.route("/api/save_gatein_silent_hours", methods=["POST"])
+@api_login_required
+def save_gatein_silent_hours():
+    """Silent Hours Save. First call for a given walk-in (no history_id in
+    the payload) creates the history record and marks it
+    silent_hours_entry=1 -- the ONLY place a Silent-Hours-originated
+    history ID gets consumed. A second Save call for the same record just
+    re-upserts the gate_in_entries row, same as the normal /save_gatein
+    autosave path -- no full-field validation here, a guard should be
+    able to save a partially-filled form and come back to it later (see
+    /api/post_gatein_silent_hours for the full-validation Post step).
+    Ownership: only the guard who originally saved this record (or a
+    SuperAdmin) may re-save it."""
+    blocked = _require_role_edit("gate_in")
+    if blocked:
+        return blocked
+    data = request.get_json(silent=True) or {}
+    history_id = data.get("history_id")
+    username = session.get("username")
+
+    if history_id:
+        history = get_history_by_id(history_id)
+        if not history:
+            return jsonify({"success": False, "error": "Record not found"}), 404
+        if not history.get("silent_hours_entry"):
+            return jsonify({"success": False, "error": "This record was not started as a Silent Hours entry."}), 400
+        if not _is_superadmin() and history.get("silent_hours_created_by") != username:
+            return jsonify({"success": False, "error": "Only the guard who started this entry can save it."}), 403
+    else:
+        # FIX (2026-09-01): explicitly mark ocr_status as "not_uploaded"
+        # instead of leaving it at the history table's DEFAULT 'success'.
+        # That default is fine for the normal Documents-first flow (OCR
+        # runs moments after the record is created and immediately
+        # overwrites it), but a Silent Hours walk-in has zero documents
+        # at creation time and may sit that way for hours -- left at
+        # 'success', it silently looked like OCR had already completed
+        # on a document that was never uploaded, which permanently hid
+        # these records from the "Awaiting Documents (Silent Hours)"
+        # status/filter (see database/db_operations.py's get_history_list
+        # CASE, which keys off ocr_status != 'success').
+        history_id = create_history_record(ocr_status="not_uploaded")
+        if not history_id:
+            return jsonify({"success": False, "error": "Failed to create record."}), 500
+        set_silent_hours_created(history_id, username)
+
+    upsert_gatein_entry(history_id, data)
+    po_flow_type = (data.get("po_flow_type") or "truck_with_po").strip()
+    valid_flow_types = {
+        "truck_with_po",   "truck_without_po",
+        "hand_with_po",    "hand_without_po",
+        "courier_with_po", "courier_without_po",
+    }
+    if po_flow_type in valid_flow_types:
+        set_po_flow_type(history_id, po_flow_type)
+
+    return jsonify({"success": True, "history_id": history_id})
+
+
+@app.route("/api/post_gatein_silent_hours", methods=["POST"])
+@api_login_required
+def post_gatein_silent_hours():
+    """Silent Hours Post to SAP -- the second of the two buttons Silent
+    Hours mode uses in place of the normal single Submit. Requires the
+    record to already exist and be saved (save_gatein_silent_hours()
+    above) with silent_hours_entry=1, requires the same guard who saved
+    it, then runs the exact same full-field validation + SAP-enqueue path
+    as the normal Gate In Submit button (_execute_gate_in_post(), shared
+    with /save_gatein)."""
+    blocked = _require_role_edit("gate_in")
+    if blocked:
+        return blocked
+    data = request.get_json(silent=True) or {}
+    history_id = data.get("history_id")
+    if not history_id:
+        return jsonify({"success": False, "error": "Missing history_id -- save the entry first."}), 400
+
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if not history.get("silent_hours_entry"):
+        return jsonify({"success": False, "error": "This record was not started as a Silent Hours entry."}), 400
+    username = session.get("username")
+    if not _is_superadmin() and history.get("silent_hours_created_by") != username:
+        return jsonify({"success": False, "error": "Only the guard who started this entry can post it to SAP."}), 403
+
+    allowed, reason = _check_step_allowed(history, "gate_in")
+    if not allowed:
+        return jsonify({"success": False, "error": reason}), 400
+
+    return _execute_gate_in_post(history_id, data)
 
 
 @app.route("/api/run_migo_103", methods=["POST"])

@@ -1,19 +1,44 @@
 *** Settings ***
-Documentation     ZGRN Print — GR Certificate Printing to PDF
-...               Logs into SAP, navigates to ZGRN, enters MIGO/material
-...               document number, executes, then prints to PDF via
-...               "Microsoft Print to PDF" and saves with a specific
-...               filename in a specific folder.
+Documentation     ZGRN Print — GR Certificate download via "Download for MIP"
 ...
-...               ${PRINT_TWICE} controls how many times the print/save
-...               cycle runs:
-...                 - FALSE (default): print/save ONCE, filename suffix _GRN
-...                 - TRUE: print/save TWICE, first _GRN, second _CGD
+...               FLOW:
+...                 1. Login to SAP, run ZGRN.
+...                 2. Enter Material Document Number (MIGO number).
+...                 3. Tick "Capital Goods Declaration"  -> wnd[0]/usr/chkLS_CGD
+...                 4. Tick "Download for MIP"           -> wnd[0]/usr/chkLC_MIP
+...                    (this makes SAP write the PDF(s) directly into
+...                     C:\zgrn_print\ -- no "Print:" popup and no native
+...                     "Save Print Output As" dialog is involved at all)
+...                 5. Press Execute (F8).
+...                 6. If a "file already exists / overwrite?" popup comes up
+...                    -- either a SAP GUI popup or a native Windows
+...                    "Confirm Save As" box -- it is answered YES so the
+...                    existing file gets replaced. If no such popup appears,
+...                    that is normal (file did not exist yet), not an error.
+...                 7. Log success and report a JSON result with the list of
+...                    files that appeared in the download folder.
 ...
-...               Output folder: value of ${OUTPUT_FOLDER} below (passed in
-...               by rf_runner.py as config.ZGRN_PRINT_FOLDER at runtime --
-...               the path here is just the module-level default).
-...               Filename format: <MIGO_NUMBER>_<DDMMYYYY>_<GRN|CGD>.pdf
+...               Download folder is fixed by the ZGRN program itself:
+...               C:\zgrn_print\
+...
+...               REWRITTEN 2026-09-03: replaces the old Print-to-PDF +
+...               native Save-dialog flow (pdf_helper.py's type_save_filename)
+...               with SAP's own direct-to-folder download -- removes almost
+...               all of the native-dialog fragility that flow had. The one
+...               native dialog left is the same-day-reprint overwrite
+...               confirmation, handled by Handle Overwrite Popup below.
+...
+...               MULTI-BOT COORDINATION (also added 2026-09-03): login/close
+...               now go through sap_coordination.resource (shared by every
+...               SAP bot) instead of an unconditional taskkill on the way
+...               in and out -- reuses an already-open SAP Logon process if
+...               another bot has one open, registers in the shared
+...               refcount, and only fully closes SAP if this was the last
+...               bot still active. See that resource file for the full
+...               reasoning. This is the only part of this script not
+...               carried over as provided -- the print/download logic below
+...               (Print ZGRN Document, Handle Overwrite Popup, etc.) is
+...               otherwise unchanged.
 Library           SapGuiLibrary
 Library           Process
 Library           OperatingSystem
@@ -21,29 +46,30 @@ Library           String
 Library           DateTime
 Library           Collections
 Library           pdf_helper.py
- 
+Resource          sap_coordination.resource
+
 *** Variables ***
-${MIGO_NUMBER}      ${EMPTY}
-${PRINT_TWICE}      TRUE
-${OUTPUT_FOLDER}    C:\\Users\\ctn_suresh\\Agents\\zgrn_print
+${MIGO_NUMBER}      5000062737
+${MIP_FOLDER}       C:\\zgrn_print
 ${session}          ${NONE}
- 
- 
+
+
 *** Test Cases ***
 Execute ZGRN Print
     [Setup]    Initialize SAP And Login
-    Print ZGRN Document
+    ${result}=    Print ZGRN Document
+    Log To Console    RESULT:ZGRN_PRINT_JSON:${result}
     Sleep    3s
     [Teardown]    Close SAP Session
- 
- 
+
+
 *** Keywords ***
 Initialize SAP And Login
     Evaluate    __import__('dotenv').load_dotenv(__import__('os').getenv('DOTENV_PATH', '.env'), override=True)
     ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
     ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
-    ${SAP_LOGON}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
- 
+    ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
+
     ${USER_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_USER_OVERRIDE', '')
     ${PASS_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_PASS_OVERRIDE', '')
     IF    $USER_OVERRIDE != '' and $PASS_OVERRIDE != ''
@@ -55,154 +81,142 @@ Initialize SAP And Login
         ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
         Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
     END
- 
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Sleep    2s
- 
-    Start Process   ${SAP_LOGON}
-    Sleep    5s
- 
-    Connect To Session
-    Open Connection    ${CONN_NAME}
- 
-    Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
-    Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
-    Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
-    Click Element     wnd[0]/tbar[0]/btn[0]
- 
-    Sleep    3s
-   ${multi}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
-   IF    ${multi}
-       Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
-       Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
-       Sleep    2s
-    END
- 
-    Sleep    5s
-    Dismiss Any Popup
- 
-    Maximize Window    0
-    Connect To Sap Session
- 
- 
-Connect To Sap Session
-    # Same pattern as migo bots -- raw SAP GUI Scripting session handle,
-    # needed for direct session.findById(...) calls that SapGuiLibrary's
-    # own keywords don't cover.
-    ${sess}=    Evaluate
-    ...    __import__('win32com.client').client.GetObject('SAPGUI').GetScriptingEngine.Children(0).Children(0)
-    Set Suite Variable    ${session}    ${sess}
- 
- 
+
+    # MULTI-BOT FIX (2026-09-03): used to unconditionally taskkill
+    # saplogon.exe here, every run -- see sap_coordination.resource for the
+    # full reasoning on why that's no longer safe under concurrency (this
+    # would kill any other bot's open window the instant a ZGRN job
+    # starts, regardless of who it belonged to).
+    Coordinated SAP Login    ${CLIENT}    ${CONN_NAME}    ${LOGON_PATH}    ${USERNAME}    ${PASSWORD}
+
+
 Print ZGRN Document
-    # --- Build filenames up front ---
-    ${today}=    Get Current Date    result_format=%d%m%Y
-    ${filename_grn}=    Set Variable    ${OUTPUT_FOLDER}\\${MIGO_NUMBER}_${today}_GRN
-    ${filename_cgd}=    Set Variable    ${OUTPUT_FOLDER}\\${MIGO_NUMBER}_${today}_CGD
-    Log To Console    Target filenames: GRN="${filename_grn}.pdf"${SPACE}|${SPACE}CGD="${filename_cgd}.pdf" (PRINT_TWICE=${PRINT_TWICE})
- 
+    [Documentation]    Enters the MIGO number, ticks Capital Goods
+    ...    Declaration + Download for MIP, executes, handles any
+    ...    overwrite popup, and reports what landed in C:\zgrn_print\.
+
+    # --- Snapshot of the folder BEFORE, so we can tell what SAP wrote ---
+    ${files_before}=    Files In MIP Folder
+
     # --- Step 1: Navigate to ZGRN ---
-    Run Transaction        zgrn
+    Run Transaction    zgrn
     Send VKey     0
     Sleep    2s
     Dismiss Any Popup
- 
-    # --- Step 2: Enter MIGO number, check box, execute ---
-    Select Checkbox    wnd[0]/usr/chkLS_CGD
-    Input Text          wnd[0]/usr/txtLS_MBLNR-LOW    ${MIGO_NUMBER}
-    Set Focus            wnd[0]/usr/chkLS_CGD
-    Click Element         wnd[0]/tbar[1]/btn[8]
+
+    # --- Step 2: MIGO number + both checkboxes ---
+    Input Text    wnd[0]/usr/txtLS_MBLNR-LOW    ${MIGO_NUMBER}
+
+    # Capital Goods Declaration
+    Evaluate    setattr($session.findById('wnd[0]/usr/chkLS_CGD'), 'selected', True)
+    Log To Console    Ticked: Capital Goods Declaration (chkLS_CGD)
+
+    # Download for MIP -- makes SAP save the PDFs into C:\zgrn_print\
+    Evaluate    setattr($session.findById('wnd[0]/usr/chkLC_MIP'), 'selected', True)
+    Log To Console    Ticked: Download for MIP (chkLC_MIP)
+
+    Set Focus    wnd[0]/usr/chkLC_MIP
+    Sleep    1s
+
+    # --- Step 3: Execute (F8) ---
+    Log To Console    Executing ZGRN for MIGO ${MIGO_NUMBER} ...
+    Click Element    wnd[0]/tbar[1]/btn[8]
+    Sleep    3s
+
+    # --- Step 4: Handle "already exists / overwrite?" popup, if any ---
+    ${overwrite_status}=    Handle Overwrite Popup
+    Log To Console    Overwrite-popup handling: ${overwrite_status}
+
+    # Give SAP a moment to finish writing the file(s)
     Sleep    3s
     Dismiss Any Popup
- 
-    # --- Step 3: First print/save (always happens) -- suffix _GRN ---
-    Select Print Popup Printer And Print
-    type_save_filename    ${filename_grn}
-    Sleep    2s
- 
-    ${print_twice_upper}=    Convert To Upper Case    ${PRINT_TWICE}
-    IF    '${print_twice_upper}' == 'TRUE'
-        # FIX (2026-08-27): this used to call Select Print Popup Printer And
-        # Print unconditionally for the CGD copy, assuming a second SAP print
-        # popup always appears once chkLS_CGD is ticked. Not true -- a
-        # material document that isn't actually a Capital Goods item in SAP
-        # never raises a second popup, and the old code blindly evaluated
-        # $session.findById('wnd[1]/...') anyway, which threw and crashed
-        # the whole script. That got reported to the user as a generic
-        # "hit an error, retry" failure -- but retrying a doc with no CGD
-        # can never succeed. Now checks for the popup first (with one retry
-        # for timing) and, if it genuinely never shows up, logs a status
-        # marker instead of crashing so rf_runner.py can treat "no CGD for
-        # this doc" as a normal, successful GRN-only outcome.
-        ${cgd_popup_found}=    Run Keyword And Return Status
-        ...    Element Should Be Present    wnd[1]/usr/cmbSSFPP-RQPOSNAME
-        IF    not ${cgd_popup_found}
-            Sleep    2s
-            ${cgd_popup_found}=    Run Keyword And Return Status
-            ...    Element Should Be Present    wnd[1]/usr/cmbSSFPP-RQPOSNAME
-        END
-        IF    ${cgd_popup_found}
-            # --- Step 4: Second print/save -- suffix _CGD ---
-            Select Print Popup Printer And Print
-            type_save_filename    ${filename_cgd}
-            Sleep    2s
-            Log To Console    RESULT:ZGRN_CGD_STATUS:PRINTED
-            Log To Console    Printed TWICE: ${filename_grn}.pdf and ${filename_cgd}.pdf
-        ELSE
-            Log To Console    RESULT:ZGRN_CGD_STATUS:NOT_APPLICABLE
-            Log To Console    No second print popup appeared -- this document has no Capital Goods Declaration in SAP. Printed only: ${filename_grn}.pdf
-        END
+
+    # --- Step 5: Verify what was actually written ---
+    ${files_after}=    Files In MIP Folder
+    ${new_files}=    Evaluate    [f for f in $files_after if f not in $files_before]
+    ${new_count}=    Get Length    ${new_files}
+
+    IF    ${new_count} > 0
+        Log To Console    RESULT:ZGRN_PRINT_STATUS:SUCCESS
+        Log To Console    Successfully created the print for MIGO ${MIGO_NUMBER}. New file(s) in ${MIP_FOLDER}: ${new_files}
+        ${result}=    Evaluate
+        ...    __import__('json').dumps({'executed': True, 'downloaded': True, 'overwrite_popup': $overwrite_status, 'folder': $MIP_FOLDER, 'new_files': $new_files, 'message': 'Successfully created the print -- ZGRN executed and file(s) downloaded for MIP.'})
+    ELSE IF    '${overwrite_status}' == 'OVERWRITE_CONFIRMED'
+        # File name already existed and we said Yes -- so it was replaced
+        # in place, hence no "new" file name shows up in the diff.
+        Log To Console    RESULT:ZGRN_PRINT_STATUS:SUCCESS_OVERWRITTEN
+        Log To Console    Successfully created the print for MIGO ${MIGO_NUMBER} (existing file in ${MIP_FOLDER} was overwritten).
+        ${result}=    Evaluate
+        ...    __import__('json').dumps({'executed': True, 'downloaded': True, 'overwrite_popup': $overwrite_status, 'folder': $MIP_FOLDER, 'new_files': [], 'message': 'Successfully created the print -- existing file was overwritten.'})
     ELSE
-        Log To Console    Printed ONCE: ${filename_grn}.pdf
+        Log To Console    RESULT:ZGRN_PRINT_STATUS:NO_FILE_CREATED
+        Log To Console    ZGRN executed but no new file appeared in ${MIP_FOLDER} -- check the MIGO number / document output in SAP.
+        ${result}=    Evaluate
+        ...    __import__('json').dumps({'executed': True, 'downloaded': False, 'overwrite_popup': $overwrite_status, 'folder': $MIP_FOLDER, 'new_files': [], 'message': 'ZGRN executed but no file was produced in the MIP folder.'})
     END
- 
- 
-Select Print Popup Printer And Print
-    # Waits for the print-options popup, selects "Microsoft Print to PDF",
-    # and presses the print button -- this triggers the native Windows
-    # Save dialog that type_save_filename then handles.
-    ${popup_found}=    Run Keyword And Return Status
-    ...    Element Should Be Present    wnd[1]/usr/cmbSSFPP-RQPOSNAME
-    IF    not ${popup_found}
-        Sleep    2s
-    END
-    Evaluate    setattr($session.findById('wnd[1]/usr/cmbSSFPP-RQPOSNAME'), 'key', 'Microsoft Print to PDF')
-    Evaluate    $session.findById('wnd[1]/usr/cmbSSFPP-RQPOSNAME').setFocus()
-    Sleep    0.5s
-    Evaluate    $session.findById('wnd[1]/tbar[0]/btn[86]').press()
-    Sleep    1s
- 
- 
-Dismiss Any Popup
-    ${popup1}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
-    IF    ${popup1}
-        Run Keyword And Ignore Error    Click Element    wnd[1]/tbar[0]/btn[0]
+    RETURN    ${result}
+
+
+Files In MIP Folder
+    [Documentation]    Returns the list of file names currently in the MIP
+    ...    download folder. Never fails -- returns an empty list if the
+    ...    folder does not exist yet.
+    ${files}=    Evaluate
+    ...    __import__('os').listdir($MIP_FOLDER) if __import__('os').path.isdir($MIP_FOLDER) else []
+    RETURN    ${files}
+
+
+Handle Overwrite Popup
+    [Documentation]    After Execute, SAP may warn that the file already
+    ...    exists in C:\zgrn_print\ and ask whether to replace it. That can
+    ...    surface either as a SAP GUI popup (wnd[1]) or as a native Windows
+    ...    "Confirm Save As" box. Both are answered YES. Returns a status
+    ...    string; never fails, because no popup at all is the normal case
+    ...    when the file did not previously exist.
+    FOR    ${i}    IN RANGE    8
+        # --- SAP GUI popup ---
+        ${sap_popup}=    Run Keyword And Return Status
+        ...    Element Should Be Present    wnd[1]
+        IF    ${sap_popup}
+            ${text}=    Run Keyword And Ignore Error
+            ...    Evaluate    $session.findById('wnd[1]').text
+            Log To Console    SAP popup detected: ${text}
+            # Standard SAP question popup: OPTION1 = Yes, OPTION2 = No
+            ${yes}=    Run Keyword And Return Status
+            ...    Evaluate    $session.findById('wnd[1]/usr/btnSPOP-OPTION1').press()
+            IF    not ${yes}
+                # Fallback: green tick / Continue on the popup toolbar
+                Run Keyword And Ignore Error
+                ...    Evaluate    $session.findById('wnd[1]/tbar[0]/btn[0]').press()
+            END
+            Sleep    2s
+            RETURN    OVERWRITE_CONFIRMED
+
+        END
+
+        # --- Native Windows "Confirm Save As" box ---
+        ${native}=    Evaluate
+        ...    __import__('win32gui').FindWindow(None, 'Confirm Save As') != 0
+        IF    ${native}
+            Log To Console    Native "Confirm Save As" dialog detected -- clicking Yes.
+            ${status}=    Confirm Native Overwrite
+            Sleep    2s
+            RETURN    ${status}
+        END
+
         Sleep    1s
     END
-    ${popup2}=    Run Keyword And Return Status    Element Should Be Present    wnd[2]
-    IF    ${popup2}
-        Run Keyword And Ignore Error    Click Element    wnd[2]/tbar[0]/btn[0]
-        Sleep    1s
-    END
- 
- 
+    RETURN    NO_POPUP
+
+
+Confirm Native Overwrite
+    [Documentation]    Clicks the "Yes" button on the native Windows
+    ...    "Confirm Save As" dialog. The default-focused button on that box
+    ...    is "No", so a blind Enter keystroke is NOT safe -- the button is
+    ...    located by caption and clicked explicitly.
+    ${status}=    Evaluate    __import__('pdf_helper').confirm_overwrite_dialog()
+    RETURN    ${status}
+
+
 Close SAP Session
-    # FIX (2026-08-21): this only ever killed saplogon.exe -- never
-    # saplgpad.exe or sapgui.exe, which is what's actually running/showing
-    # the SAP GUI window once a session is logged in. Same gap already
-    # fixed in po_fetch.robot/migo_103.robot -- /nex + saplogon.exe alone
-    # can leave the actual GUI window/process sitting there untouched.
-    Log    Closing SAP session...
-    Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
-    Run Keyword And Ignore Error    Send VKey     wnd[0]    0
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplgpad.exe    /T
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    sapgui.exe    /T
-    Log    SAP session closed and process terminated.    level=INFO
- 
- 
+    Coordinated SAP Close

@@ -29,23 +29,56 @@ def create_history_record(
     lr_number: Optional[str] = None,
     po_number: Optional[str] = None,
     mail_subject: Optional[str] = None,
-    mail_received_at: Optional[datetime] = None
+    mail_received_at: Optional[datetime] = None,
+    ocr_status: Optional[str] = None
 ) -> Optional[int]:
-    sql = """
-        INSERT INTO history (
+    """
+    ocr_status: left as None (default) for every existing caller, so the
+    INSERT omits that column entirely and the table's own DEFAULT 'success'
+    applies exactly as before -- zero behavior change for the normal
+    Documents -> OCR flow, where set_ocr_status() overwrites it correctly
+    within the same request anyway.
+
+    FIX (Silent Hours walk-in bug, 2026-09-01): app.py's
+    save_gatein_silent_hours() creates a record with NO document at all --
+    that DEFAULT 'success' was silently making a walk-in with zero uploaded
+    documents look exactly like a record whose OCR had already succeeded,
+    which permanently hid it from the "Awaiting Documents (Silent Hours)"
+    status/filter (db_operations.get_history_list's CASE checks
+    ocr_status != 'success'). Passing ocr_status="not_uploaded" from that
+    one call site now records reality -- no document has been processed --
+    without touching any other caller's behavior.
+    """
+    if ocr_status is not None:
+        sql = """
+            INSERT INTO history (
+                invoice_number, ewaybill_number, lr_number,
+                po_number, mail_subject, mail_received_at, ocr_status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """
+        params = (
+            invoice_number, ewaybill_number, lr_number,
+            po_number, mail_subject, mail_received_at, ocr_status
+        )
+    else:
+        sql = """
+            INSERT INTO history (
+                invoice_number, ewaybill_number, lr_number,
+                po_number, mail_subject, mail_received_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """
+        params = (
             invoice_number, ewaybill_number, lr_number,
             po_number, mail_subject, mail_received_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-    """
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (
-                    invoice_number, ewaybill_number, lr_number,
-                    po_number, mail_subject, mail_received_at
-                ))
+                cur.execute(sql, params)
                 history_id = cur.fetchone()[0]
                 logger.info(f"Created history record ID: {history_id}")
                 return history_id
@@ -656,6 +689,21 @@ def get_history_search(
         conditions.append("h.gate_in = 1 AND h.miro = 0")
     elif status == "completed":
         conditions.append("h.miro = 1")
+    elif status == "awaiting_documents_silent_hours":
+        # ADDED (2026-08-31, Silent Hours feature): mirrors the CASE
+        # branch below -- a Silent-Hours-originated record whose Gate In
+        # is posted but that hasn't yet cleared any of the three
+        # "documents are now in the normal pipeline" conditions (client-
+        # specified: MIGO 103 done, OR OCR extraction done, OR GST
+        # Verified). MIGO 103 done is covered implicitly by h.migo_103 = 0
+        # here, matching the CASE's branch ordering (a migo_103=1 record
+        # already falls into the "MIGO 103 Done" bucket before it would
+        # ever reach this one).
+        conditions.append("""
+            h.silent_hours_entry = 1 AND h.gate_in = 1 AND h.migo_103 = 0
+            AND COALESCE(h.ocr_status, '') != 'success'
+            AND COALESCE(h.gst_check, 0) != 1
+        """)
 
     # FIX (2026-08-13): History page's date filter is date-only now (no
     # time-of-day picker -- see templates/history.html), so date_from/
@@ -719,6 +767,14 @@ def get_history_search(
             -- the 'MIGO 103 Reversed' status CASE branch below.
             h.migo_103_reversed, h.migo_103_reversal_doc_number,
             h.migo_103_reversed_at,
+            -- ADDED (2026-08-31, Silent Hours feature, schema_migration_v28.sql):
+            -- silent_hours_entry is a permanent origin marker shown as a
+            -- small badge/dot on every such row in History (see
+            -- templates/history.html), regardless of how far the record
+            -- has since progressed -- unlike `status` below, which is
+            -- transient and clears once documents catch up.
+            h.silent_hours_entry, h.silent_hours_created_by,
+            h.silent_hours_created_at,
             -- who actually submitted the Gate In (gate_in_entries.submitted_by,
             -- see schema_migration_v16.sql) -- shown in the History page's
             -- existing collapsible step-times panel, not a new always-visible
@@ -745,6 +801,19 @@ def get_history_search(
                 WHEN h.miro = 1     THEN 'MIRO Done'
                 WHEN h.migo_105 = 1 THEN 'MIGO 105 Done'
                 WHEN h.migo_103 = 1 THEN 'MIGO 103 Done'
+                -- ADDED (2026-08-31, Silent Hours feature): a Silent-Hours
+                -- walk-in's Gate In can be posted before Documents/OCR/
+                -- Extracted-Data-approval ever ran (that's the entire
+                -- point -- see app.py's _check_step_allowed silent_hours_entry
+                -- bypass). Surface that as its own status until it clears
+                -- via any ONE of the three client-specified conditions:
+                -- MIGO 103 done (already handled by the branch above, since
+                -- CASE stops at the first match), OCR extraction done, or
+                -- GST Verified.
+                WHEN h.silent_hours_entry = 1 AND h.gate_in = 1
+                     AND COALESCE(h.ocr_status, '') != 'success'
+                     AND COALESCE(h.gst_check, 0) != 1
+                    THEN 'Awaiting Documents (Silent Hours)'
                 WHEN h.gate_in = 1  THEN 'Gate In Done'
                 WHEN h.approval_status = 'approved' THEN 'Data Approved'
                 ELSE 'Pending'
@@ -854,6 +923,34 @@ def set_dms_status(
                 return True
     except Exception as e:
         logger.error(f"set_dms_status failed for history_id={history_id}: {e}")
+        return False
+
+
+def set_silent_hours_created(history_id: int, username: str) -> bool:
+    """
+    Marks a history record as a Silent Hours Gate-In walk-in entry
+    (client request, 2026-08-31 -- see schema_migration_v28.sql). Called
+    exactly once, the first time a given walk-in is Saved (app.py's
+    save_gatein_silent_hours()) -- this is a PERMANENT origin marker, never
+    cleared afterward, regardless of how far the record later progresses.
+    silent_hours_created_by is who saved it, used by app.py to enforce
+    "only that same guard may later Post it to SAP".
+    """
+    sql = """
+        UPDATE history
+        SET silent_hours_entry = 1,
+            silent_hours_created_by = %s,
+            silent_hours_created_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (username, history_id))
+                logger.info(f"Record {history_id} marked as Silent Hours entry by {username}")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to mark record {history_id} as Silent Hours entry: {e}")
         return False
 
 

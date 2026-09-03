@@ -83,6 +83,27 @@
 .xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
 .xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
 .xd-table .field-error-msg { margin-top:2px; }
+
+/* ADDED (2026-09-03): searchable Storage Location box -- same "proximity
+   search" pattern as Gate In's vendor name lookup (gate_in.html), adapted
+   here since this template is self-contained (no shared CSS/JS). */
+.sloc-search-wrap { position:relative; }
+.sloc-dropdown {
+  display:none; position:absolute; top:100%; left:0; right:0; z-index:50;
+  background:#fff; border:1px solid #dfe3e8; border-radius:6px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.15); margin-top:2px; max-height:260px;
+  overflow-y:auto;
+}
+.sloc-dropdown.show { display:block; }
+.sloc-dropdown-count {
+  padding:6px 10px; font-size:11px; color:#888; background:#f7f9fc;
+  border-bottom:1px solid #f0f4ff; position:sticky; top:0;
+}
+.sloc-item { padding:7px 10px; cursor:pointer; font-size:12.5px; border-bottom:1px solid #f5f5f5; }
+.sloc-item:hover { background:#f0f4ff; }
+.sloc-item .sloc-code { font-weight:700; color:#1e5ca8; }
+.sloc-item .sloc-desc { color:#555; margin-left:6px; }
+.sloc-empty { padding:10px; color:#999; font-size:12px; text-align:center; }
 </style>
 
 <div class="content-card">
@@ -161,9 +182,14 @@
       <tr>
         <td class="xd-attr-lbl">Storage Location <span class="req">*</span></td>
         <td class="xd-attr-val">
-          <select id="storageLocation105" class="form-select" {% if step_locked %}disabled{% endif %}>
-            <option value="">Loading...</option>
-          </select>
+          <div class="sloc-search-wrap">
+            <input type="text" id="storageLocation105Search" class="form-input"
+                   placeholder="Loading..." autocomplete="off"
+                   oninput="_filterStorageLocation105()" onfocus="_openStorageLocationDropdown105()"
+                   {% if step_locked %}disabled{% endif %}>
+            <input type="hidden" id="storageLocation105">
+            <div class="sloc-dropdown" id="storageLocationDropdown105"></div>
+          </div>
           <div class="field-error-msg" id="err_storageLocation105">Required</div>
         </td>
       </tr>
@@ -244,27 +270,105 @@ const STEP_LOCKS_ENABLED_105 = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false
 
 const HISTORY_ID_105 = {{ history_id|tojson }};
 const MIGO_105_LOCKED = false;
-// Load storage locations
+// ============================================================
+// Storage Location search (ADDED 2026-09-03) -- same "proximity" search
+// pattern as Gate In's vendor name lookup (see gate_in.html's
+// _filterVendorDropdown): the full active list is fetched once, then
+// filtered entirely client-side as the user types -- a row matches if
+// every whitespace-separated word typed is a substring of ITS code OR
+// its description, in any order (e.g. "main ware" matches "SL01 — Main
+// Warehouse"). storageLocation105 (hidden input) keeps holding the real
+// code value exactly as before -- every other place in this file that
+// reads it (_doSubmitMigo105, validateMigo105 below) is unchanged.
+// storageLocation105Search is the new visible box the user types into.
+// ============================================================
+let _storageLocations105 = [];
+
 (function() {
-  const saved = "{{ (migo_data.get('migo_105_storage_loc') if migo_data else '') or '' }}";
+  const savedCode = "{{ (migo_data.get('migo_105_storage_loc') if migo_data else '') or '' }}";
+  const searchEl  = document.getElementById('storageLocation105Search');
   fetch('/api/storage_locations')
     .then(r => r.json())
     .then(data => {
-      const sel = document.getElementById('storageLocation105');
-      sel.innerHTML = '<option value="">Select Storage Location</option>';
-      (data.data || []).forEach(loc => {
-        const opt = document.createElement('option');
-        opt.value = loc.code;
-        opt.textContent = loc.code + ' — ' + loc.description;
-        if (loc.code === saved) opt.selected = true;
-        sel.appendChild(opt);
-      });
+      _storageLocations105 = data.data || [];
+      const saved = _storageLocations105.find(l => l.code === savedCode);
+      if (saved) {
+        document.getElementById('storageLocation105').value = saved.code;
+        if (searchEl) searchEl.value = saved.code + ' — ' + saved.description;
+      }
+      if (searchEl) searchEl.placeholder = '🔎 Search storage location (code or name)...';
     })
     .catch(() => {
-      document.getElementById('storageLocation105').innerHTML =
-        '<option value="">Error loading — refresh page</option>';
+      if (searchEl) searchEl.placeholder = 'Error loading — refresh page';
     });
 })();
+
+function _openStorageLocationDropdown105() {
+  const el = document.getElementById('storageLocation105Search');
+  if (el && el.disabled) return;
+  _renderStorageLocationItems105(_storageLocations105);
+  document.getElementById('storageLocationDropdown105').classList.add('show');
+}
+
+function _filterStorageLocation105() {
+  const raw = (document.getElementById('storageLocation105Search').value || '').trim().toLowerCase();
+  const filtered = !raw ? _storageLocations105 : _storageLocations105.filter(function(loc) {
+    const haystack = [loc.code, loc.description].filter(Boolean).join(' ').toLowerCase();
+    return raw.split(/\s+/).every(w => haystack.indexOf(w) !== -1);
+  });
+  _renderStorageLocationItems105(filtered);
+  document.getElementById('storageLocationDropdown105').classList.add('show');
+  // Typing again means whatever was picked before no longer necessarily
+  // matches what's shown -- clear the real (hidden) value so an edited,
+  // half-typed search can never silently submit a stale/mismatched code.
+  // Re-picking from the list (via _selectStorageLocation105) sets it
+  // again; validateMigo105() below correctly blocks submit until then.
+  document.getElementById('storageLocation105').value = '';
+}
+
+function _renderStorageLocationItems105(list) {
+  const dd = document.getElementById('storageLocationDropdown105');
+  if (!dd) return;
+  if (list.length === 0) {
+    dd.innerHTML = '<div class="sloc-empty">No matches.</div>';
+    return;
+  }
+  dd.innerHTML = '<div class="sloc-dropdown-count">' + list.length + ' location(s)</div>' +
+    list.map((loc, i) =>
+      '<div class="sloc-item" data-idx="' + i + '">' +
+        '<span class="sloc-code">' + _escSloc105(loc.code) + '</span>' +
+        '<span class="sloc-desc">' + _escSloc105(loc.description || '') + '</span>' +
+      '</div>'
+    ).join('');
+  Array.from(dd.querySelectorAll('.sloc-item')).forEach((el, i) => {
+    el.onclick = function() { _selectStorageLocation105(list[i]); };
+  });
+}
+
+function _selectStorageLocation105(loc) {
+  document.getElementById('storageLocation105').value = loc.code;
+  const searchEl = document.getElementById('storageLocation105Search');
+  if (searchEl) {
+    searchEl.value = loc.code + ' — ' + loc.description;
+    searchEl.classList.remove('field-error');
+  }
+  document.getElementById('storageLocationDropdown105').classList.remove('show');
+  const err = document.getElementById('err_storageLocation105');
+  if (err) err.classList.remove('show');
+}
+
+function _escSloc105(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+document.addEventListener('click', function(e) {
+  const wrap = document.querySelector('.sloc-search-wrap');
+  const dd = document.getElementById('storageLocationDropdown105');
+  if (wrap && dd && !wrap.contains(e.target)) {
+    dd.classList.remove('show');
+  }
+});
 
 // Load matched pairs from MIGO 103
 function loadMigo105Items() {
@@ -323,11 +427,12 @@ function _collectBatchesByLine() {
 
 function validateMigo105() {
   const sel = document.getElementById('storageLocation105');
+  const searchEl = document.getElementById('storageLocation105Search');
   const err = document.getElementById('err_storageLocation105');
-  sel.classList.remove('field-error');
+  if (searchEl) searchEl.classList.remove('field-error');
   err.classList.remove('show');
   if (!sel.value) {
-    sel.classList.add('field-error');
+    if (searchEl) searchEl.classList.add('field-error');
     err.classList.add('show');
     return false;
   }

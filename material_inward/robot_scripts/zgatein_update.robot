@@ -3,16 +3,26 @@ Documentation     Update Gate In entry with PO — TCODE: zgatein_update
 ...               Enter the gate in sequence number and execute.
 ...               SAP automatically links the PO from MIGO 103 to the gate in record.
 ...               Variables: GATE_IN_NUMBER, HISTORY_ID
+...
+...               MULTI-BOT COORDINATION (2026-09-03): login/close now go
+...               through sap_coordination.resource instead of an
+...               unconditional taskkill on the way in and out. Also fixes
+...               the grid-cell-write step below, which used to re-derive
+...               its own session via the buggy Children(0).Children(0)
+...               index lookup instead of the correctly-bound ${session}.
+...               See sap_coordination.resource for the full reasoning.
 Library           SapGuiLibrary
 Library           Process
 Library           OperatingSystem
 Library           String
+Resource          sap_coordination.resource
 
 *** Variables ***
 ${GATE_IN_NUMBER}       ${EMPTY}
 ${PO_NUMBER}            ${EMPTY}
 ${TCODE}                zgatein_update
 ${HISTORY_ID}           ${EMPTY}
+${session}              ${NONE}
 
 *** Test Cases ***
 Update Gate In PO
@@ -51,31 +61,6 @@ Initialize SAP And Login
     Should Not Be Empty    ${USERNAME}      SAP username not resolved (no override, and SAP_USERNAME not found in .env)
     Should Not Be Empty    ${PASSWORD}      SAP password not resolved (no override, and SAP_PASSWORD not found in .env)
 
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
-    Sleep    2s
-
-    Start Process    ${LOGON_PATH}
-    Sleep    5s
-
-    Connect To Session
-    Open Connection    ${CONN_NAME}
-
-    Input Text        wnd[0]/usr/txtRSYST-MANDT    ${CLIENT}
-    Input Text        wnd[0]/usr/txtRSYST-BNAME    ${USERNAME}
-    Input Password    wnd[0]/usr/pwdRSYST-BCODE    ${PASSWORD}
-    Click Element     wnd[0]/tbar[0]/btn[0]
-    Sleep    3s
-
-    ${login_popup}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
-    IF    ${login_popup}
-        Run Keyword And Ignore Error    Select Radio Button    wnd[1]/usr/radMULTI_LOGON_OPT1
-        Run Keyword And Ignore Error    Click Element          wnd[1]/tbar[0]/btn[0]
-        Sleep    2s
-    END
-
-    Sleep    5s
-    Dismiss Any Popup
-    Maximize Window    0
 
 Enter Gate In And Execute
     # Navigate to tcode
@@ -95,8 +80,10 @@ Enter Gate In And Execute
       # Click Execute
     SapGuiLibrary.Click Element     wnd[0]/tbar[1]/btn[8]
     Sleep     3s
-     ${session}=    Evaluate
-    ...    __import__('win32com.client', fromlist=['client']).GetObject("SAPGUI").GetScriptingEngine.Children(0).Children(0)
+    # MULTI-BOT FIX (2026-09-03): used to re-derive its own session here via
+    # Children(0).Children(0) (always the FIRST SAP connection/session on
+    # the machine) instead of reusing ${session}, which Coordinated SAP
+    # Login already bound correctly to THIS bot's own connection.
     ${ns}=    Create Dictionary    session=${session}
     # Get the grid object
     ${grid}=    Evaluate
@@ -217,9 +204,4 @@ Dismiss Any Popup
     END
 
 Close SAP Session
-    Run Keyword And Ignore Error    Input Text    wnd[0]/tbar[0]/okcd    /nex
-    Run Keyword And Ignore Error    Send VKey     wnd[0]    0
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe
-    Sleep    2s
-    Run Keyword And Ignore Error    Run Process    taskkill    /F    /IM    saplogon.exe    /T
+    Coordinated SAP Close
