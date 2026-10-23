@@ -1,0 +1,180 @@
+*** Settings ***
+Documentation     PO List Fetch — SAP ME2N Open POs by Vendor Name
+...               Enters vendor name with wildcard, executes search,
+...               applies "not equal to 0" filter on open qty column,
+...               reads PO numbers from results grid.
+...               Outputs: RESULT:PO_LIST:<json_array>
+Library           SapGuiLibrary
+Library           Process
+Library           OperatingSystem
+Library           String
+Library           Collections
+Library           ${CURDIR}/sap_bot_coordination.py
+
+*** Variables ***
+${VENDOR_NAME}    ${EMPTY}
+
+${ME2N_VENDOR_FIELD}    wnd[0]/usr/txtP_NAME1
+${RESULT_TABLE}         wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell/shellcont[1]/shell
+${COL_PO_NUMBER}        EBELN
+${COL_OPEN_QTY}         WTLIEF
+ 
+
+*** Test Cases ***
+Execute PO List Fetch
+    [Setup]    Initialize SAP And Login
+    ${po_list}=    FetchOpenPOs
+    Log To Console    RESULT:PO_LIST:${po_list}
+    ${po_str}=    Evaluate    str($po_list)
+    Log To Console    RESULT:PO_LIST:${po_str}
+    Sleep    2s
+    [Teardown]    Close SAP Session
+
+
+*** Keywords ***
+Initialize SAP And Login
+    Evaluate    __import__('dotenv').load_dotenv()
+    ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
+    ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
+    ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
+
+    # v16: PO List Fetch (ME2N open-PO lookup by vendor) ALWAYS uses the
+    # shared spl_rpa .env account -- same reasoning as po_fetch.robot:
+    # read-only lookup, not an attributable posting, never checks for a
+    # per-user SAP_USER_OVERRIDE/SAP_PASS_OVERRIDE credential. See .env.
+    ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
+    ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
+
+    # FIX (2026-09-03): this used to unconditionally taskkill saplogon.exe
+    # on the way IN, then unconditionally kill it again on the way OUT
+    # (see the old Close SAP Session below) -- with NO refcount check at
+    # all, unlike every other bot in this codebase. That meant this bot
+    # could silently kill any OTHER bot's live SAP window just by
+    # starting, and again just by finishing -- the exact class of
+    # collision that crashed a live ZGRN run earlier. It also still had
+    # the destructive OPT1 ("end this user's other logons") multi-logon
+    # choice below, despite a comment above claiming it had already been
+    # switched to OPT2 -- it had not. This bot was missed when every
+    # other SAP bot was migrated onto the shared coordination library;
+    # fixed here the same way.
+    ${session}=    Coordinated SAP Login    ${LOGON_PATH}    ${CONN_NAME}    ${CLIENT}    ${USERNAME}    ${PASSWORD}
+    Set Suite Variable    ${session}
+
+
+FetchOpenPOs
+    ${clean_name}=    Sanitize Vendor Name    ${VENDOR_NAME}
+    Log To Console    Searching ME2N for vendor: *${clean_name}*
+
+    Log To Console    SAP LOGIN DONE — starting ME2N
+    Run Transaction    ME2N
+    Sleep    3s
+    Dismiss Any Popup
+
+    Input Text    ${ME2N_VENDOR_FIELD}    *${clean_name}*
+    Sleep    0.5s
+
+    Click Element    wnd[0]/tbar[1]/btn[8]
+    Sleep    4s
+    Dismiss Any Popup
+
+    # Apply filter: exclude rows where WTLIEF = 0
+    Apply Open Qty Filter
+    Dismiss Any Popup
+
+    # Now just read all PO numbers — SAP has already filtered
+    ${total_rows}=    Get Row Count    ${RESULT_TABLE}
+    Log To Console    Total rows after filter: ${total_rows}
+
+    @{po_list}=    Create List
+
+    FOR    ${row_idx}    IN RANGE    0    ${total_rows}
+        ${po_res}=    Run Keyword And Ignore Error
+        ...    Get Cell Value    ${RESULT_TABLE}    ${row_idx}    ${COL_PO_NUMBER}
+
+        IF    '${po_res}[0]' == 'FAIL'    BREAK
+
+        ${po_number}=    Clean SAP Value    ${po_res}[1]
+        IF    '${po_number}' == ''    CONTINUE
+
+        ${item_json}=    Set Variable    {"po_number":"${po_number}"}
+        Append To List    ${po_list}    ${item_json}
+    END
+
+    ${count}=    Get Length    ${po_list}
+    Log To Console    Found ${count} open PO(s) for: *${clean_name}*
+
+    IF    ${count} == 0
+        RETURN    []
+    END
+
+    ${joined}=    Evaluate    ",".join($po_list)
+    RETURN    [${joined}]
+
+Apply Open Qty Filter
+    # Select the WTLIEF column via Send Vkey to set focus, then use toolbar filter button
+    # Mirror VB: selectColumn WTLIEF, then tbar[1]/btn[29]
+    Select Table Column    ${RESULT_TABLE}    ${COL_OPEN_QTY}
+    Sleep    0.5s
+
+    # Toolbar filter button (btn[29]) — not context menu
+    Click Element    wnd[0]/tbar[1]/btn[29]
+    Sleep    1s
+
+    # Open value selection for WTLIEF field
+    Click Element    wnd[1]/usr/ssub%_SUBSCREEN_FREESEL:SAPLSSEL:1105/btn%_%%DYN002_%_APP_%-VALU_PUSH
+    Sleep    1s
+
+    # Switch to exclusion/not-equal tab
+    Click Element    wnd[2]/usr/tabsTAB_STRIP/tabpNOINT
+    Sleep    0.5s
+
+    # Enter 0 in both low and high fields
+    Input Text    wnd[2]/usr/tabsTAB_STRIP/tabpNOINT/ssubSCREEN_HEADER:SAPLALDB:3040/tblSAPLALDBINTERVAL_E/txtRSCSEL_255-ILOW_E[1,0]    0
+    Input Text    wnd[2]/usr/tabsTAB_STRIP/tabpNOINT/ssubSCREEN_HEADER:SAPLALDB:3040/tblSAPLALDBINTERVAL_E/txtRSCSEL_255-IHIGH_E[2,0]    0
+
+    # Execute (F8 on wnd[2]) then confirm (Enter on wnd[1])
+    Click Element    wnd[2]/tbar[0]/btn[8]
+    Sleep    0.5s
+    Click Element    wnd[1]/tbar[0]/btn[0]
+    Sleep    1.5s
+
+Sanitize Vendor Name
+    [Arguments]    ${raw_name}
+    ${clean}=    Strip String    ${raw_name}
+    ${clean}=    Replace String    ${clean}    *    ${EMPTY}
+    ${clean}=    Replace String    ${clean}    ?    ${EMPTY}
+    ${clean}=    Replace String    ${clean}    /    ${SPACE}
+    ${clean}=    Replace String Using Regexp    ${clean}    ${SPACE}+    ${SPACE}
+    ${clean}=    Strip String    ${clean}
+    RETURN    ${clean}
+
+
+Clean SAP Value
+    [Arguments]    ${raw}
+    ${val}=    Convert To String    ${raw}
+    ${val}=    Strip String    ${val}
+    ${val}=    Replace String    ${val}    "    '
+    ${val}=    Replace String    ${val}    \\    /
+    # Use Python evaluation to avoid RF variable substitution bug
+    ${is_none}=    Evaluate    str('${val}') in ('None', 'null', '')
+    IF    ${is_none}
+        RETURN    ${EMPTY}
+    END
+    RETURN    ${val}
+
+
+Dismiss Any Popup
+    ${p1}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
+    IF    ${p1}
+        Run Keyword And Ignore Error    Click Element    wnd[1]/tbar[0]/btn[0]
+        Sleep    1s
+    END
+    ${p2}=    Run Keyword And Return Status    Element Should Be Present    wnd[2]
+    IF    ${p2}
+        Run Keyword And Ignore Error    Click Element    wnd[2]/tbar[0]/btn[0]
+        Sleep    1s
+    END
+
+
+Close SAP Session
+    Coordinated Close SAP Session    ${session}

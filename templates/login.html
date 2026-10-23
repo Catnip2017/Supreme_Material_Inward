@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - SPL Document Processing</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .login-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            width: 100%;
+            max-width: 500px;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .login-header {
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            padding: 40px 30px;
+            text-align: center;
+            color: white;
+        }
+
+        .logo-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .logo-icon {
+            width: 60px;
+            height: 60px;
+            background: white;
+            border-radius: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: #1e5ca8;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .logo-text {
+            font-size: 36px;
+            font-weight: 800;
+            letter-spacing: 2px;
+        }
+
+        .login-header h2 {
+            font-size: 22px;
+            font-weight: 600;
+            margin-top: 10px;
+            opacity: 0.95;
+        }
+
+        .login-header p {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+
+        .login-form {
+            padding: 40px 30px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        .input-wrapper i {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #1e5ca8;
+            font-size: 16px;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 14px 15px 14px 45px;
+            border: 2px solid #e1e8ed;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s;
+            outline: none;
+        }
+
+        .form-control:focus {
+            border-color: #1e5ca8;
+            box-shadow: 0 0 0 4px rgba(30, 92, 168, 0.1);
+        }
+
+        .error-message {
+            background: #fee;
+            color: #c33;
+            padding: 12px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: shake 0.5s;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(30, 92, 168, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(30, 92, 168, 0.5);
+        }
+
+        .login-btn:active {
+            transform: translateY(0);
+        }
+
+        .form-footer {
+            text-align: center;
+            margin-top: 25px;
+            padding-top: 25px;
+            border-top: 1px solid #e1e8ed;
+        }
+
+        .form-footer p {
+            font-size: 13px;
+            color: #7f8c8d;
+        }
+
+        .demo-credentials {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 12px;
+            color: #5a6c7d;
+            text-align: left;
+        }
+
+        .demo-credentials .cred-title {
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .demo-credentials .cred-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding: 8px;
+            background: white;
+            border-radius: 5px;
+        }
+
+        .demo-credentials .cred-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .demo-credentials .cred-label {
+            font-weight: 600;
+            color: #1e5ca8;
+        }
+
+        .demo-credentials .cred-value {
+            font-family: 'Courier New', monospace;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        @media (max-width: 480px) {
+            .login-container {
+                border-radius: 0;
+            }
+
+            .login-header {
+                padding: 30px 20px;
+            }
+
+            .login-form {
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <div class="logo-container">
+                <div class="logo-icon" style="background: transparent; box-shadow:none;">
+                   <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:16px;white-space:nowrap;">
+                    <img src="/static/SPL_Logo.png" style="height:50px;width:auto;flex-shrink:0;">
+                    <div style="text-align:left;">
+                        <div style="font-size:18px;font-weight:800;color:white;letter-spacing:0.3px;white-space:nowrap;">Supreme Petrochem Ltd</div>
+                        <div style="font-size:10px;color:rgba(255,255,255,0.75);letter-spacing:1.5px;white-space:nowrap;">GLOBAL SUPPLIER OF STYRENICS</div>
+                    </div>
+                
+                </div>
+                </div>
+            </div>
+            <h2>Material Inward Management</h2>
+            <!-- <p></p> -->
+        </div>
+
+        <form class="login-form" method="POST" action="/login">
+            {% if error %}
+            <div class="error-message">
+                <i class="fas fa-exclamation-circle"></i>
+                <span>{{ error }}</span>
+            </div>
+            {% endif %}
+
+            <div class="form-group">
+                <label for="username">Username</label>
+                <div class="input-wrapper">
+                    <i class="fas fa-user"></i>
+                    <input type="text" 
+                           id="username" 
+                           name="username" 
+                           class="form-control" 
+                           placeholder="Enter your username"
+                           required
+                           autofocus>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <div class="input-wrapper">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" 
+                           id="password" 
+                           name="password" 
+                           class="form-control" 
+                           placeholder="Enter your password"
+                           required>
+                </div>
+            </div>
+
+            <button type="submit" class="login-btn">
+                <i class="fas fa-sign-in-alt"></i>
+                Sign In
+            </button>
+
+            <!-- <div class="form-footer">
+                <div class="demo-credentials">
+                    <div class="cred-title">Demo Login Credentials</div>
+                    
+                    <div class="cred-row">
+                        <span class="cred-label">Admin ID:</span>
+                        <span class="cred-value"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="98f9fcf5f1f6d8fbf9ecf6f1e8b6fbf7f5">[email&#160;protected]</a></span>
+                    </div>
+                    <div class="cred-row">
+                        <span class="cred-label">Admin Password:</span>
+                        <span class="cred-value">admin123</span>
+                    </div>
+                    
+                    <div style="height: 10px;"></div>
+                    
+                    <div class="cred-row">
+                        <span class="cred-label">User ID:</span>
+                        <span class="cred-value"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="aedddbdccbddc6eecdcfdac0c7de80cdc1c3">[email&#160;protected]</a></span>
+                    </div>
+                    <div class="cred-row">
+               -->

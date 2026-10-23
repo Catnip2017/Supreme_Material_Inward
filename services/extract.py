@@ -1,0 +1,1024 @@
+"""
+services/extract.py — WatsonX AI document OCR extraction.
+
+Fixes applied:
+- Field names now use lowercase_underscore keys matching DB columns directly
+- Multi-page support — sends up to 3 pages for better coverage
+- None/null/"N/A"/"-" cleanup after extraction
+- HSN Details non-array handling
+- Stronger prompt instructions for consistent output
+- Model instance cached to avoid re-initialization per call
+- Dates returned in consistent format instruction
+- Amounts returned without currency symbols instruction
+- "rate": The unit rate/price per item as shown in the Rate column of the invoice line item.
+- "unit": The unit of measure for the line item (e.g., pc, Nos, EA, Num, kg).
+- "taxable_value": The line total before tax (rate x quantity, after discount).
+"""
+
+import json
+import base64
+import os
+import re
+import time
+from typing import Optional
+
+from config.config import config
+from config.logger import get_logger
+
+logger = get_logger(__name__)
+
+# WatsonX AI imports
+try:
+    from ibm_watsonx_ai import Credentials
+    from ibm_watsonx_ai.foundation_models import ModelInference
+    WATSONX_AVAILABLE = True
+except ImportError:
+    WATSONX_AVAILABLE = False
+    logger.warning("ibm_watsonx_ai not installed. OCR will return empty data.")
+
+# Cached model instance — initialized once, reused for all calls
+_model_instance = None
+
+# FIX (2026-08-10): retry transient WatsonX network/DNS failures instead of
+# giving up after a single attempt. Confirmed in production: record 200's
+# OCR (UT422_INV.pdf) failed outright with "[Errno 11002] getaddrinfo
+# failed" trying to resolve ml.cloud.ibm.com -- a momentary DNS blip (a
+# manual ping to the same host seconds later resolved fine, 0% packet
+# loss). Previously a single bad lookup permanently failed that document's
+# OCR with no built-in retry -- OCR retries are manual-only (the Extracted
+# Data tab's retry button, keyed off history.ocr_retry_count), so the
+# failure just sat there marked 'failed' until a human happened to notice.
+# Used by both _get_model() (connection setup) and process_document()'s
+# model.chat() call (the actual OCR request) -- either one can hit the
+# same class of transient failure.
+_WATSONX_RETRY_ATTEMPTS = 3
+_WATSONX_RETRY_DELAY_SECONDS = 3
+
+
+def _get_model() -> Optional[object]:
+    """
+    Return cached WatsonX model. Initialize once on first call.
+    Retries up to _WATSONX_RETRY_ATTEMPTS times on failure -- see the FIX
+    note above _WATSONX_RETRY_ATTEMPTS for why.
+    """
+    global _model_instance
+    if _model_instance is not None:
+        return _model_instance
+
+    if not WATSONX_AVAILABLE:
+        return None
+    if not config.WATSONX_API_KEY or not config.WATSONX_PROJECT_ID:
+        logger.error("WatsonX credentials not configured in .env")
+        return None
+
+    for attempt in range(1, _WATSONX_RETRY_ATTEMPTS + 1):
+        try:
+            credentials = Credentials(
+                url=config.WATSONX_URL,
+                api_key=config.WATSONX_API_KEY
+            )
+            _model_instance = ModelInference(
+                model_id=config.WATSONX_MODEL_ID,
+                credentials=credentials,
+                project_id=config.WATSONX_PROJECT_ID,
+                params={"max_tokens": 8000}
+            )
+            logger.info(f"WatsonX model initialized: {config.WATSONX_MODEL_ID}")
+            return _model_instance
+        except Exception as e:
+            if attempt < _WATSONX_RETRY_ATTEMPTS:
+                logger.warning(
+                    f"WatsonX model init failed (attempt {attempt}/"
+                    f"{_WATSONX_RETRY_ATTEMPTS}): {e} -- retrying in "
+                    f"{_WATSONX_RETRY_DELAY_SECONDS}s (likely transient "
+                    "DNS/network)."
+                )
+                time.sleep(_WATSONX_RETRY_DELAY_SECONDS)
+            else:
+                logger.error(
+                    f"Failed to initialize WatsonX model after "
+                    f"{_WATSONX_RETRY_ATTEMPTS} attempts: {e}"
+                )
+    return None
+
+
+def _encode_pages_to_base64(file_path: str, max_pages: int = 10) -> list:
+    """
+    Convert up to max_pages of a PDF to PNG images encoded as base64.
+    Returns list of base64 strings, one per page.
+    Multi-page support ensures fields on page 2+ are captured.
+    Raised from 3 -> 10 pages (per instruction) to cover longer documents;
+    still a bounded cap (not unlimited) as a safety net against an
+    oversized or accidentally-wrong upload driving up OCR call cost/latency.
+
+    ADDED (2026-09-22, client-reported accuracy complaints on "horizontal"
+    / landscape invoices -- e.g. wide multi-column tables like the ARKEMA
+    reference layout, 15+ columns): a landscape page rendered at the same
+    200 DPI as a portrait page comes out wider but no taller, so a dense
+    table has noticeably less pixel width per column than a portrait
+    page's table would get at the same DPI -- plausibly hurting the
+    model's ability to read tightly-packed columns (Freight/Insurance/
+    Discount/Others, etc). Landscape pages only get a modest DPI bump
+    (200 -> 240, +20%) to help with that, kept deliberately small (not
+    300+) so it doesn't meaningfully slow extraction down; portrait pages
+    are completely unaffected. This is a rendering-quality change, not a
+    deterministic fix -- unverified without a live extraction test
+    against a known landscape invoice.
+    """
+    LANDSCAPE_DPI = 240
+    PORTRAIT_DPI = 200
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(file_path)
+        pages_b64 = []
+        for i in range(min(len(doc), max_pages)):
+            page = doc[i]
+            dpi = LANDSCAPE_DPI if page.rect.width > page.rect.height else PORTRAIT_DPI
+            pix = page.get_pixmap(dpi=dpi)
+            png_bytes = pix.tobytes("png")
+            pages_b64.append(base64.standard_b64encode(png_bytes).decode("utf-8"))
+        doc.close()
+        logger.info(f"Encoded {len(pages_b64)} page(s) from {os.path.basename(file_path)}")
+        return pages_b64
+    except ImportError:
+        logger.warning("PyMuPDF not installed — falling back to raw PDF bytes.")
+        try:
+            with open(file_path, "rb") as f:
+                return [base64.standard_b64encode(f.read()).decode("utf-8")]
+        except Exception as e:
+            logger.error(f"Failed to encode PDF {file_path}: {e}")
+            return []
+    except Exception as e:
+        logger.error(f"Failed to convert PDF to images {file_path}: {e}")
+        return []
+
+
+def _clean_value(value) -> str:
+    """
+    Normalize extracted values:
+    - None, null, "None", "null", "N/A", "n/a", "-", "NA", "Not available",
+      "Not found", "Not applicable" → empty string
+    - Strip leading/trailing whitespace
+    - Keep everything else as-is (don't strip currency — that's rf_runner's job)
+    """
+    if value is None:
+        return ""
+    val = str(value).strip()
+    empty_values = {
+        "none", "null", "n/a", "na", "-", "--", "not available",
+        "not found", "not applicable", "unknown", "nil", ""
+    }
+    if val.lower() in empty_values:
+        return ""
+    return val
+
+
+def _clean_extracted(data: dict) -> dict:
+    """
+    Recursively clean all string values in extracted dict.
+    Handles nested dicts and lists (for HSN Details).
+    """
+    if not isinstance(data, dict):
+        return data
+    cleaned = {}
+    for key, value in data.items():
+        if isinstance(value, list):
+            cleaned[key] = [
+                _clean_extracted(item) if isinstance(item, dict)
+                else _clean_value(item)
+                for item in value
+            ]
+        elif isinstance(value, dict):
+            cleaned[key] = _clean_extracted(value)
+        else:
+            cleaned[key] = _clean_value(value)
+    return cleaned
+
+
+def _normalize_date(date_str: str) -> str:
+    """
+    Normalize various date formats to YYYY-MM-DD for HTML date inputs.
+    Handles: 25-Jul-25, 25/07/2025, 25-07-2025, 25.07.2025, 25-Jul-2025 etc.
+    Returns empty string if parsing fails.
+    
+    2-digit year rule: years 00-30 → 2000-2030, years 31-99 → 1931-1999
+    But we clamp to reasonable range: if parsed year < 2020, add 2000.
+    """
+    if not date_str:
+        return ""
+
+    from datetime import datetime
+
+    formats = [
+        "%d-%b-%y",    # 25-Jul-25
+        "%d-%b-%Y",    # 25-Jul-2025
+        "%d/%m/%Y",    # 25/07/2025
+        "%d-%m-%Y",    # 25-07-2025
+        "%d.%m.%Y",    # 25.07.2025
+        "%Y-%m-%d",    # Already correct
+        "%d/%m/%y",    # 25/07/25
+        "%d-%m-%y",    # 25-07-25
+        "%d|%m|%y",    # 25|07|25 (handwritten separator)
+        "%d|%m|%Y",    # 25|07|2025
+        "%b %d, %Y",   # Jul 25, 2025
+        "%d %b %Y",    # 25 Jul 2025
+        "%d %b %y",    # 25 Jul 25
+    ]
+
+    clean = date_str.strip()
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(clean, fmt)
+            # Fix ambiguous 2-digit years
+            # If parsed year looks wrong (before 2020), it's likely a 2-digit year
+            # interpreted as 19xx — add 2000 to correct it
+            if dt.year < 2020:
+                dt = dt.replace(year=dt.year + 2000)
+            # Sanity check — don't return future dates more than 1 year out
+            from datetime import date
+            if dt.year > date.today().year + 1:
+                dt = dt.replace(year=dt.year - 100)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    logger.warning(f"Could not parse date: {date_str}")
+    return date_str
+
+
+def _normalize_dates_in_dict(data: dict, date_fields: list) -> dict:
+    """Normalize specific date fields in a dict to YYYY-MM-DD."""
+    for field in date_fields:
+        if field in data and data[field]:
+            data[field] = _normalize_date(data[field])
+    return data
+
+
+# ============================================================
+# GSTIN OCR-error correction and IRN cleanup (client-requested accuracy
+# improvement for photographed/landscape invoices).
+#
+# Ground rule (explicit client instruction): NEVER blank a value just
+# because it fails a validation check. The Extracted Data tab already has
+# a client-side red-highlight for exactly this case
+# (_validateGstinField()/_checkIrnLength() in extracted_data.html) --
+# their whole job is to tell the reviewer "this needs a second look
+# against the paper document." If this module blanked the value instead,
+# the reviewer would see nothing at all and lose the one clue (whatever
+# OCR did manage to read) that helps them fix it by hand.
+#
+# So these functions only ever REPAIR a value when the fix is
+# deterministic, or strip a redundant label the model echoed back --
+# they never discard a value outright. GSTIN's 15 character positions are
+# fixed by statute (always digit/digit/letter*5/digit*4/letter/alnum/
+# literal-Z/alnum), so a letter sitting where only a digit is possible
+# (or vice versa) is an unambiguous OCR misread, not a guess. If a value
+# still doesn't validate after correction, it's returned unchanged --
+# the client-side check will flag it exactly as before.
+# ============================================================
+
+# All current Indian state/UT GST codes (01-38) plus the two special
+# codes (97 = Other Territory, 99 = Centre/foreign).
+_VALID_GSTIN_STATE_CODES = {f"{i:02d}" for i in range(1, 39)} | {"97", "99"}
+
+
+def _correct_gstin_ocr_errors(gstin: str) -> str:
+    """
+    Fix single-character OCR confusions in a 15-character GSTIN candidate,
+    based on what each fixed position is allowed to contain. Assumes
+    `gstin` is already exactly 15 characters -- callers check length first.
+    """
+    chars = list(gstin)
+    digit_confusions = {'O': '0', 'I': '1', 'L': '1', 'S': '5', 'B': '8', 'G': '6'}
+    alpha_confusions = {'0': 'O', '1': 'I', '8': 'B', '5': 'S', '6': 'G'}
+
+    for i in (0, 1):                      # state code -- must be digits
+        if chars[i] in digit_confusions:
+            chars[i] = digit_confusions[chars[i]]
+    for i in range(2, 7):                 # PAN letters -- must be alpha
+        if chars[i] in alpha_confusions:
+            chars[i] = alpha_confusions[chars[i]]
+    for i in range(7, 11):                # PAN digits -- must be digits
+        if chars[i] in digit_confusions:
+            chars[i] = digit_confusions[chars[i]]
+    if chars[11] in alpha_confusions:      # PAN's last char -- must be alpha
+        chars[11] = alpha_confusions[chars[11]]
+    if chars[13] != 'Z' and chars[13] in {'2', '5', '7', 'S', 'z'}:
+        chars[13] = 'Z'                   # 14th char is always literal "Z"
+
+    return ''.join(chars)
+
+
+def _attempt_gstin_correction(raw: str) -> str:
+    """
+    Try to repair common OCR character confusions in a GSTIN. Returns the
+    corrected value if it becomes structurally valid; otherwise returns
+    the original (only whitespace/hyphen-cleaned) value UNCHANGED -- never
+    blanks it. The existing client-side format+checksum check picks up
+    whatever this function couldn't fix.
+    """
+    if not raw:
+        return raw
+
+    cleaned = re.sub(r'[\s\-]', '', raw.strip().upper())
+    if len(cleaned) != 15:
+        return raw  # wrong length isn't something character-swapping can fix
+
+    corrected = _correct_gstin_ocr_errors(cleaned)
+
+    looks_valid = (
+        corrected[0:2].isdigit() and corrected[0:2] in _VALID_GSTIN_STATE_CODES
+        and corrected[2:7].isalpha()
+        and corrected[7:11].isdigit()
+        and corrected[11].isalpha()
+    )
+    return corrected if looks_valid else raw
+
+
+def _clean_irn(raw: str) -> str:
+    """
+    Strip a redundant "IRN:"/"IRN No:" label or stray whitespace the model
+    sometimes echoes back into the value itself. Never blanks based on
+    length -- the client-side _checkIrnLength() already flags a
+    non-64-character IRN for review, so this only ever tidies the string,
+    it doesn't judge it.
+    """
+    if not raw:
+        return raw
+    cleaned = re.sub(r'(?i)^\s*irn\s*(no\.?)?\s*[:\-]?\s*', '', raw.strip())
+    return re.sub(r'\s+', '', cleaned)
+
+
+def _apply_stock_transfer_routing(extracted: dict) -> dict:
+    """
+    Client-requested routing rule (2026-08): this stock-transfer document
+    family's Delivery Challan and Tax Invoice documents (goods moving
+    between the company's own plants, no real GSTIN-to-GSTIN sale) label
+    their invoice/PO-equivalent fields differently from a normal
+    third-party purchase invoice, but ONLY when "Type of Sale" says
+    STOCK TRANSFER:
+      - Delivery Challan + Stock Transfer: invoice_number <- "GST Challan
+        Sr. No.", po_number <- "Ref No.", irn is ALWAYS forced empty --
+        a Delivery Challan never carries an IRN (client-confirmed, 2026-08).
+      - Tax Invoice + Stock Transfer: invoice_number <- "GST Invoice Sr.
+        No.", po_number <- "Sales Order / STO No." -- a genuine IRN CAN be
+        present here and is left as extracted.
+      - Either document type + Stock Transfer: seller_address <- "Unit
+        from where goods supplied" (client request, 2026-08-18) --
+        Principle Place of Business is the registered/head-office address,
+        not where the goods actually left from, so for this document
+        family the dispatch-location address is the more useful value in
+        the Seller Address field. Applies whenever the field was found,
+        regardless of challan vs. tax invoice.
+
+    Forcing irn="" for the Delivery Challan case is deliberate and happens
+    here (extraction phase) specifically so the frontend never has to
+    reason about it -- no extra client-side logic, and the existing IRN
+    red-highlight check (_checkIrnLength() in extracted_data.html) only
+    fires for a NON-empty value under 64 characters, so an empty IRN on a
+    Delivery Challan already displays clean with zero frontend changes.
+
+    document_title / type_of_sale / gst_invoice_sr_no / gst_challan_sr_no /
+    sales_order_sto_no / ref_no / unit_from_where_goods_supplied are
+    internal-only fields -- never rendered on the Extracted Data tab --
+    used purely to decide this routing. If
+    Type of Sale isn't Stock Transfer (the normal case), extracted is
+    returned untouched and the regular invoice_number/po_number extraction
+    above stands as-is.
+    """
+    type_of_sale = (extracted.get("type_of_sale") or "").upper()
+    if "STOCK TRANSFER" not in type_of_sale:
+        return extracted
+
+    # Applies to either document type in this family -- "Unit from where
+    # goods supplied" is the real dispatch address, distinct from the
+    # registered "Principle Place of Business" address the general
+    # seller_address extraction rule would otherwise pick up.
+    if extracted.get("unit_from_where_goods_supplied"):
+        logger.info(
+            "Stock Transfer routing applied: seller_address <- Unit from "
+            "where goods supplied (was %r)", extracted.get("seller_address")
+        )
+        extracted["seller_address"] = extracted["unit_from_where_goods_supplied"]
+
+    title = (extracted.get("document_title") or "").upper()
+    is_challan = "DELIVERY CHALLAN" in title or bool(extracted.get("gst_challan_sr_no"))
+    is_tax_invoice = "TAX INVOICE" in title or bool(extracted.get("gst_invoice_sr_no"))
+
+    if is_challan and not is_tax_invoice:
+        if extracted.get("gst_challan_sr_no"):
+            extracted["invoice_number"] = extracted["gst_challan_sr_no"]
+        if extracted.get("ref_no"):
+            extracted["po_number"] = extracted["ref_no"]
+        # Delivery Challans in this document family never carry an IRN --
+        # force it empty regardless of what the model returned, rather
+        # than trusting/repairing whatever it saw (unlike the GSTIN/IRN
+        # repair functions above, this isn't a misread to correct, it's a
+        # field that structurally doesn't apply to this document type).
+        if extracted.get("irn"):
+            logger.info(f"Stock Transfer Delivery Challan: clearing unexpected irn value {extracted['irn']!r}")
+        extracted["irn"] = ""
+        logger.info("Stock Transfer routing applied: Delivery Challan (invoice_number <- GST Challan Sr. No., po_number <- Ref No., irn forced empty)")
+    elif is_tax_invoice:
+        if extracted.get("gst_invoice_sr_no"):
+            extracted["invoice_number"] = extracted["gst_invoice_sr_no"]
+        if extracted.get("sales_order_sto_no"):
+            extracted["po_number"] = extracted["sales_order_sto_no"]
+        logger.info("Stock Transfer routing applied: Tax Invoice (invoice_number <- GST Invoice Sr. No., po_number <- Sales Order/STO No.)")
+
+    return extracted
+
+
+# Fields where a genuinely valid value is ALWAYS pure alphanumeric --
+# client-requested (2026-08): no special characters extracted OR allowed
+# to be typed in, for GST No, PO No, E-Way Bill No, and IRN. Handled here
+# so the guarantee holds regardless of what the model returns, without
+# needing any matching logic on the frontend.
+_ALPHANUMERIC_ONLY_FIELDS = {
+    "buyer_gstin", "seller_gstin", "transporter_gstin",
+    "ewaybill_number", "irn",
+}
+
+# FIX (2026-08-24, client request): po_number pulled out of the
+# alphanumeric-only set above and into its own numeric-only set -- this
+# client's real SAP PO numbers are always 10 digits (external POs start
+# with 4, STOs start with 6; see the "numeric purchase order number"
+# framing already in the extraction prompts below). Letters were still
+# surviving through _strip_special_characters (which only strips
+# punctuation, not letters) whenever OCR misread a digit as a letter or
+# a stray character bled in from an adjacent label -- now stripped too.
+_NUMERIC_ONLY_FIELDS = {
+    "po_number",
+}
+
+
+def _strip_special_characters(value: str) -> str:
+    """Keep only letters and digits -- strips spaces, hyphens, slashes,
+    commas, and any other punctuation OCR sometimes introduces into a
+    code-like field (e.g. a GSTIN misread with a stray space or hyphen)."""
+    if not value:
+        return value
+    return re.sub(r"[^A-Za-z0-9]", "", value)
+
+
+def _strip_non_digits(value: str) -> str:
+    """Keep only digits -- for fields where a genuinely valid value is
+    always purely numeric (po_number), so any alphabetic character OCR
+    misreads into it is dropped rather than kept."""
+    if not value:
+        return value
+    return re.sub(r"[^0-9]", "", value)
+
+
+def _clean_alphanumeric_fields(extracted: dict) -> dict:
+    """Apply _strip_special_characters to every field in
+    _ALPHANUMERIC_ONLY_FIELDS, and _strip_non_digits to every field in
+    _NUMERIC_ONLY_FIELDS, present in extracted -- top-level only (these
+    fields never appear inside hsn_details)."""
+    for field in _ALPHANUMERIC_ONLY_FIELDS:
+        if extracted.get(field):
+            extracted[field] = _strip_special_characters(extracted[field])
+    for field in _NUMERIC_ONLY_FIELDS:
+        if extracted.get(field):
+            extracted[field] = _strip_non_digits(extracted[field])
+    return extracted
+
+
+def _build_prompt(doc_type: str) -> str:
+    """
+    Build extraction prompt. Keys use lowercase_underscore to match DB columns.
+    Instructions ensure consistent output format.
+    """
+    base_instructions = """
+Rules:
+- Return ONLY valid JSON. No text before or after.
+- If a field is not visible or not applicable, use empty string "".
+- Do NOT use null, None, N/A, or any placeholder text.
+- DATES — read and return every date as DD/MM/YYYY (day first), always:
+  * These are Indian business documents. A numeric date printed as
+    "03/04/2026" on the page means 3rd April 2026 (day/month/year) — NOT
+    March 4th. Never apply US month/day ordering when reading a numeric
+    date, even though that is a common default assumption — day always
+    comes first on these documents.
+  * This applies to how you READ the date off the page, not just how you
+    format the output — re-labeling an already-misread mm/dd value as if
+    it were dd/mm produces a wrong date, not a correctly reformatted one.
+  * Always read the full 4-digit year printed on the document. Only if
+    the document itself prints just a 2-digit year should you return one
+    (do not truncate a 4-digit year down to 2, and do not invent digits
+    that aren't printed).
+  * A date written with a 3-letter month name (e.g. "25-Jul-2026" or
+    "25 Jul 26") is unambiguous — convert it directly to DD/MM/YYYY, no
+    day/month guessing needed.
+  * If a date is genuinely illegible or not printed, return empty string
+    "" — never guess a plausible-looking date.
+- Return amounts as numbers only — no currency symbols, no commas.
+- Return quantities as numbers only — no units.
+- CRITICAL — every field value must be a SINGLE LINE with no actual line
+  break/newline character inside it. If a field's text wraps across
+  multiple printed lines on the document (a multi-line address is the
+  most common case), join those lines into one string separated by a
+  comma and a space -- never insert a literal line break between them.
+  A raw line break inside a JSON string value is invalid JSON and makes
+  your ENTIRE response fail to parse, discarding every field you
+  extracted, not just that one -- so this rule matters even for fields
+  that seem unimportant.
+"""
+
+    prompts = {
+        "invoice": base_instructions + """
+Extract these fields from the invoice:
+
+This document may be a photograph of a physical paper invoice rather than a
+clean digital scan -- expect possible perspective skew, shadows, glare,
+folds, and lower legibility toward the edges. If a specific character or
+value cannot be read with reasonable confidence because of image quality,
+return empty string "" for that field rather than guessing a
+plausible-looking value.
+
+The invoice may also carry handwriting, rubber stamps, signatures, or
+"received/verified" notes physically overlapping the printed text (for
+example a stamp crossing through the IRN line, or a handwritten reference
+number near the header). Only extract values that are part of the
+ORIGINALLY PRINTED invoice content. Ignore any handwritten numbers, dates,
+initials, stamps, or notes layered on top of or near a printed field --
+they are not invoice data, even when they sit directly over a field you
+are asked to extract.
+
+Header block mapping -- invoices label the three parties differently
+depending on template. Map whichever labels appear to these fields:
+- "seller_name"/"seller_address"/"seller_gstin": the party issuing the
+  invoice -- labeled "Supplier", "Seller", or "From".
+- "buyer_name"/"buyer_address"/"buyer_gstin": the party being billed --
+  labeled "Recipient", "Billed to", "Buyer", or "Bill To".
+- "ship_to_name"/"ship_to_address": the delivery party -- labeled
+  "Consignee", "Shipped to", "Ship To", or "Delivery Address". This is
+  often the same company as the Recipient/Buyer, but extract it from
+  whichever block is actually labeled as the shipping/consignee party,
+  not the billing party, even when the two blocks show identical details.
+
+Important field notes:
+- "invoice_number": Use the value labeled "Invoice No", "Invoice Number", "Bill No", or similar. On a dense/landscape layout this label often sits in a small top-right box next to Invoice Date/Due Date/Internal Ref No -- read the whole box, not just the first line, since it can wrap across two lines. FALLBACK ONLY: if there is no usable/legible Invoice Number field anywhere on the document, but there IS an "Outbound Delivery No", "Delivery No", or "ODN" label, use that value instead. Never use the Outbound Delivery Number when a proper Invoice Number is present and readable -- it is strictly a fallback for when the real Invoice Number cannot be found, not a preference.
+- "invoice_date": Use the FIRST date that appears at the top of the invoice — typically labeled "Date", "Invoice Date", or "Dated". Do not use delivery date, dispatch date, or due date. On a landscape layout it commonly sits in the same small header box as Invoice Number, immediately below or beside it -- read that whole box carefully rather than picking the first date-like text seen anywhere on the page (which is often a due date or removal/preparation date printed elsewhere).
+- "po_number": A numeric purchase order number typically starting with 4 or 6 followed by 9 digits (e.g. 4500012345 or 6300001343). Check ALL pages — it may appear on page 2 in a receiving/gate entry form under "Purchase Order No." or "Purchase Order No". Also check "Our Order No", "Buyer Order No", "Customer PO Ref". If only a text reference like "TELE BY..." appears or genuinely not found, return empty string.
+- "buyer_address"/"seller_address"/"ship_to_address": these almost always span MULTIPLE LINES (street, village/area, city, state, PIN code, country) -- read every line belonging to that address block and join them into ONE combined string separated by ", " (comma and space), e.g. "VILLAGE: AMDOSHI / WANGANI, WAI-ROAD, TALUKA-ROHA, RAIGAD, MAHARASHTRA 402106", not just the first word or first line. Do NOT join with an actual line break -- comma-and-space only, per the SINGLE LINE rule above. On a landscape layout, address blocks are often squeezed into a narrow column and wrap across 3-4 short lines -- make sure you have captured the full block down to the PIN code before moving on, rather than stopping after the first line.
+- "buyer_gstin"/"seller_gstin": always exactly 15 characters (2-digit state code, 10-character PAN, 1-digit entity code, the letter "Z", 1 checksum character) -- if what you've read is shorter or longer than 15 characters, re-examine that region of the image for a missed or extra character before returning it.
+- "company_pan": always exactly 10 characters, format 5 letters + 4 digits + 1 letter (e.g. AAACE1713F) -- note that this PAN is also embedded inside the Seller GSTIN as characters 3-12, so if the two are visible together you can cross-check one against the other.
+- "hsn_sac" (also applies to hsn_details[].hsn_sac): a numeric HSN/SAC code, commonly 4, 6, or 8 digits -- do not confuse it with Material Code (which is always 8 characters and starts with 17/18/19/20/21/22/23/24/26, see below) or with a batch/lot number printed in the same row.
+- "grand_total": Some invoices show two separate total blocks -- an initial total (e.g. "Total Invoice Value") and a final total after deductions (e.g. "Total Net Invoice Value", "Net Payable", after a "Less: Advance Received" or similar line). When both appear, "grand_total" is always the FINAL net payable figure -- the one after any deduction line, not the subtotal above it. If there is only one total block, use that.
+- "material_code" (top-level field notes, applies to hsn_details[].material_code too): The vendor or buyer internal item identifier — look for labels
+  like "Item Code", "Product Code", "Part No", "SAP Code", "Material Code",
+  "Art. No", "Cat. No", or any alphanumeric code column separate from HSN/SAC.
+  These material codes are always exactly 8 characters long and start with
+  one of "17", "18", "19", "20", "21", "22", "23", "24", or "26" (e.g.
+  18040021, 20115032, 21987744, 23004410) -- use this shape to help
+  distinguish it from other nearby codes/numbers of a different length,
+  and to sanity-check a read: if the code you found is not 8 characters or
+  does not start with one of those nine prefixes, double-check you have
+  not picked up a different column (HSN/SAC, batch no, etc.) before
+  returning it. Return empty string if not
+  found.
+- "rate": The unit rate/price per item as shown in the Rate column.
+- "unit": The unit of measure for the line item (e.g., pc, Nos, EA, Num, kg).
+- "taxable_value": The line total before tax (rate x quantity, after discount).
+- "irn": Look anywhere on the page for a line labeled "IRN" (also seen as "IRN No",
+  "IRN #", "IRN:", or "e-Invoice IRN") — the value immediately following that label
+  is the IRN. It has no fixed position on the page (it may be near the top by the
+  QR code, or further down near the totals/signature area) — search the whole
+  page, not just the header. Do not confuse it with "Ack No" — that is a shorter,
+  separate acknowledgement number, not the IRN. Return empty string if no line
+  labeled IRN is found.
+  CRITICAL — do not confuse the IRN with the "E-Way Bill No." (also seen as
+  "EWB No." or "Eway Bill Number"), which commonly appears on the same
+  document, sometimes on the very next line right below the IRN. These are
+  two different numbers with two different shapes, not interchangeable:
+    * IRN: always exactly 64 characters, hexadecimal (digits 0-9 and
+      letters a-f only, e.g. "7afa1a5801a117c68b87b4ab2353cf1c20cd772fad69
+      63d18a11d7d8735c87a2").
+    * E-Way Bill No.: always exactly 12 digits, purely numeric (e.g.
+      "552048457615") -- NEVER 64 characters, NEVER contains a letter.
+      If what you're reading for E-Way Bill No. isn't exactly 12 digits,
+      re-examine that region of the image before returning it.
+  If the value you're about to return for "irn" is short and purely
+  numeric, you have almost certainly picked up the E-Way Bill Number by
+  mistake -- go back and find the actual line labeled "IRN" instead, and
+  return empty string for "irn" if no genuinely 64-character hex value is
+  present anywhere on the page.
+- "document_title": The literal document-type heading printed at the very top of
+  the page (e.g. "TAX INVOICE", "DELIVERY CHALLAN", "BILL OF SUPPLY"). Return it
+  exactly as printed. This is used only for internal routing logic below and is
+  never shown to the reviewer -- still extract it accurately.
+- "type_of_sale": Look for a label "Type of Sale" (seen on some stock-transfer
+  style documents, in the header info block on the right side, e.g.
+  "Type of Sale : STOCK TRANSFER - FOR" or "STOCK TRANSFER"). Return the value
+  exactly as printed. Most documents do not have this label at all -- return
+  empty string if it's not present rather than guessing.
+- "gst_invoice_sr_no": Only appears on documents titled "TAX INVOICE" from this
+  stock-transfer document family -- look for a label "GST Invoice Sr. No." (top
+  right header block, near Date / Sales Order info). Return empty string if not
+  present.
+- "gst_challan_sr_no": Only appears on documents titled "DELIVERY CHALLAN" from
+  this stock-transfer document family -- look for a label "GST Challan Sr. No."
+  (top right header block, near Date / Ref No info). Return empty string if not
+  present.
+- "sales_order_sto_no": Look for a label "Sales Order / STO No" or
+  "Sales Order/STO No:" (top right header block). Return empty string if not
+  present.
+- "ref_no": Look for a label "Ref No." (top right header block, distinct from
+  "Customer PO No."). Return empty string if not present.
+- "unit_from_where_goods_supplied": Only appears on documents from this
+  stock-transfer document family -- look for a label "Unit from where goods
+  supplied" (left column, below "Principle Place of Business"). This is the
+  actual dispatch location's address, which is a DIFFERENT address from
+  Principle Place of Business (the registered/head-office address) on these
+  documents -- do not confuse the two blocks. Join multi-line address text
+  into one comma-separated line, same rule as buyer_address/seller_address
+  above. Return empty string if not present.
+- "outbound_delivery_number": Look for a label "Outbound Delivery Number" or
+  "Outbound Delivery No" (commonly near the bottom-left, next to Lot Number /
+  Vehicle Number). Extract this into its own field whenever it's visible,
+  regardless of whether a proper Invoice Number was also found -- this is
+  separate from invoice_number's FALLBACK rule above, not a replacement for it.
+  Return empty string if not present.
+
+Line-item table columns can appear in varying order and density. Read each
+row left to right and match each value to its column header exactly as
+printed on this document, rather than assuming a fixed position -- do not
+let a value in one column bleed into a neighboring one just because they
+sit close together (this is especially easy to get wrong on tightly-packed
+tables with Freight/Insurance/Others/Discount columns sitting between Rate
+and Taxable Value). Where possible, sanity-check that Taxable Value plus
+the tax amounts roughly equals the row's Total -- if a read produces a
+number that clearly fails this check, re-examine that cell rather than
+returning the first guess.
+
+ADDED (2026-09-22, confirmed production miss -- an invoice whose own
+printed "Total Items: 13" did not match the 4 rows actually returned):
+you are being shown every page of this ONE document, in the order they
+appear, as separate images. On a multi-page invoice, the line-item table
+very often continues across more than one page -- do not treat the first
+page's table as complete just because it looks like a full table on its
+own; a later page can hold its own block of rows (sometimes with the
+column headers repeated, sometimes without), and an EARLIER page's rows
+are just as easy to miss if your attention lands on a later page's table
+first. Read every page's line-item table and combine ALL of their rows
+into one hsn_details array -- the same "check ALL pages" rule already
+applies to po_number above, for the same reason.
+
+═══════════════════════════════════════════
+SELF-VERIFICATION (run before returning JSON)
+═══════════════════════════════════════════
+Before returning your answer, check:
+1. buyer_gstin and seller_gstin, if not empty, are exactly 15 characters.
+2. irn, if not empty, is exactly 64 characters AND hexadecimal (0-9, a-f
+   only) -- if what you read is shorter, re-scan the page for the rest of
+   the value before giving up; only return a value under 64 characters if
+   you are confident that is genuinely the entire printed IRN. If the
+   value is short and purely numeric, you have picked up the E-Way Bill
+   Number by mistake (see the field note above) -- find the real IRN line
+   instead, or return empty string.
+3. invoice_date and po_number contain digits, not placeholder text.
+4. grand_total is the FINAL net payable figure if two total blocks exist,
+   not the pre-deduction subtotal.
+5. Every hsn_details row's taxable_value plus its tax amounts roughly
+   equals its total -- if not, re-check that row's columns for bleed
+   before finalizing.
+6. If the document prints a total line-item count anywhere (e.g. "Total
+   Items: 13", "Total Nos of Items", a Qty grand-total that should equal
+   the sum of each row's quantity), compare it against how many rows are
+   in hsn_details right now. If your count is short, that is a strong
+   signal you missed a table section on a page you already looked at, or
+   skipped a page entirely -- go back through every page again before
+   finalizing, rather than returning an incomplete list.
+7. No field value contains an actual line break -- a multi-line address
+   or any other wrapped field must be one single-line string joined with
+   ", " (comma and space), never a raw newline. A single field with a
+   literal line break in it will break your entire JSON response.
+Correct any field that fails these checks before returning the JSON.
+
+{
+  "invoice_number": "",
+  "invoice_date": "",
+  "po_number": "",
+  "irn": "",
+  "document_title": "",
+  "type_of_sale": "",
+  "gst_invoice_sr_no": "",
+  "gst_challan_sr_no": "",
+  "sales_order_sto_no": "",
+  "ref_no": "",
+  "unit_from_where_goods_supplied": "",
+  "outbound_delivery_number": "",
+  "buyer_name": "",
+  "buyer_address": "",
+  "buyer_gstin": "",
+  "ship_to_name": "",
+  "ship_to_address": "",
+  "ship_to_state": "",
+  "ship_to_code": "",
+  "bill_to_state": "",
+  "bill_to_code": "",
+  "seller_name": "",
+  "seller_address": "",
+  "seller_gstin": "",
+  "company_pan": "",
+  "payment_terms": "",
+  "amount_in_words": "",
+  "total_taxable_amount": "",
+  "cgst_rate": "",
+  "cgst_amount": "",
+  "sgst_rate": "",
+  "sgst_amount": "",
+  "igst_rate": "",
+  "igst_amount": "",
+  "total_tax_amount": "",
+  "total_amount": "",
+  "grand_total": "",
+  "hsn_details": [
+    {
+        "material_code": "",
+      "hsn_sac": "",
+      "description": "",
+      "quantity": "",
+      "unit": "",
+      "rate": "",
+      "taxable_value": "",
+      "cgst_rate": "",
+      "cgst_amount": "",
+      "sgst_rate": "",
+      "sgst_amount": "",
+      "igst_rate": "",
+      "igst_amount": "",
+      "total": ""
+    }
+  ]
+}
+""",
+        "ewaybill": base_instructions + """
+Extract these fields from the E-way Bill:
+
+Important notes:
+- "ewaybill_number": Always exactly 12 digits, purely numeric, no letters
+  or spaces (e.g. "552048457615") -- labeled "E-Way Bill No.", "EWB No.",
+  or "Eway Bill Number". If what you're reading isn't exactly 12 digits,
+  re-examine that region of the image before returning it. Never return
+  an IRN (a 64-character hexadecimal string) here by mistake -- they are
+  different numbers even when printed close together.
+- "generated_date": Use the FIRST date shown on the document, labeled "Generated Date" or "Date".
+- "po_number": Look for purchase order number — may appear as "PO No", "Purchase Order", or near the invoice reference. Typically 10 digits starting with 4 or 6. Return empty string if not found.
+
+{
+  "ewaybill_number": "",
+  "generated_date": "",
+  "validity_date": "",
+  "invoice_number": "",
+  "invoice_date": "",
+  "po_number": "",
+  "dispatch_from": "",
+  "dispatch_to": "",
+  "transport_mode": "",
+  "vehicle_number": "",
+  "transporter_name": "",
+  "transporter_gstin": "",
+  "transport_doc_no": "",
+  "transport_doc_date": ""
+}
+""",
+        "lr": base_instructions + """
+Extract these fields from the Lorry Receipt:
+
+Important notes:
+- "lr_date": Use the FIRST date at the top of the lorry receipt. Dates may be handwritten — read carefully.
+- "lr_number": The consignment/lorry receipt number, usually at the top. May be labeled "No.", "LR No", "GR No", or "Consignment No", or just printed prominently. IMPORTANT: Lorry receipts often also print an unrelated "Invoice No." somewhere on the same page — do NOT return that value here under any circumstances. Only return a number found next to an LR/GR/Consignment label, or if truly unlabeled, the number in the position where an LR number normally appears (top area, near the LR date). If you cannot confidently tell the LR number apart from an invoice number on this document, return an empty string rather than guessing.
+
+{
+  "lr_number": "",
+  "lr_date": "",
+  "consignor_name": "",
+  "consignee_name": "",
+  "vehicle_number": "",
+  "material_description": "",
+  "quantity": "",
+  "weight": "",
+  "delivery_address": "",
+  "from_location": "",
+  "to_location": "",
+  "transporter_name": "",
+  "freight_amount": ""
+}
+"""
+    }
+    return prompts.get(doc_type, "")
+
+
+def _build_messages(pages_b64: list, prompt: str) -> list:
+    """
+    Build the WatsonX chat messages payload.
+    Sends all pages as images followed by the extraction prompt.
+    """
+    content = []
+    for i, page_b64 in enumerate(pages_b64):
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{page_b64}"
+            }
+        })
+    content.append({
+        "type": "text",
+        "text": prompt
+    })
+    return [{"role": "user", "content": content}]
+
+
+def _sanitize_json_control_chars(text: str) -> str:
+    """
+    Defensive safety net (not a substitute for the prompt's SINGLE LINE
+    rule, but a backstop for when the model doesn't follow it): replace
+    raw control characters (newline, carriage return, tab) found INSIDE a
+    JSON string value with a single space. A literal, unescaped control
+    character inside a string is invalid per the JSON spec and makes
+    json.loads() fail on the ENTIRE response -- this is exactly what was
+    observed when the model joined a multi-line address with an actual
+    line break instead of a comma. Only whitespace control characters
+    between quotes are touched; nothing outside a string, and no other
+    character, is ever modified -- so this cannot change what value was
+    extracted, only make an otherwise-unparseable response parseable.
+    """
+    out = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if in_string:
+            if escape:
+                out.append(ch)
+                escape = False
+            elif ch == '\\':
+                out.append(ch)
+                escape = True
+            elif ch == '"':
+                in_string = False
+                out.append(ch)
+            elif ch in ('\n', '\r', '\t'):
+                out.append(' ')
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+    return ''.join(out)
+
+
+def _parse_response(raw_text: str, doc_type: str) -> Optional[dict]:
+    """
+    Parse WatsonX response text into a dict.
+    Handles markdown code block wrapping.
+    """
+    text = raw_text.strip()
+
+    # Strip markdown code blocks
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+
+    # Safety net: repair raw line breaks/tabs left inside string values
+    # before attempting to parse -- see _sanitize_json_control_chars().
+    text = _sanitize_json_control_chars(text)
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        # Try to extract JSON object from text if surrounded by other content
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+            except Exception:
+                logger.error(f"JSON parse failed for {doc_type}: {e}")
+                return None
+        else:
+            logger.error(f"No JSON found in response for {doc_type}: {e}")
+            return None
+
+    # Ensure HSN details is always a list
+    if doc_type == "invoice" and "hsn_details" in parsed:
+        if not isinstance(parsed["hsn_details"], list):
+            # WatsonX returned a string or null — wrap or reset
+            parsed["hsn_details"] = []
+
+    return parsed
+
+
+def process_document(doc_type: str, file_path: str, filename: str) -> Optional[dict]:
+    """
+    Main OCR function. Sends PDF pages to WatsonX and returns extracted data.
+
+    Args:
+        doc_type:  'invoice', 'ewaybill', or 'lr'
+        file_path: Absolute path to the PDF file
+        filename:  Original filename (stored in DB)
+
+    Returns:
+        dict of extracted fields with DB-compatible keys, or None on failure
+    """
+    logger.info(f"Starting OCR for {doc_type}: {filename}")
+
+    model = _get_model()
+    if not model:
+        logger.error("WatsonX model not available. Cannot process document.")
+        return None
+
+    # Encode up to 10 pages
+    pages_b64 = _encode_pages_to_base64(file_path, max_pages=10)
+    if not pages_b64:
+        logger.error(f"Failed to encode PDF pages for {filename}")
+        return None
+
+    prompt = _build_prompt(doc_type)
+    if not prompt:
+        logger.error(f"No prompt defined for doc_type: {doc_type}")
+        return None
+
+    try:
+        messages = _build_messages(pages_b64, prompt)
+
+        # Retry the actual OCR request too, not just model init above --
+        # same transient-DNS/network class of failure could just as easily
+        # hit here mid-document instead of at startup.
+        response = None
+        last_err = None
+        for attempt in range(1, _WATSONX_RETRY_ATTEMPTS + 1):
+            try:
+                response = model.chat(messages=messages)
+                break
+            except Exception as chat_err:
+                last_err = chat_err
+                if attempt < _WATSONX_RETRY_ATTEMPTS:
+                    logger.warning(
+                        f"WatsonX chat() failed for {doc_type} '{filename}' "
+                        f"(attempt {attempt}/{_WATSONX_RETRY_ATTEMPTS}): "
+                        f"{chat_err} -- retrying in "
+                        f"{_WATSONX_RETRY_DELAY_SECONDS}s."
+                    )
+                    time.sleep(_WATSONX_RETRY_DELAY_SECONDS)
+        if response is None:
+            raise last_err
+
+        raw_text = response["choices"][0]["message"]["content"]
+
+        logger.debug(f"WatsonX raw response for {doc_type}: {raw_text[:500]}")
+
+        extracted = _parse_response(raw_text, doc_type)
+        if not extracted:
+            return None
+
+        # Clean all values — remove None/"N/A"/null etc
+        extracted = _clean_extracted(extracted)
+
+        # Normalize date fields to YYYY-MM-DD for HTML date inputs
+        date_fields_map = {
+            "invoice":  ["invoice_date"],
+            "ewaybill": ["generated_date", "validity_date", "invoice_date", "transport_doc_date"],
+            "lr":       ["lr_date"],
+        }
+        date_fields = date_fields_map.get(doc_type, [])
+        if date_fields:
+            extracted = _normalize_dates_in_dict(extracted, date_fields)
+
+        # Client requested (2026-08): no special characters extracted for
+        # GST No / PO No / E-Way Bill No / IRN -- strip anything that
+        # isn't a letter or digit before any further processing. Safe to
+        # call for every doc_type: it only touches keys that are actually
+        # present (_ALPHANUMERIC_ONLY_FIELDS spans invoice + ewaybill
+        # fields; lr has none of these keys, so this is a no-op for lr).
+        extracted = _clean_alphanumeric_fields(extracted)
+
+        # Server-side GSTIN OCR-error correction and IRN cleanup (client
+        # requested: never blank a value that fails validation -- only ever
+        # repair it deterministically, or tidy it up, and otherwise leave it
+        # exactly as extracted so the existing client-side red-highlight
+        # checks (_validateGstinField()/_checkIrnLength() in
+        # extracted_data.html) can flag it for the reviewer as before).
+        if doc_type == "invoice":
+            if extracted.get("buyer_gstin"):
+                extracted["buyer_gstin"] = _attempt_gstin_correction(extracted["buyer_gstin"])
+            if extracted.get("seller_gstin"):
+                extracted["seller_gstin"] = _attempt_gstin_correction(extracted["seller_gstin"])
+            if extracted.get("irn"):
+                extracted["irn"] = _clean_irn(extracted["irn"])
+            extracted = _apply_stock_transfer_routing(extracted)
+        elif doc_type == "ewaybill":
+            if extracted.get("transporter_gstin"):
+                extracted["transporter_gstin"] = _attempt_gstin_correction(extracted["transporter_gstin"])
+
+        # Always set filename
+        extracted["filename"] = filename
+
+        logger.info(f"OCR successful for {doc_type}: {filename} — {len(extracted)} fields extracted")
+        return extracted
+
+    except Exception as e:
+        logger.error(f"WatsonX API error for {doc_type} '{filename}': {e}", exc_info=True)
+        return None

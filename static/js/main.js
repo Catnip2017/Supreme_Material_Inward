@@ -1,0 +1,304 @@
+// Main Dashboard Navigation and Common Functions
+
+// Which history_id record the page is currently showing, read straight off
+// the URL (/view/<id>) rather than a new template variable -- keeps this
+// self-contained in main.js. ${EMPTY}/undefined on any URL that isn't a
+// /view/<id> page (e.g. the bare dashboard) -- callers below treat that as
+// "no record-scoped memory to read/write" and just no-op.
+function _currentHistoryIdForTabMemory() {
+  const m = window.location.pathname.match(/\/view\/(\d+)/);
+  return m ? m[1] : null;
+}
+
+// FIX: after a successful Gate In/MIGO 103/MIGO 105/MIRO post, the page now
+// auto-reloads (see each tab's onSuccess handler) so every OTHER tab-pane
+// picks up the fields that depend on what just posted (e.g. MIGO 103's
+// Header Text/Vendor Name come from Gate In's result, but that tab's HTML
+// was only rendered once at initial page load and never re-fetches on its
+// own when you just click over to it) -- previously the only way to see
+// this was a manual page refresh. A plain reload would always drop the
+// user back on whichever tab is server-rendered as default, so whichever
+// tab just posted stores its own name here right before reloading, and
+// this restores it once the fresh page has loaded.
+//
+// FIX (broadened): the one-shot 'mi_reload_tab' key above only covered a
+// RELOAD THIS CODE ITSELF TRIGGERED (right after a post). A plain manual
+// browser refresh (F5 / Ctrl+R) never set that key, so it fell straight
+// through to the server's default_tab_id -- which is "the first PENDING
+// pipeline step for this record", not "whichever tab the user actually had
+// open". That's what made a manual reload on, say, the MIRO tab jump back
+// to MIGO 101 whenever 101 was this record's current pending step.
+// Now every tab switch (see switchTab/goToTabProgrammatic below) also
+// remembers itself under a key scoped to THIS history_id
+// ('mi_active_tab_<id>'), and a manual reload restores that if present --
+// scoped per-record so it can never leak into a different record you open
+// next in the same browser tab, and it only ever overrides anything once
+// you've actually visited that record before (a first-time visit has
+// nothing saved, so the server's "next pending step" default still wins).
+document.addEventListener('DOMContentLoaded', function() {
+  const savedTab = sessionStorage.getItem('mi_reload_tab');
+  if (savedTab) {
+    sessionStorage.removeItem('mi_reload_tab');
+    if (typeof goToTabProgrammatic === 'function') {
+      goToTabProgrammatic(savedTab);
+    }
+    return;
+  }
+
+  const historyId = _currentHistoryIdForTabMemory();
+  if (historyId) {
+    const lastActiveTab = sessionStorage.getItem('mi_active_tab_' + historyId);
+    if (lastActiveTab && typeof goToTabProgrammatic === 'function') {
+      goToTabProgrammatic(lastActiveTab);
+    }
+  }
+});
+
+// Shared helper for the same pattern -- used by extracted_data.html's save
+// functions too (Extracted Data edits like vendor name/PO number feed
+// Gate In/MIGO/MIRO's pre-filled fields, so those tabs need the same
+// refresh once the user is done editing here).
+function reloadToFreshData(tabName, delayMs) {
+  sessionStorage.setItem('mi_reload_tab', tabName);
+  setTimeout(() => window.location.reload(), delayMs || 1200);
+}
+
+// Persists whichever tab just became active, scoped to this record, so a
+// later plain reload (see DOMContentLoaded above) can restore it. Shared by
+// switchTab (user click) and goToTabProgrammatic (code-triggered switch).
+function _rememberActiveTab(tabName) {
+  const historyId = _currentHistoryIdForTabMemory();
+  if (historyId) {
+    sessionStorage.setItem('mi_active_tab_' + historyId, tabName);
+  }
+}
+
+// Tab switching functionality
+function switchTab(tabName) {
+  // Hide all tab panes
+  document.querySelectorAll('.tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  
+  // Remove active class from all nav tabs
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  
+  // Show selected tab pane
+  const selectedTab = document.getElementById(tabName + 'Tab');
+  if (selectedTab) {
+    selectedTab.classList.add('active');
+  }
+  
+  // Add active class to clicked nav tab
+  if (event && event.target) {
+    event.target.classList.add('active');
+  }
+
+  _rememberActiveTab(tabName);
+
+  // Hook for tab-specific JS init (gst_approval.html, etc.)
+  if (typeof window._onTabSwitch === 'function') {
+    window._onTabSwitch(tabName);
+  }
+}
+
+// Programmatic tab switch — for code-triggered navigation (e.g. auto-
+// advancing from Extracted Data to GST Approval once the review/approve
+// sequence finishes) where there's no click `event` to read the nav
+// button from. switchTab() above relies on the global `event` object,
+// which is only reliably set during a real click handler.
+function goToTabProgrammatic(tabName) {
+  document.querySelectorAll('.tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+
+  const selectedTab = document.getElementById(tabName + 'Tab');
+  if (selectedTab) {
+    selectedTab.classList.add('active');
+  }
+
+  document.querySelectorAll('.nav-tab').forEach(btn => {
+    if (btn.getAttribute('onclick') === `switchTab('${tabName}')`) {
+      btn.classList.add('active');
+    }
+  });
+
+  _rememberActiveTab(tabName);
+
+  if (typeof window._onTabSwitch === 'function') {
+    window._onTabSwitch(tabName);
+  }
+}
+
+// File upload handling
+let uploadedFiles = {
+  invoice: null,
+  ewaybill: null,
+  lr: null
+};
+
+function handleFileSelect(docType, inputElement) {
+  const file = inputElement.files[0];
+  if (file) {
+    uploadedFiles[docType] = file;
+    
+    // Update UI
+    const displayElement = document.getElementById(docType + 'Name');
+    if (displayElement) {
+      displayElement.textContent = file.name;
+      displayElement.classList.add('show');
+    }
+    
+    // Update card appearance
+    const card = inputElement.closest('.file-upload-card');
+    if (card) {
+      card.classList.add('has-file');
+    }
+    
+    console.log(`✅ ${docType} selected: ${file.name}`);
+    
+    // Update upload button state
+    updateUploadButton();
+  }
+}
+
+function updateUploadButton() {
+  const uploadButton = document.getElementById('uploadAllButton');
+  const hasAnyFile = Object.values(uploadedFiles).some(file => file !== null);
+  
+  if (uploadButton) {
+    uploadButton.disabled = !hasAnyFile;
+  }
+}
+
+// Upload all files using /process_all endpoint
+async function uploadAllFiles() {
+  const statusMessage = document.getElementById('statusMessage');
+  const uploadButton = document.getElementById('uploadAllButton');
+  
+  // Check if any files are selected
+  const hasAnyFile = Object.values(uploadedFiles).some(file => file !== null);
+  if (!hasAnyFile) {
+    if (statusMessage) {
+      statusMessage.textContent = '⚠ Please select at least one file';
+      statusMessage.className = 'status-message error show';
+    }
+    return;
+  }
+  
+  // Disable button and show processing message
+  uploadButton.disabled = true;
+  uploadButton.textContent = 'Processing...';
+  
+  if (statusMessage) {
+    statusMessage.textContent = '⏳ Processing documents...';
+    statusMessage.className = 'status-message info show';
+  }
+  
+  try {
+    // Create FormData with all selected files
+    const formData = new FormData();
+    
+    if (uploadedFiles.invoice) {
+      formData.append('invoice', uploadedFiles.invoice);
+      console.log('📄 Adding invoice:', uploadedFiles.invoice.name);
+    }
+    
+    if (uploadedFiles.ewaybill) {
+      formData.append('ewaybill', uploadedFiles.ewaybill);
+      console.log('📄 Adding ewaybill:', uploadedFiles.ewaybill.name);
+    }
+    
+    if (uploadedFiles.lr) {
+      formData.append('lr', uploadedFiles.lr);
+      console.log('📄 Adding LR:', uploadedFiles.lr.name);
+    }
+    
+    console.log('📤 Uploading to /process_all...');
+    
+    // Upload all files to /process_all endpoint
+    const response = await fetch('/process_all', {
+      method: 'POST',
+      body: formData
+    });
+    
+    console.log('📥 Response status:', response.status);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('✅ Server response:', result);
+    
+    if (result.success) {
+      if (statusMessage) {
+        statusMessage.textContent = '✅ All documents processed successfully!';
+        statusMessage.className = 'status-message success show';
+      }
+      
+      console.log('✅ Upload successful! Reloading page...');
+      
+      // Reload page to show extracted data
+      setTimeout(() => {
+        window.location.href = '/view/' + result.history_id;
+      }, 1500);
+    } else {
+      throw new Error(result.error || 'Upload failed');
+    }
+    
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    
+    if (statusMessage) {
+      statusMessage.textContent = `❌ Error: ${error.message}`;
+      statusMessage.className = 'status-message error show';
+    }
+    
+    // Re-enable button
+    uploadButton.disabled = false;
+    uploadButton.textContent = 'Process All Documents';
+  }
+}
+
+// Clear form helper
+function clearForm(formId) {
+  const form = document.getElementById(formId);
+  if (form) {
+    form.reset();
+    
+    // Special handling for gate in form
+    if (formId === 'gateInForm') {
+      setCurrentTime();
+    }
+  }
+}
+
+// Set current time for gate in form
+function setCurrentTime() {
+  const now = new Date();
+  const timeString = now.toTimeString().slice(0, 5);
+  const dateString = now.toISOString().split('T')[0];
+  
+  const timeInput = document.getElementById('gateInTime');
+  const dateInput = document.getElementById('gateInDate');
+  
+  if (timeInput) timeInput.value = timeString;
+  if (dateInput) dateInput.value = dateString;
+}
+
+// Initialize on page load
+window.addEventListener('DOMContentLoaded', function() {
+  console.log('🚀 Dashboard initialized');
+  
+  // Set current time for gate in form if it exists
+  setCurrentTime();
+  
+  // Update upload button state
+  updateUploadButton();
+});

@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Material Inward Process</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/extracted_data.css') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    .main-content.full-width { width:100%!important; max-width:100%!important; }
+    .user-menu { position:relative; }
+    .user-profile {
+      width:45px; height:45px;
+      background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%);
+      border-radius:50%; display:flex; align-items:center; justify-content:center;
+      color:white; cursor:pointer; font-weight:600; font-size:18px;
+      text-transform:uppercase; transition:0.2s;
+    }
+    .user-profile:hover { transform:scale(1.05); }
+    .dropdown-menu {
+      display:none; position:absolute; top:55px; right:0;
+      background:white; border-radius:10px;
+      box-shadow:0 8px 20px rgba(0,0,0,0.15);
+      min-width:160px; overflow:hidden; z-index:999;
+    }
+    .dropdown-menu.show { display:block; }
+    .dropdown-menu a {
+      padding:12px 18px; display:flex; align-items:center;
+      gap:10px; font-size:14px; color:#333; text-decoration:none; transition:0.2s;
+    }
+    .dropdown-menu a:hover { background:#1e5ca8; color:white; }
+
+    /* Bell icon */
+    .bell-wrapper { position:relative; cursor:pointer; }
+    .bell-icon {
+      width:42px; height:42px; border-radius:50%;
+      background:#f5f7fa; display:flex; align-items:center; justify-content:center;
+      transition:background .2s; color:#1e5ca8; font-size:18px;
+    }
+    .bell-icon:hover { background:#e8f0fe; }
+    .bell-badge {
+      position:absolute; top:-3px; right:-3px;
+      background:#e74c3c; color:white;
+      min-width:18px; height:18px; padding:0 5px;
+      border-radius:9px; font-size:11px; font-weight:700;
+      display:flex; align-items:center; justify-content:center;
+      border:2px solid white;
+    }
+    .bell-badge[data-count="0"] { display:none; }
+
+    /* SAP bot activity indicator — ADDED 2026-09-03 */
+    .sap-bot-status {
+      display:flex; align-items:center; gap:7px;
+      padding:6px 12px; border-radius:16px; font-size:12.5px; font-weight:600;
+      cursor:default; transition:background .2s, color .2s;
+    }
+    .sap-bot-status i { font-size:12px; }
+    .sap-bot-status-idle { background:#eafaf1; color:#1e8449; }
+    .sap-bot-status-active { background:#fef5e7; color:#b9770e; }
+    .sap-bot-status-checking { background:#f4f6f7; color:#7f8c8d; }
+    .sap-bot-status-error { background:#fdedec; color:#c0392b; }
+    .bell-dropdown {
+      display:none;
+      position:absolute; top:55px; right:0;
+      background:white; border-radius:10px;
+      box-shadow:0 8px 24px rgba(0,0,0,0.15);
+      width:380px; max-height:500px; overflow-y:auto;
+      z-index:999;
+    }
+    .bell-dropdown.show { display:block; }
+    .bell-header {
+      padding:14px 18px; border-bottom:1px solid #eee;
+      display:flex; justify-content:space-between; align-items:center;
+      background:#f8f9fb; border-radius:10px 10px 0 0;
+    }
+    .bell-header h3 { font-size:14px; color:#2c3e50; font-weight:700; }
+    .mark-all-read {
+      font-size:12px; color:#1e5ca8; cursor:pointer;
+      background:none; border:none; font-weight:500;
+    }
+    .mark-all-read:hover { text-decoration:underline; }
+    .bell-list { padding:0; }
+    .notif-item {
+      padding:12px 18px; border-bottom:1px solid #f0f0f0;
+      cursor:pointer; transition:background .2s;
+    }
+    .notif-item:hover { background:#f8f9fb; }
+    .notif-item:last-child { border-bottom:none; }
+    .notif-title { font-size:13px; font-weight:600; color:#2c3e50; margin-bottom:3px; }
+    .notif-msg { font-size:12px; color:#666; line-height:1.4; }
+    .notif-time { font-size:11px; color:#aaa; margin-top:4px; }
+    .notif-empty { padding:30px 18px; text-align:center; color:#999; font-size:13px; }
+
+    /* Confirmation modal */
+    .confirm-modal {
+      display:none; position:fixed; inset:0;
+      background:rgba(0,0,0,0.6); z-index:10000;
+      align-items:center; justify-content:center;
+    }
+    .confirm-modal.show { display:flex; }
+    .confirm-box {
+      background:white; border-radius:12px; padding:30px;
+      width:90%; max-width:480px;
+      box-shadow:0 10px 40px rgba(0,0,0,0.3);
+    }
+    .confirm-icon { font-size:42px; color:#f39c12; text-align:center; margin-bottom:14px; }
+    .confirm-title { font-size:18px; font-weight:700; color:#2c3e50; text-align:center; margin-bottom:10px; }
+    .confirm-msg { font-size:14px; color:#555; text-align:center; line-height:1.6; margin-bottom:24px; }
+    .confirm-actions { display:flex; gap:10px; }
+    .confirm-actions button {
+      flex:1; padding:12px; border:none; border-radius:8px;
+      font-size:14px; font-weight:600; cursor:pointer;
+    }
+    .confirm-cancel { background:#ecf0f1; color:#333; }
+    .confirm-cancel:hover { background:#d5dbdc; }
+    .confirm-yes { background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
+    .confirm-yes:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
+    /* Upload page styles */
+    .upload-page {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      flex: 1; padding: 40px 20px; min-height: calc(100vh - 80px); background: #f5f7fa;
+    }
+    .upload-page-inner {
+      background: white; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+      padding: 40px; width: 100%; max-width: 95%;
+    }
+    /* FIX (2026-08-12): Back button so the upload page (reached via the
+       "New Entry" dropdown link, from_history=False here so the top-bar's
+       "← Back to History" button doesn't render) isn't a dead end -- user
+       previously had no in-page way back except the browser Back button. */
+    .upload-back-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: none; border: 1px solid #dde3ec; color: #555;
+      padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      cursor: pointer; margin-bottom: 18px; transition: 0.2s;
+    }
+    .upload-back-btn:hover { background: #f5f7fa; border-color: #c5cedb; }
+    .upload-page-title { font-size: 22px; font-weight: 700; color: #2c3e50; margin-bottom: 8px; text-align: center; }
+    .upload-page-subtitle { font-size: 14px; color: #888; text-align: center; margin-bottom: 32px; }
+    .upload-cards-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+    .upload-card {
+      background: #f8f9fb; border: 2px solid #e0e7ff; border-radius: 12px;
+      padding: 20px 16px; text-align: center; transition: all 0.2s;
+      position: relative;
+    }
+    .upload-card.has-file { border-color: #00b894; background: #ecfdf5; }
+    .upload-card-icon { font-size: 32px; margin-bottom: 8px; }
+    /* FIX (2026-08-12): per-card remove/X button -- previously the only way
+       to change a selection was to re-click "Choose File" and pick again;
+       there was no way to clear a card back to empty (e.g. picked the wrong
+       file) short of reloading the whole page and losing every other
+       selection too. Only shown once a file is actually selected
+       (.has-file), positioned top-right corner of the card. */
+    .upload-card-remove {
+      display: none; position: absolute; top: 8px; right: 8px;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #fff; border: 1px solid #f0b4b4; color: #e74c3c;
+      font-size: 12px; line-height: 1; cursor: pointer;
+      align-items: center; justify-content: center; padding: 0;
+    }
+    .upload-card.has-file .upload-card-remove { display: flex; }
+    .upload-card-remove:hover { background: #ffecec; }
+    .upload-card-title { font-size: 14px; font-weight: 600; color: #333; margin-bottom: 12px; }
+    .upload-card input[type="file"] { display: none; }
+    .upload-card label {
+      display: inline-block; padding: 8px 16px;
+      background: linear-gradient(135deg,#1e5ca8,#164a8a); color: white;
+      border-radius: 6px; font-size: 13px; cursor: pointer;
+    }
+    .upload-card label:hover { opacity: 0.9; }
+    .upload-card .file-name { margin-top: 8px; font-size: 12px; color: #00b894; font-weight: 600; min-height: 18px; word-break: break-all; }
+    .process-btn {
+      width: 100%; padding: 16px; background: linear-gradient(135deg,#00b894,#00cec9); color: white;
+      border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; transition: 0.3s;
+    }
+    .process-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+    .process-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .upload-status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 14px; text-align: center; display: none; }
+
+    /* ── Toast notifications ─────────────────────────────────────────────── */
+    #appToastContainer {
+      position:fixed; bottom:28px; right:28px; z-index:99999;
+      display:flex; flex-direction:column; gap:10px; pointer-events:none;
+    }
+    .app-toast {
+      min-width:260px; max-width:420px; padding:14px 18px;
+      border-radius:10px; font-size:13px; font-weight:500;
+      box-shadow:0 6px 24px rgba(0,0,0,0.15); pointer-events:auto;
+      display:flex; align-items:flex-start; gap:12px;
+      animation:toastIn .25s ease;
+    }
+    @keyframes toastIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+    .app-toast.success { background:#ecfdf5; color:#1a7a3c; border-left:4px solid #00b894; }
+    .app-toast.error   { background:#fff0f0; color:#c0392b; border-left:4px solid #e74c3c; }
+    .app-toast.warning { background:#fff8e1; color:#856404; border-left:4px solid #f39c12; }
+    .app-toast.info    { background:#e8f0fe; color:#1e5ca8; border-left:4px solid #1e5ca8; }
+    .app-toast-icon { font-size:17px; flex-shrink:0; margin-top:1px; }
+    .app-toast-body { flex:1; line-height:1.45; }
+    .app-toast-close {
+      flex-shrink:0; background:none; border:none; cursor:pointer;
+      font-size:16px; color:inherit; opacity:.6; padding:0 0 0 6px;
+      line-height:1;
+    }
+    .app-toast-close:hover { opacity:1; }
+
+    /* ── v20: persistent SAP posting-result panel ────────────────────────
+       Separate from the toast system above on purpose: toasts auto-dismiss
+       after 5s and sit bottom-right; the numbers here (GIN / Material Doc /
+       MIRO Doc) are ones the user actually needs to note down, and on a
+       long form the inline in-page status banner is easy to miss if
+       they've already scrolled away from the submit button. Fixed
+       bottom-left, stays until manually dismissed. */
+    #stickyResultPanel {
+      position:fixed; bottom:20px; left:20px; z-index:99998;
+      display:flex; flex-direction:column; gap:10px;
+      max-width:340px; pointer-events:none;
+    }
+    .sticky-result-card {
+      background:#ffffff; border:1px solid #bfe8d9; border-left:4px solid #00b894;
+      border-radius:10px; padding:14px 16px;
+      box-shadow:0 6px 24px rgba(0,0,0,0.18);
+      font-size:13px; animation:toastIn .25s ease; pointer-events:auto;
+    }
+    .sticky-result-card .src-title {
+      font-weight:700; color:#1a7a3c; margin-bottom:6px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+    }
+    .sticky-result-card .src-close {
+      cursor:pointer; opacity:.5; font-size:14px; background:none; border:none;
+      line-height:1; flex-shrink:0;
+    }
+    .sticky-result-card .src-close:hover { opacity:1; }
+    .sticky-result-card .src-line { color:#2c3e50; line-height:1.7; }
+    .sticky-result-card .src-line b { color:#1e5ca8; }
+  </style>
+</head>
+<body>
+<div class="dashboard-container">
+
+  <div class="main-content full-width">
+
+    <div class="top-bar">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <img src="/static/spl-new-logo.png" style="height:38px;width:auto;"
+             onerror="this.src='/static/SPL_Logo.png';this.style.height='38px';">
+      </div>
+      <h2>Material Inward Process</h2>
+      <div style="display:flex;gap:15px;align-items:center;">
+        {% if from_history %}
+        <button class="logout-btn" onclick="window.location.href = sessionStorage.getItem('historyReturnUrl') || '/history'"
+          style="background:linear-gradient(135deg,#1e5ca8,#164a8a);">
+          ← Back to History
+        </button>
+        {% endif %}
+
+        {% if is_superadmin %}
+        <div class="sap-bot-status sap-bot-status-checking" id="sapBotStatus"
+             title="Checking...">
+          <i class="fas fa-robot"></i>
+          <span id="sapBotCount">···</span>
+          <span id="sapBotLabel">checking…</span>
+        </div>
+        {% endif %}
+
+        {% if enable_inapp_notifications %}
+        <div class="bell-wrapper" id="bellWrapper">
+          <div class="bell-icon" onclick="toggleBell(event)">
+            <i class="fas fa-bell"></i>
+            <span class="bell-badge" id="bellBadge" data-count="0">0</span>
+          </div>
+          <div class="bell-dropdown" id="bellDropdown">
+            <div class="bell-header">
+              <h3>Notifications</h3>
+              <button class="mark-all-read" onclick="markAllRead()">Mark all read</button>
+            </div>
+            <div class="bell-list" id="bellList">
+              <div class="notif-empty">No notifications</div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="user-menu">
+          <div class="user-profile" onclick="toggleDropdown(event)">
+            {{ current_role[0] if current_role else 'U' }}
+          </div>
+          <div class="dropdown-menu" id="userDropdown">
+            <a href="/history"><i class="fas fa-history"></i> History</a>
+            {% if is_superadmin or has_role('compliance') or allow_user_upload %}
+            <a href="/new_entry"><i class="fas fa-plus"></i> New Entry</a>
+            {% endif %}
+            {% if is_superadmin %}
+            <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
+            {% endif %}
+            {% if has_role('record_admin') %}
+            <a href="/admin/records"><i class="fas fa-database"></i> Record Admin</a>
+            {% endif %}
+            {% if is_superadmin or has_role('compliance') %}
+            <a href="/gst_verification"><i class="fas fa-file-invoice"></i> GST Verification</a>
+            {% endif %}
+            <a href="/logout" style="color:#e74c3c;"><i class="fas fa-sign-out-alt"></i> Logout</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if from_history %}
+    {% include 'tabs/_status_summary.html' %}
+    <!-- NAV TABS -->
+    <!-- Each tab is gated to the role(s) that own it (see _has_role() in
+         app.py) on top of the existing system-wide is_step_enabled()
+         toggle. FIX (v14): Documents is now open to every authenticated
+         user (view/download only, delete still Compliance-only) -- it
+         used to be Compliance Officer/SuperAdmin only, which is what was
+         actually causing documents to appear to "vanish" for other roles.
+         GST Approval remains Compliance Officer/SuperAdmin only. Extracted
+         Data is visible to Compliance Officer/SuperAdmin (full edit) or a
+         staggered read-only reveal to Gate Security/Stores/Quality/
+         Accounts Payable as the record's workflow progresses (see
+         can_view_extracted/can_edit_extracted). -->
+    <div class="nav-tabs">
+      {% if can_view_documents %}
+      <button class="nav-tab{% if default_tab_id == 'documents' %} active{% endif %}" onclick="switchTab('documents')">Documents</button>
+      {% endif %}
+      {% if can_view_extracted %}
+      <button class="nav-tab{% if default_tab_id == 'extracted' %} active{% endif %}" onclick="switchTab('extracted')">Extracted Data</button>
+      {% endif %}
+      {% if can_view_gst %}
+      <button class="nav-tab{% if default_tab_id == 'gstApproval' %} active{% endif %}" onclick="switchTab('gstApproval')">GST Approval</button>
+      {% endif %}
+      {% if can_view_gate_in %}
+      <button class="nav-tab{% if default_tab_id == 'gateIn' %} active{% endif %}" onclick="switchTab('gateIn')">Gate In</button>
+      {% endif %}
+      {% if can_view_migo_101 %}
+      <button class="nav-tab{% if default_tab_id == 'migo101' %} active{% endif %}" onclick="switchTab('migo101')">MIGO 101</button>
+      {% endif %}
+      {% if can_view_migo_103 %}
+      <button class="nav-tab{% if default_tab_id == 'migo103' %} active{% endif %}" onclick="switchTab('migo103')">MIGO 103</button>
+      {% endif %}
+      {% if can_view_migo_105 %}
+      <button class="nav-tab{% if default_tab_id == 'migo105' %} active{% endif %}" onclick="switchTab('migo105')">MIGO 105</button>
+      {% endif %}
+      {% if can_view_tax_classification %}
+      <button class="nav-tab{% if default_tab_id == 'taxClassification' %} active{% endif %}" onclick="switchTab('taxClassification')">Tax Classification</button>
+      {% endif %}
+      {% if can_view_miro %}
+      <button class="nav-tab{% if default_tab_id == 'miro' %} active{% endif %}" onclick="switchTab('miro')">MIRO</button>
+      {% endif %}
+      {% if is_step_enabled('gst') and (is_superadmin or has_role('compliance')) %}
+      <button class="nav-tab{% if default_tab_id == 'gst' %} active{% endif %}" onclick="switchTab('gst')">GST Report</button>
+      {% endif %}
+    </div>
+
+    <div class="tab-content-wrapper">
+    {% if can_view_documents %}
+    <div id="documentsTab" class="tab-pane{% if default_tab_id == 'documents' %} active{% endif %}">
+      {% include 'tabs/documents.html' %}
+    </div>
+    {% endif %}
+    {% if can_view_extracted %}
+    <div id="extractedTab" class="tab-pane{% if default_tab_id == 'extracted' %} active{% endif %}">
+      {% include 'tabs/extracted_data.html' %}
+    </div>
+    {% endif %}
+    {% if can_view_gst %}
+    <div id="gstApprovalTab" class="tab-pane{% if default_tab_id == 'gstApproval' %} active{% endif %}">
+      {% include 'tabs/gst_approval.html' %}
+    </div>
+    {% endif %}
+      {% if can_view_gate_in %}
+      <div id="gateInTab" class="tab-pane{% if default_tab_id == 'gateIn' %} active{% endif %}">{% include 'tabs/gate_in.html' %}</div>
+      {% endif %}
+      {% if can_view_migo_101 %}
+      <div id="migo101Tab" class="tab-pane{% if default_tab_id == 'migo101' %} active{% endif %}">{% include 'tabs/migo_101.html' %}</div>
+      {% endif %}
+      {% if can_view_migo_103 %}
+      <div id="migo103Tab" class="tab-pane{% if default_tab_id == 'migo103' %} active{% endif %}">{% include 'tabs/migo_103.html' %}</div>
+      {% endif %}
+      {% if can_view_migo_105 %}
+      <div id="migo105Tab" class="tab-pane{% if default_tab_id == 'migo105' %} active{% endif %}">{% include 'tabs/migo_105.html' %}</div>
+      {% endif %}
+      {% if can_view_tax_classification %}
+      <div id="taxClassificationTab" class="tab-pane{% if default_tab_id == 'taxClassification' %} active{% endif %}">{% include 'tabs/tax_classification.html' %}</div>
+      {% endif %}
+      {% if can_view_miro %}
+      <div id="miroTab" class="tab-pane{% if default_tab_id == 'miro' %} active{% endif %}">{% include 'tabs/miro.html' %}</div>
+      {% endif %}
+      {% if is_step_enabled('gst') and (is_superadmin or has_role('compliance')) %}
+      <div id="gstTab" class="tab-pane{% if default_tab_id == 'gst' %} active{% endif %}">{% include 'tabs/gst_report.html' %}</div>
+      {% endif %}
+    </div>
+
+    {% if not default_tab_id %}
+    <div style="max-width:600px;margin:60px auto;text-align:center;background:white;border-radius:12px;padding:40px;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+      <div style="font-size:40px;margin-bottom:16px;">🔒</div>
+      <div style="font-size:16px;color:#2c3e50;font-weight:600;margin-bottom:8px;">No access assigned yet</div>
+      <div style="font-size:14px;color:#777;">Your account doesn't have any workflow role assigned. Contact your SuperAdmin to get access to a tab.</div>
+    </div>
+    {% endif %}
+
+    {% elif is_admin or allow_user_upload %}
+    <!-- UPLOAD PAGE -->
+    <div class="upload-page">
+      <div class="upload-page-inner">
+        <button class="upload-back-btn" onclick="window.location.href='/history'">← Back</button>
+        <div class="upload-page-title">📄 Upload Documents</div>
+        <div class="upload-page-subtitle">Select the documents and click Process — OCR will extract all data automatically</div>
+
+        <div class="upload-cards-row">
+          <div class="upload-card" id="invoiceCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('invoice')" title="Remove selected file">✕</button>
+            <div class="upload-card-icon">📄</div>
+            <div class="upload-card-title">Invoice</div>
+            <input type="file" id="invoiceInput" accept=".pdf" onchange="handleUploadSelect('invoice', this)">
+            <label for="invoiceInput">Choose File</label>
+            <div class="file-name" id="invoiceFileName"></div>
+          </div>
+          <div class="upload-card" id="ewaybillCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('ewaybill')" title="Remove selected file">✕</button>
+            <div class="upload-card-icon">🚚</div>
+            <div class="upload-card-title">E-Way Bill</div>
+            <input type="file" id="ewaybillInput" accept=".pdf" onchange="handleUploadSelect('ewaybill', this)">
+            <label for="ewaybillInput">Choose File</label>
+            <div class="file-name" id="ewaybillFileName"></div>
+          </div>
+          <div class="upload-card" id="lrCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('lr')" title="Remove selected file">✕</button>
+            <div class="upload-card-icon">📦</div>
+            <div class="upload-card-title">Lorry Receipt (LR)</div>
+            <input type="file" id="lrInput" accept=".pdf" onchange="handleUploadSelect('lr', this)">
+            <label for="lrInput">Choose File</label>
+            <div class="file-name" id="lrFileName"></div>
+          </div>
+          <!-- FIX (2026-08-11): Others doctype for G-drive parity -- no OCR,
+               just attached to the record (see /process_all's others_file
+               handling and services/folder_watcher.py's own Others block). -->
+          <div class="upload-card" id="othersCard">
+            <button type="button" class="upload-card-remove" onclick="removeUploadFile('others')" title="Remove selected file">✕</button>
+            <div class="upload-card-icon">📎</div>
+            <div class="upload-card-title">Others</div>
+            <input type="file" id="othersInput" accept=".pdf" onchange="handleUploadSelect('others', this)">
+            <label for="othersInput">Choose File</label>
+            <div class="file-name" id="othersFileName"></div>
+          </div>
+        </div>
+
+        <button class="process-btn" id="processBtn" onclick="processAllDocs()" disabled>
+          ⚡ Process All Documents
+        </button>
+        <div class="upload-status" id="uploadStatus"></div>
+      </div>
+    </div>
+
+    {% else %}
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:60px;">
+      <p style="color:#888;">Please go back to History.</p>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+
+<!-- Reusable confirmation modal (used by all SAP-trigger buttons) -->
+<div class="confirm-modal" id="confirmModal">
+  <div class="confirm-box">
+    <div class="confirm-icon">⚠</div>
+    <div class="confirm-title" id="confirmTitle">Confirm SAP Posting</div>
+    <div class="confirm-msg" id="confirmMsg">
+      You are about to post to SAP. This will run the SAP automation and cannot be undone from the portal.
+    </div>
+    <div class="confirm-actions">
+      <button class="confirm-cancel" onclick="closeConfirm()">Cancel</button>
+      <button class="confirm-yes" id="confirmYesBtn">Yes, Post to SAP</button>
+    </div>
+  </div>
+</div>
+
+<!-- FIX (2026-09-17): switched from a plain url_for() to static_v() (see
+     app.py's inject_globals) -- these are the scripts most likely to change
+     from one push to the next, and a plain url_for() URL never changes, so
+     a browser that already cached main.js (etc.) before a fix went out had
+     no reason to ever re-fetch it. static_v() appends ?v=<file mtime>, so
+     the URL itself changes the moment the file does and the browser is
+     forced to fetch fresh -- no more "I pushed the fix but it's not
+     showing" confusion. -->
+<script src="{{ static_v('js/main.js') }}"></script>
+<script src="{{ static_v('js/rf_poller.js') }}"></script>
+<script src="{{ static_v('js/sap_bot_status.js') }}"></script>
+{% if from_history %}
+<script src="{{ static_v('js/tabs/extracted_data.js') }}"></script>
+{% endif %}
+
+{% if enable_inapp_notifications %}
+<script src="{{ static_v('js/notifications.js') }}"></script>
+{% endif %}
+
+<script>
+function toggleDropdown(event) {
+  event.stopPropagation();
+  document.getElementById("userDropdown").classList.toggle("show");
+  const bd = document.getElementById("bellDropdown");
+  if (bd) bd.classList.remove("show");
+}
+
+function toggleBell(event) {
+  event.stopPropagation();
+  const bd = document.getElementById("bellDropdown");
+  if (bd) bd.classList.toggle("show");
+  document.getElementById("userDropdown").classList.remove("show");
+}
+
+document.addEventListener("click", function(e) {
+  const um = document.querySelector(".user-menu");
+  if (um && !um.contains(e.target)) {
+    document.getElementById("userDropdown").classList.remove("show");
+  }
+  const bw = document.getElementById("bellWrapper");
+  if (bw && !bw.contains(e.target)) {
+    const bd = document.getElementById("bellDropdown");
+    if (bd) bd.classList.remove("show");
+  }
+});
+
+// Confirmation modal helper — used by all SAP-trigger buttons
+let _confirmCallback = null;
+function showConfirm(title, message, onYes, yesLabel) {
+  // NOTE: the Yes button previously always said "Yes, Post to SAP" no matter
+  // which action opened the modal (its text was hardcoded in the HTML and
+  // never updated here) -- e.g. clicking "Re-run OCR" showed the SAP-posting
+  // wording. yesLabel now lets each caller set the button text to match its
+  // own action; defaults to the original text for any caller that doesn't.
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent = message;
+  document.getElementById('confirmYesBtn').textContent = yesLabel || 'Yes, Post to SAP';
+  _confirmCallback = onYes;
+  document.getElementById('confirmModal').classList.add('show');
+}
+function closeConfirm() {
+  document.getElementById('confirmModal').classList.remove('show');
+  _confirmCallback = null;
+}
+
+// Toast notification — replaces browser alert() throughout the app
+function showToast(msg, type) {
+  type = type || 'info';
+  var icons = { success:'✓', error:'✗', warning:'⚠', info:'ℹ' };
+  var container = document.getElementById('appToastContainer');
+  var toast = document.createElement('div');
+  toast.className = 'app-toast ' + type;
+  toast.innerHTML =
+    '<span class="app-toast-icon">' + (icons[type] || 'ℹ') + '</span>' +
+    '<span class="app-toast-body">' + msg + '</span>' +
+    '<button class="app-toast-close" onclick="this.parentNode.remove()">✕</button>';
+  container.appendChild(toast);
+  setTimeout(function () { if (toast.parentNode) { toast.remove(); } }, 5000);
+}
+
+// v20: persistent bottom-left panel for SAP posting results (GIN /
+// Material Doc / MIRO Doc numbers) -- see #stickyResultPanel CSS comment
+// above for why this is separate from showToast. Called generically from
+// static/js/rf_poller.js's pollRFJob() the moment any posting job
+// finishes successfully, so this one place covers Gate In / MIGO 103 /
+// MIGO 105 / MIRO without needing to duplicate it per tab.
+// lines: array of {label, value}
+function showPostingResult(title, lines) {
+  const panel = document.getElementById('stickyResultPanel');
+  if (!panel) return;
+  const card = document.createElement('div');
+  card.className = 'sticky-result-card';
+  const linesHtml = lines.map(function (l) {
+    return '<div class="src-line"><b>' + l.label + ':</b> ' + l.value + '</div>';
+  }).join('');
+  card.innerHTML =
+    '<div class="src-title"><span>✓ ' + title + '</span>' +
+    '<button class="src-close" onclick="this.closest(\'.sticky-result-card\').remove()" title="Dismiss">✕</button></div>' +
+    linesHtml;
+  panel.appendChild(card);
+}
+
+
+document.getElementById('confirmYesBtn').onclick = function() {
+  if (_confirmCallback) {
+    const cb = _confirmCallback;
+    _confirmCallback = null;
+    document.getElementById('confirmModal').classList.remove('show');
+    cb();
+  }
+};
+
+// Upload page logic
+const selectedFiles = { invoice: null, ewaybill: null, lr: null, others: null };
+
+function handleUploadSelect(type, input) {
+  const file = input.files[0];
+  if (!file) return;
+  selectedFiles[type] = file;
+  document.getElementById(type + 'FileName').textContent = file.name;
+  document.getElementById(type + 'Card').classList.add('has-file');
+  _refreshProcessBtnState();
+}
+
+// FIX (2026-08-12): lets the user clear a single card's selection (e.g. picked
+// the wrong file) without reloading the page and losing every other card's
+// selection too. Resets the <input> itself (not just selectedFiles) so
+// choosing the same filename again still fires onchange.
+function removeUploadFile(type) {
+  selectedFiles[type] = null;
+  const input = document.getElementById(type + 'Input');
+  if (input) input.value = '';
+  const nameEl = document.getElementById(type + 'FileName');
+  if (nameEl) nameEl.textContent = '';
+  const card = document.getElementById(type + 'Card');
+  if (card) card.classList.remove('has-file');
+  _refreshProcessBtnState();
+}
+
+// FIX (2026-08-11 / 2026-08-12): "Others" alone can't be submitted here --
+// /process_all still requires at least one of invoice/ewaybill/lr (Others is
+// an additive attachment, not a standalone submission) -- so it's excluded
+// from the check that enables the Process button, matching that backend
+// requirement instead of enabling a button that would just error out.
+// Factored out of handleUploadSelect so removeUploadFile can re-run the same
+// check (a remove can just as easily flip the button back to disabled).
+function _refreshProcessBtnState() {
+  const hasAny = ['invoice', 'ewaybill', 'lr'].some(k => selectedFiles[k] !== null);
+  const btn = document.getElementById('processBtn');
+  if (btn) btn.disabled = !hasAny;
+}
+
+async function processAllDocs() {
+  const btn = document.getElementById('processBtn');
+  const status = document.getElementById('uploadStatus');
+  if (!btn || !status) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Processing...';
+  status.style.display = 'block';
+  status.style.background = '#e3f2fd';
+  status.style.color = '#1e5ca8';
+  status.textContent = 'Running OCR — this may take 30-60 seconds...';
+
+  const formData = new FormData();
+  if (selectedFiles.invoice)  formData.append('invoice',  selectedFiles.invoice);
+  if (selectedFiles.ewaybill) formData.append('ewaybill', selectedFiles.ewaybill);
+  if (selectedFiles.lr)       formData.append('lr',       selectedFiles.lr);
+  if (selectedFiles.others)   formData.append('others',   selectedFiles.others);
+
+  try {
+    const res = await fetch('/process_all', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.success) {
+      status.style.background = '#ecfdf5';
+      status.style.color = '#00b894';
+      status.textContent = '✓ Documents processed! Redirecting...';
+      setTimeout(() => { window.location.href = '/view/' + data.history_id; }, 1000);
+    } else {
+      throw new Error(data.error || 'Processing failed');
+    }
+  } catch (err) {
+    status.style.background = '#fff5f5';
+    status.style.color = '#e17055';
+    status.textContent = '❌ ' + err.message;
+    btn.disabled = false;
+    btn.textContent = '⚡ Process All Documents';
+  }
+}
+</script>
+
+<!-- ── Toast container ───────────────────────────────────────────────────── -->
+<div id="appToastContainer"></div>
+
+<!-- ── v20: persistent SAP posting-result panel (bottom-left) ─────────────── -->
+<div id="stickyResultPanel"></div>
+
+</body>
+</html>

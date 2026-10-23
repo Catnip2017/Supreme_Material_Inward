@@ -1,0 +1,27 @@
+<!-- ADDED (2026-09-23, client request): this step-status line used to live
+     inside tabs/documents.html only, so switching to any other tab (Gate
+     In, MIGO 10x, Tax Classification, MIRO...) hid it -- you had to jump
+     back to Documents just to see where the record stood. Pulled out into
+     its own shared partial and included once in index.html, above the
+     tab nav, so it's visible no matter which tab is currently open.
+     Documents.html no longer includes this itself (see the matching
+     removal there) -- this is the only place it's rendered now. -->
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 101: {% if history.migo_101 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_101_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  Tax Classification:
+  {% if history.tax_classification == 'eligible' %}<span style="color:#00b894">✓ Eligible/Verified by GST</span>
+  {% elif history.tax_classification == 'ineligible' %}<span style="color:#e17055">Ineligible</span>
+  {% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}

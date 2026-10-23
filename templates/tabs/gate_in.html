@@ -1,0 +1,1645 @@
+<style>
+/* ── Delivery type & PO availability selectors ─────────────────────────── */
+.delivery-type-group, .po-avail-group {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.delivery-radio-option {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 18px; border: 2px solid #e0e0e0;
+  border-radius: 8px; cursor: pointer; font-size: 14px;
+  font-weight: 600; color: #555; transition: all .2s;
+  user-select: none;
+}
+.delivery-radio-option input[type=radio] { accent-color: #1e5ca8; }
+.delivery-radio-option:has(input:checked) {
+  border-color: #1e5ca8; background: #f0f4ff; color: #1e5ca8;
+}
+/* ── Vehicle lookup row ─────────────────────────────────────────────────── */
+.vehicle-lookup-row { display: flex; gap: 8px; align-items: flex-start; }
+.vehicle-lookup-row .form-input { flex: 1; }
+.btn-lookup {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 14px; height: 38px;
+  background: #2ecc71; color: #fff; border: none; border-radius: 6px;
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  white-space: nowrap; flex-shrink: 0; transition: background .2s;
+}
+.btn-lookup:hover:not(:disabled) { background: #27ae60; }
+.btn-lookup:disabled { background: #b0bec5; cursor: not-allowed; }
+/* ── Driver dropdown ─────────────────────────────────────────────────────── */
+.driver-dropdown-wrap { position: relative; }
+.driver-dropdown {
+  display: none; position: absolute; z-index: 200;
+  background: #fff; border: 1px solid #c5d8f8; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(30,92,168,0.12);
+  min-width: 300px; max-width: 440px; max-height: 250px;
+  overflow-y: auto; margin-top: 4px;
+}
+.driver-dropdown.show { display: block; }
+/* Vendor dropdown specifically: taller (more rows can come back now that
+   the server cap is 100, not 10) and its item list scrolls independently
+   of the header + filter box above it, which stay pinned in view.
+   FIX: the first version of this set `display: flex` on the bare
+   (non-.show) selector -- an ID selector, so it beat `.driver-dropdown`'s
+   `display: none` on specificity and left the pane permanently in the
+   layout. Worse, `.vendor-dd-items` had no height/flex constraint of its
+   own, so in a flex column a child with no min-height won't shrink to
+   scroll internally -- it just grows to fit all rows, and the OUTER pane
+   (inherited overflow-y:auto + max-height from .driver-dropdown) ended up
+   being the thing that scrolled, taking the header and search box out of
+   view along with it on any list long enough to scroll. Fixed by keeping
+   `display: none` as the default (only `.show` switches to flex), and
+   giving `.vendor-dd-items` its own `flex:1; min-height:0; overflow-y:auto`
+   so IT scrolls while the header/search box above it stay fixed in place. */
+#vendorCodeDropdown, #vendorCodeDropdownHand {
+  max-height: 340px; flex-direction: column; overflow: hidden;
+}
+#vendorCodeDropdown.show, #vendorCodeDropdownHand.show { display: flex; }
+.vendor-dd-items { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.vendor-dropdown-search { padding: 6px 10px; border-bottom: 1px solid #f0f4ff; background:#fff; }
+.vendor-dropdown-search input {
+  width: 100%; box-sizing: border-box; padding: 6px 10px; font-size: 12px;
+  border: 1px solid #d9e4f5; border-radius: 6px; outline: none;
+}
+.vendor-dropdown-search input:focus { border-color: #1e5ca8; }
+.driver-dropdown-item {
+  padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f4ff;
+  font-size: 13px; transition: background .15s;
+}
+.driver-dropdown-item:hover { background: #e8f0fe; }
+.driver-dropdown-item .drv-name { font-weight: 700; color: #1e5ca8; }
+.driver-dropdown-item .drv-meta { font-size: 11px; color: #888; margin-top: 2px; }
+.req { color:#e74c3c; margin-left:2px; }
+/* FIX (2026-08-13): Vendor Name / Vendor Code split -- Vendor Name (2fr)
+   [Fetch] / Vendor Code (1fr) / Transporter (2fr) all on one row, replacing
+   the old 2-column row where Fetch overwrote Vendor Name itself with the
+   resolved SAP code. Overrides main.css's default .form-row (equal
+   auto-fit columns). */
+.form-row-vendor { grid-template-columns: 2fr 1fr 2fr; }
+.manual-hint { font-size:11px; color:#1e5ca8; font-weight:600; margin-left:6px; background:#f0f4ff; padding:2px 8px; border-radius:10px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+.form-group { margin-bottom:18px; }
+
+.gate-banner {
+  background:#fff3cd; border:1px solid #ffc107;
+  border-radius:8px; padding:14px 18px; margin-bottom:20px;
+  color:#856404; font-weight:500; font-size:14px;
+  display:flex; align-items:center; gap:10px;
+}
+.gate-banner.unlocked {
+  background:#ecfdf5; border-color:#00b894; color:#1a7a3c;
+}
+
+/* PO field wrapper */
+.po-field-wrap {
+  display: flex; gap: 8px; align-items: flex-start;
+}
+.po-field-wrap .form-input { flex: 1; }
+.btn-fetch-po {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 14px; height: 38px;
+  background: #1e5ca8; color: #fff; border: none; border-radius: 6px;
+  cursor: pointer; font-size: 13px; font-weight: 600;
+  white-space: nowrap; flex-shrink: 0; transition: background .2s;
+}
+.btn-fetch-po:hover:not(:disabled) { background: #154a8a; }
+.btn-fetch-po:disabled { background: #b0bec5; cursor: not-allowed; }
+.btn-fetch-po .spinner {
+  display: none; width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+.btn-fetch-po.loading .spinner { display: inline-block; }
+.btn-fetch-po.loading .arrow-icon { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.po-dropdown {
+  display: none; position: absolute; z-index: 200;
+  background: #fff; border: 1px solid #c5d8f8; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(30,92,168,0.12);
+  min-width: 320px; max-width: 460px; max-height: 280px;
+  overflow-y: auto; margin-top: 4px;
+}
+.po-dropdown.show { display: block; }
+.po-dropdown-header {
+  padding: 8px 14px; font-size: 11px; font-weight: 700;
+  color: #1e5ca8; background: #f0f4ff; border-bottom: 1px solid #e0eafc;
+  border-radius: 8px 8px 0 0;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.po-dropdown-item {
+  padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f4ff;
+  transition: background .15s; font-size: 13px;
+}
+.po-dropdown-item:hover { background: #e8f0fe; }
+.po-dropdown-item .po-num { font-weight: 700; color: #1e5ca8; font-size: 14px; }
+.po-dropdown-item .po-meta { font-size: 11px; color: #888; margin-top: 2px; }
+.po-fetch-status {
+  font-size: 12px; margin-top: 5px; padding: 4px 8px;
+  border-radius: 4px; display: none;
+}
+.po-fetch-status.show { display: block; }
+.po-fetch-status.info { background: #e8f0fe; color: #1e5ca8; }
+.po-fetch-status.error { background: #fee2e2; color: #b91c1c; }
+.po-fetch-status.success { background: #d1fae5; color: #065f46; }
+
+/* ── FIX (2026-08-19, client request): visual redesign to match the
+   Extracted Data tab's design system ("xd-*" classes) -- these are
+   copied from extracted_data.html's own <style> block (not shared via
+   main.css, each tab template is self-contained) since this tab now
+   reuses the same section-header / vertical-label-table / highlight-link
+   look. Every existing field id, JS function, and behavior below is
+   unchanged -- this only restyles the surrounding markup. ───────────── */
+.approval-banner {
+  border-radius:10px; padding:9px 18px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:13px; margin-bottom:14px;
+}
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+.approval-banner.silent-hours { background:#fdf1e0; color:#a3560c; border:1px solid #f0b060; }
+
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+.xd-section-title .xd-orig-links a {
+  color:#8a6100; font-size:11px; font-weight:600; text-decoration:none;
+  letter-spacing:normal; margin-left:8px; display:inline-block;
+  background:#fff; border:1.5px solid #f0a500; border-radius:6px;
+  padding:4px 10px;
+}
+.xd-section-title .xd-orig-links a:hover { background:#fff2cf; text-decoration:none; }
+
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input, .xd-table textarea, .xd-table select {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table select { border-color:#dfe3e8; background:white; }
+.xd-table textarea { resize:none; line-height:1.35; }
+.xd-table input:hover, .xd-table textarea:hover, .xd-table select:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table textarea:focus, .xd-table select:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table textarea:disabled, .xd-table select:disabled { color:#4a5568; cursor:not-allowed; }
+/* Existing .field-error (red) / .po-fetch-status etc. classes from above
+   keep working unchanged inside these tables -- .field-error already sets
+   border-color, which still applies since it's a plain class selector
+   layered on top. */
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; align-items:stretch; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
+</style>
+
+<div class="content-card">
+  <h3>🚪 Gate In Entry Form</h3>
+{% set status = (history.approval_status if history else 'pending') or 'pending' %}
+{# FIX (2026-08-14, client request): Gate In no longer waits on GST
+   Verification -- see app.py's _check_step_allowed()/
+   _extracted_data_view_state() for the matching backend change. Only
+   Data Approval gates Gate In now; the old "GST Verification Pending"
+   intermediate banner is gone along with the gst_ok/post_locked factor
+   that used to require it. #}
+{# FIX (2026-09-03): silent_hours_mode is only ever true on the dedicated
+   /silent_hours_gate_in walk-in ENTRY route (app.py), which always starts
+   a brand-new record and has no way to reopen an existing one. Once a
+   walk-in is Saved but not yet Posted (or Post gets interrupted -- e.g. a
+   server restart mid-job, confirmed real case: history_id=628), the only
+   way back to it is the regular /view/<id> page -- but that page never
+   set silent_hours_mode, so post_locked below fell back to the normal
+   approval check and blocked Posting with a misleading "must be approved"
+   message, even though app.py's _check_step_allowed() already correctly
+   exempts these records server-side (it checks history.silent_hours_entry,
+   the permanent DB flag -- see db_operations.set_silent_hours_created()).
+   Checking history.silent_hours_entry here too, not just the route flag,
+   makes the client-side gate match the server-side one that was already
+   correct. #}
+{% set is_silent_hours_record = silent_hours_mode or (history and history.silent_hours_entry) %}
+{% set post_locked = (status != 'approved') and not is_silent_hours_record %}
+{% set is_approved = (status == 'approved') %}
+{% if is_silent_hours_record %}
+<div class="approval-banner silent-hours">🌙 <strong>Silent Hours</strong> — post Gate In directly; documents get uploaded and OCR'd later during business hours.</div>
+{% elif not is_approved %}
+<div class="approval-banner pending">⏸ <strong>Awaiting Approval</strong> — Approve the record in Extracted Data first.</div>
+{% else %}
+<div class="approval-banner approved">✓ <strong>Approved</strong> — Ready for Gate In posting.</div>
+{% endif %}
+
+  {% if history %}
+  <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+    <strong>Status:</strong>
+    Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO 101: {% if history.migo_101 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp; MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <form id="gateInForm" novalidate>
+    <input type="hidden" id="history_id" value="{{ history_id or '' }}">
+
+    <!-- ── Gate In Date/Time ──────────────────────────────────────────────── -->
+    <div class="xd-section-title"><span>⏰ GATE IN DATE TIME</span></div>
+    <div class="xd-band-pair">
+      <table class="xd-table">
+        <tr>
+          <td class="xd-lbl" rowspan="1">Date</td>
+          <td class="xd-attr-lbl">Gate In Date <span class="req">*</span></td>
+          <td class="xd-attr-val">
+            <input type="date" id="gateInDate" class="form-input"
+                   value="{{ (gatein_data.get('gate_in_date') if gatein_data else '') or '' }}"
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <div class="field-error-msg" id="err_gateInDate">Required</div>
+          </td>
+        </tr>
+      </table>
+      <table class="xd-table">
+        <tr>
+          <td class="xd-lbl" rowspan="1">Time</td>
+          <td class="xd-attr-lbl">Gate In Time <span class="req">*</span></td>
+          <td class="xd-attr-val">
+            <input type="time" id="gateInTime" class="form-input"
+                   value="{{ (gatein_data.get('gate_in_time') if gatein_data else '') or '' }}"
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <div class="field-error-msg" id="err_gateInTime">Required</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- ── Truck Fields Section ──────────────────────────────────────────── -->
+    <div id="truckFieldsSection">
+      <div class="xd-section-title">
+        <span>🚚 TRUCK DETAILS</span>
+        <span class="xd-orig-links">
+          {% if invoice_data and invoice_data.get('filename') %}
+          <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data['filename']) }}" target="_blank">📄 View Invoice</a>
+          {% endif %}
+          {% if ewaybill_data and ewaybill_data.get('filename') %}
+          <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) }}" target="_blank">📄 View E-Way Bill</a>
+          {% endif %}
+          {% if lr_data and lr_data.get('filename') %}
+          <a href="{{ url_for('view_document', doctype='lr', filename=lr_data['filename']) }}" target="_blank">📄 View LR</a>
+          {% endif %}
+        </span>
+      </div>
+      <div class="xd-band-pair">
+        <table class="xd-table">
+          <tr>
+            <td class="xd-lbl" rowspan="3">Vendor info</td>
+            <td class="xd-attr-lbl">Vendor Name <span class="req">*</span></td>
+            <td class="xd-attr-val driver-dropdown-wrap">
+              <div class="vehicle-lookup-row">
+                <input type="text" id="vendorName" class="form-input" maxlength="40" autocomplete="off"
+                       value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                       placeholder="Vendor name" oninput="onVendorNameTypeahead('')"
+                       {% if gate_in_locked %}disabled{% endif %}>
+                <button type="button" class="btn-lookup" onclick="fetchVendorCode('')"
+                        {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
+              </div>
+              <div class="driver-dropdown" id="vendorCodeDropdown"></div>
+              <div class="field-error-msg" id="err_vendorName">Required</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="xd-attr-lbl">Vendor Code <span class="req">*</span></td>
+            <td class="xd-attr-val">
+              <input type="text" id="vendorCode" class="form-input" maxlength="10" autocomplete="off"
+                     value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
+                     placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <div class="field-error-msg" id="err_vendorCode">Required</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="xd-attr-lbl">Container No</td>
+            <td class="xd-attr-val">
+              <input type="text" id="containerNo" class="form-input" maxlength="20"
+                     value="{{ ((gatein_data.get('container_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
+                     {% if gate_in_locked %}disabled{% endif %}>
+            </td>
+          </tr>
+        </table>
+        <table class="xd-table">
+          <tr>
+            <td class="xd-lbl" rowspan="5" id="truckVehicleDriverLbl">Vehicle &amp; driver</td>
+            <td class="xd-attr-lbl">Truck No <span class="req">*</span> <span class="xd-attr-note">Max 12 · auto-caps</span></td>
+            <td class="xd-attr-val driver-dropdown-wrap">
+              <div class="vehicle-lookup-row">
+                <input type="text" id="truckNo" class="form-input" maxlength="12"
+                       value="{{ ((gatein_data.get('truck_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
+                       {% if gate_in_locked %}disabled{% endif %}>
+                <button type="button" class="btn-lookup" id="fetchDriverBtn" onclick="lookupVehicle()"
+                        {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch Driver</button>
+              </div>
+              <div class="driver-dropdown" id="driverDropdown"></div>
+              <div class="field-error-msg" id="err_truckNo">Required</div>
+            </td>
+          </tr>
+          <tr>
+            <td class="xd-attr-lbl">License No <span class="req">*</span></td>
+            <td class="xd-attr-val">
+              <input type="text" id="licenseNo" class="form-input" maxlength="20"
+                     value="{{ ((gatein_data.get('license_no') if gatein_data else '') or '')|truncate(20, True, '', 0) }}"
+                     placeholder="e.g. HR06 1234567890123"
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <div class="field-error-msg" id="err_licenseNo">Required</div>
+            </td>
+          </tr>
+          <tr id="transporterRowTruck">
+            <td class="xd-attr-lbl">Transporter</td>
+            <td class="xd-attr-val">
+              <input type="text" id="transporter" class="form-input" maxlength="40"
+                     value="{{ ((gatein_data.get('transporter') if gatein_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '')|truncate(40, True, '', 0) }}"
+                     {% if gate_in_locked %}disabled{% endif %}>
+            </td>
+          </tr>
+          <!-- ── Driver Name / No. of Persons -- default (Truck) location is
+               merged into this "Vehicle & driver" band, per client request
+               (2026-08-26). These two rows are SHARED across all delivery
+               types (unlike the rest of this table), so onDeliveryTypeChange()
+               below physically re-parents them into the Hand/Courier table
+               instead when dType != 'truck' -- they must never be nested
+               inside a mode-specific display:none wrapper (see CLAUDE.md's
+               tab-redesign notes on this exact trap), since driverName/
+               numPersons are read unconditionally at submit time regardless
+               of delivery type. ────────────────────────────────────────── -->
+          <tr id="driverNameRow">
+            <td class="xd-attr-lbl"><span id="driverNameLabelText">Driver Name</span><span class="req" id="driverNameReq"> *</span></td>
+            <td class="xd-attr-val">
+              <input type="text" id="driverName" class="form-input" maxlength="30"
+                     value="{{ ((gatein_data.get('driver_name') if gatein_data else '') or '')|truncate(30, True, '', 0) }}"
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <div class="field-error-msg" id="err_driverName">Required</div>
+            </td>
+          </tr>
+          <tr id="numPersonsRow">
+            <td class="xd-attr-lbl">No. of Persons <span class="xd-attr-note">Default 1</span></td>
+            <td class="xd-attr-val">
+              <input type="number" id="numPersons" class="form-input"
+                     value="{{ (gatein_data.get('num_persons') if gatein_data else '1') or '1' }}"
+                     min="1" max="99" {% if gate_in_locked %}disabled{% endif %}>
+            </td>
+          </tr>
+        </table>
+      </div>
+    </div><!-- /#truckFieldsSection -->
+
+    <!-- ── Hand Delivery Fields Section ─────────────────────────────────── -->
+    <div id="handFieldsSection" style="display:none;">
+      <div class="xd-section-title"><span id="handSectionTitle">🤝 HAND DELIVERY DETAILS</span></div>
+      <table class="xd-table">
+        <tr>
+          <td class="xd-lbl" rowspan="3" id="handVendorInfoLbl">Vendor info</td>
+          <td class="xd-attr-lbl">Vendor Name <span class="req">*</span></td>
+          <td class="xd-attr-val driver-dropdown-wrap">
+            <div class="vehicle-lookup-row">
+              <input type="text" id="vendorNameHand" class="form-input" maxlength="40" autocomplete="off"
+                     value="{{ (gatein_data.get('vendor_name') if gatein_data else '') or (invoice_data.get('seller_name') if invoice_data else '') or '' }}"
+                     placeholder="Vendor name" oninput="onVendorNameTypeahead('Hand')"
+                     {% if gate_in_locked %}disabled{% endif %}>
+              <button type="button" class="btn-lookup" onclick="fetchVendorCode('Hand')"
+                      {% if gate_in_locked %}disabled{% endif %}>🔍 Fetch</button>
+            </div>
+            <div class="driver-dropdown" id="vendorCodeDropdownHand"></div>
+            <div class="field-error-msg" id="err_vendorNameHand">Required</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="xd-attr-lbl">Vendor Code <span class="req">*</span></td>
+          <td class="xd-attr-val">
+            <input type="text" id="vendorCodeHand" class="form-input" maxlength="10" autocomplete="off"
+                   value="{{ (gatein_data.get('vendor_code') if gatein_data else '') or '' }}"
+                   placeholder="SAP code" title="SAP vendor code (LIFNR) -- filled by Fetch, or type it directly if you already know it."
+                   {% if gate_in_locked %}disabled{% endif %}>
+            <div class="field-error-msg" id="err_vendorCodeHand">Required</div>
+          </td>
+        </tr>
+        <tr id="transporterRowHand">
+          <td class="xd-attr-lbl">Transporter</td>
+          <td class="xd-attr-val">
+            <input type="text" id="transporterHand" class="form-input" maxlength="40"
+                   value="{{ ((gatein_data.get('transporter') if gatein_data else '') or '')|truncate(40, True, '', 0) }}"
+                   {% if gate_in_locked %}disabled{% endif %}>
+          </td>
+        </tr>
+      </table>
+    </div><!-- /#handFieldsSection -->
+
+    <!-- ── Delivery Type ─ same radios/ids/onchange handler as before, only
+         restyled. ─────────────────────────────────────────────────────── -->
+    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin:14px 0 18px;">
+      <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">🚦 Delivery Type</div>
+      <div class="delivery-type-group">
+        {# FIX (2026-08-10): these three -- and the poAvail radios further
+           below -- used to hardcode `checked` on truck/with_po regardless
+           of what was actually saved, with a comment acknowledging the gap
+           ("reopening a without_po record will still show With PO selected
+           by default"). Now driven from history.po_flow_type (e.g.
+           "truck_without_po" -- see _getPoFlowType() below, delivery type
+           + "_" + po availability), same format saved server-side. Falls
+           back to truck/with_po -- the original defaults -- when there's
+           no history yet (brand new record) or po_flow_type is unset. #}
+        <label class="delivery-radio-option">
+          <input type="radio" name="deliveryType" value="truck"
+                 {% if not history or not history.po_flow_type or history.po_flow_type.startswith('truck') %}checked{% endif %}
+                 onchange="onDeliveryTypeChange()"> 🚚 Truck
+        </label>
+        <label class="delivery-radio-option">
+          <input type="radio" name="deliveryType" value="hand"
+                 {% if history and history.po_flow_type and history.po_flow_type.startswith('hand') %}checked{% endif %}
+                 onchange="onDeliveryTypeChange()"> 🤝 Hand Delivery
+        </label>
+        <label class="delivery-radio-option">
+          <input type="radio" name="deliveryType" value="courier"
+                 {% if history and history.po_flow_type and history.po_flow_type.startswith('courier') %}checked{% endif %}
+                 onchange="onDeliveryTypeChange()"> 📦 Courier
+        </label>
+      </div>
+    </div>
+
+    <div class="xd-section-title"><span>📦 MATERIAL DETAILS</span></div>
+    {# v26: preselect from Extracted Data's simplified Category
+       (gatein_category_default, mapped stores->A / sales_return->E /
+       job_work->F in app.py's view_detail()) -- but ONLY when this
+       Gate In hasn't already saved its own category (a draft in
+       progress, or an already-submitted record). A real saved value
+       always wins over the default. All 7 options stay selectable --
+       this only changes which one starts selected. See the
+       data-preselected attribute + confirm-on-change JS below. #}
+    {% set _existing_cat = (gatein_data.get('category') if gatein_data else '') or '' %}
+    {% set _effective_cat = _existing_cat or gatein_category_default or '' %}
+    {# v7: goods fallbacks now come from invoice hsn_details (EWB goods columns deprecated) #}
+    {% set inv_hsn = (invoice_data.get('hsn_details') if invoice_data else []) or [] %}
+    {% set inv_goods_desc = ((inv_hsn[0].get('description') or '') if inv_hsn else '') %}
+    {% if inv_hsn|length > 1 and inv_goods_desc %}
+      {% set inv_goods_desc = inv_goods_desc ~ ' +' ~ (inv_hsn|length - 1) ~ ' more' %}
+    {% endif %}
+    {% set inv_goods_qty = ((inv_hsn[0].get('quantity') or '') if inv_hsn else '') %}
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Material &amp; challan</td>
+        <td class="xd-attr-lbl">Category <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <select id="category" class="form-select" data-preselected="{{ _effective_cat }}" {% if gate_in_locked %}disabled{% endif %}>
+            <option value="">Select category</option>
+            <option value="A" {% if _effective_cat=='A' %}selected{% endif %}>A — Stores</option>
+            <option value="B" {% if _effective_cat=='B' %}selected{% endif %}>B — Tankfarm</option>
+            <option value="C" {% if _effective_cat=='C' %}selected{% endif %}>C — Scrap</option>
+            <option value="D" {% if _effective_cat=='D' %}selected{% endif %}>D — Despatch</option>
+            <option value="E" {% if _effective_cat=='E' %}selected{% endif %}>E — Sales Return</option>
+            <option value="F" {% if _effective_cat=='F' %}selected{% endif %}>F — Job Work</option>
+            <option value="G" {% if _effective_cat=='G' %}selected{% endif %}>G — Despatch Scrap</option>
+          </select>
+          <div class="field-error-msg" id="err_category">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Challan No <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="challanNo" class="form-input" maxlength="20"
+                 value="{{ ((gatein_data.get('challan_no') if gatein_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '')|truncate(20, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_challanNo">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Import BOE No</td>
+        <td class="xd-attr-val">
+          <input type="text" id="boeNo" class="form-input" maxlength="10"
+                 value="{{ ((gatein_data.get('boe_no') if gatein_data else '') or '')|truncate(10, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+        </td>
+      </tr>
+    </table>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Qty &amp; PO</td>
+        <td class="xd-attr-lbl">Material <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="material" class="form-input" maxlength="40"
+                 value="{{ ((gatein_data.get('material') if gatein_data else '') or inv_goods_desc or '')|truncate(40, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_material">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Challan Quantity <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="challanQty" class="form-input" maxlength="20" inputmode="decimal"
+                value="{{ ((gatein_data.get('challan_qty') if gatein_data else '') or inv_goods_qty or '')|truncate(20, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_challanQty">Required</div>
+        </td>
+      </tr>
+      <tr id="purchaseOrderGroup">
+        <td class="xd-attr-lbl">Purchase Order <span class="req" id="purchaseOrderReq">*</span>
+          <span class="xd-attr-note">Click ▾ to fetch pending POs</span>
+        </td>
+        <td class="xd-attr-val">
+          <div class="po-field-wrap" style="position:relative;">
+            <input type="text" id="purchaseOrder" class="form-input" maxlength="10"
+                   value="{{ ((gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or (ewaybill_data.get('po_number') if ewaybill_data else '') or '')|truncate(10, True, '', 0) }}"
+                   autocomplete="off" {% if gate_in_locked %}disabled{% endif %}>
+            <button type="button" class="btn-fetch-po" id="fetchPoBtn" onclick="fetchPoList()"
+                    {% if gate_in_locked %}disabled{% endif %}>
+              <span class="spinner"></span>
+              <span class="arrow-icon">▾ Fetch POs</span>
+            </button>
+            <div class="po-dropdown" id="poDropdown">
+              <div class="po-dropdown-header">
+                <span id="poDropdownTitle">Pending POs</span>
+                <span onclick="closePoDropdown()" style="cursor:pointer;color:#888;font-size:14px;">✕</span>
+              </div>
+              <div id="poDropdownList"></div>
+            </div>
+          </div>
+          <div class="po-fetch-status" id="poFetchStatus"></div>
+          <div class="field-error-msg" id="err_purchaseOrder">Required</div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- ── PO Availability ─ same radios/ids/onchange handler as before,
+         only restyled. ─────────────────────────────────────────────────── -->
+    <div style="background:#f8f9ff;border:1px solid #e0eafc;border-radius:10px;padding:14px 18px;margin:14px 0 18px;">
+      <div style="font-size:13px;font-weight:700;color:#1e5ca8;margin-bottom:8px;">📋 Purchase Order Available?</div>
+      <div class="po-avail-group">
+        <label class="delivery-radio-option">
+          <input type="radio" name="poAvail" value="with_po"
+                 {% if not history or not history.po_flow_type or history.po_flow_type.endswith('_with_po') %}checked{% endif %}
+                 onchange="onPoAvailChange()"> With PO
+        </label>
+        <label class="delivery-radio-option">
+          <input type="radio" name="poAvail" value="without_po"
+                 {% if history and history.po_flow_type and history.po_flow_type.endswith('_without_po') %}checked{% endif %}
+                 onchange="onPoAvailChange()"> Without PO
+        </label>
+      </div>
+    </div>
+
+    <table class="xd-table">
+      <tr>
+        <td class="xd-attr-lbl">Gate Pass No (RTGP)</td>
+        <td class="xd-attr-val">
+          <input type="text" id="gatePassNo" class="form-input" maxlength="12"
+                 value="{{ ((gatein_data.get('gate_pass_no') if gatein_data else '') or '')|truncate(12, True, '', 0) }}"
+                 {% if gate_in_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_gatePassNo">Required</div>
+        </td>
+        <td class="xd-attr-lbl">Note</td>
+        <td class="xd-attr-val">
+          <textarea id="note" class="form-textarea" rows="1" maxlength="100"
+                    {% if gate_in_locked %}disabled{% endif %}>{{ ((gatein_data.get('note') if gatein_data else '') or '')|truncate(100, True, '', 0) }}</textarea>
+        </td>
+      </tr>
+    </table>
+
+    <div id="gateInStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;margin-top:16px;font-weight:500;"></div>
+
+    <div class="action-buttons" style="margin-top:16px;">
+      {% if silent_hours_mode %}
+      <button type="button" id="gateInSaveBtn" class="btn btn-secondary" onclick="_doSaveSilentHours()">💾 Save</button>
+      <button type="button" id="gateInPostBtn" class="btn btn-primary" onclick="_doPostSilentHours()">🚀 Post to SAP</button>
+      {% else %}
+      <button type="submit" id="gateInSubmitBtn" class="btn btn-primary"
+              {% if history and history.gate_in %}disabled style="background:#00b894;"{% endif %}>
+        {% if history and history.gate_in %}✓ Gate In Done (GIN: {{ history.gate_in_number }}){% else %}💾 Save & Post Gate In{% endif %}
+      </button>
+      {% endif %}
+      <button type="button" class="btn btn-secondary" onclick="clearGateInForm()" {% if gate_in_locked %}disabled{% endif %}>🔄 Clear Form</button>
+    </div>
+  </form>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'gatein' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
+</div>
+
+
+<script>
+
+
+const POST_LOCKED_GATEIN = {{ 'true' if post_locked else 'false' }};
+// FIX: was referenced below (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED) but
+// never actually declared anywhere -- an undefined bare identifier throws
+// in JS, so the submit handler aborted with a silent console error every
+// time POST_LOCKED_GATEIN was true, before the request ever reached the
+// server. That's why toggling ENABLE_STEP_LOCKS in .env appeared to do
+// nothing: the server-side bypass (app.py _check_step_allowed) was correct
+// all along, the request just never got there.
+// v20 FIX: this was named plain STEP_LOCKS_ENABLED, and migo_103.html/
+// migo_105.html/miro.html each independently declared their OWN const of
+// that exact same name to fix the identical bug in their own file. Since
+// all four tabs render on one page in one shared global scope (see
+// index.html -- they're all server-side Jinja-included together, not
+// lazy-loaded separately), a second `const` with the same name is a
+// SyntaxError the moment the browser parses it -- which silently killed
+// the ENTIRE script block of whichever tab's <script> ran second (migo_103
+// in DOM order), taking down every function in it (openCompareModal,
+// addInvoiceRow, onInvPairClick, the matching logic, all of it), not just
+// the step-lock check. Renamed per-tab so they can never collide again.
+const STEP_LOCKS_ENABLED_GATEIN = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+// ADDED (2026-08-31, Silent Hours feature): true only on the
+// /silent_hours_gate_in walk-in entry route (app.py) -- drives which
+// action buttons render above (Save + Post to SAP instead of the single
+// Submit) and disables the normal submit-on-Enter path below, since that
+// path assumes a history_id already exists.
+const SILENT_HOURS_MODE = {{ 'true' if silent_hours_mode else 'false' }};
+
+
+(function() {
+  const dateEl = document.getElementById('gateInDate');
+  const timeEl = document.getElementById('gateInTime');
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().split('T')[0];
+  if (timeEl && !timeEl.value) {
+    const now = new Date();
+    timeEl.value = now.toTimeString().slice(0, 5);
+  }
+  // Apply initial show/hide state to match whichever poAvail/deliveryType
+  // radio is actually checked (now driven from history.po_flow_type -- see
+  // the FIX comment above the radio markup -- rather than always being the
+  // hardcoded truck/with_po default). onDeliveryTypeChange() wasn't called
+  // here before since the delivery radio always defaulted to "truck" and
+  // the static HTML already matched that (handFieldsSection starts
+  // display:none) -- now that the radio can load as "hand"/"courier" on a
+  // reopened record, this has to run too or the visible fields section
+  // would mismatch whichever radio is actually checked.
+  onPoAvailChange();
+  onDeliveryTypeChange();
+})();
+
+const TRUCK_MANDATORY_FIELDS = [
+  { id: 'gateInDate',    errId: 'err_gateInDate' },
+  { id: 'gateInTime',    errId: 'err_gateInTime' },
+  { id: 'vendorName',    errId: 'err_vendorName' },
+  { id: 'vendorCode',    errId: 'err_vendorCode' },
+  { id: 'truckNo',       errId: 'err_truckNo' },
+  { id: 'driverName',    errId: 'err_driverName' },
+  { id: 'licenseNo',     errId: 'err_licenseNo' },
+  { id: 'category',      errId: 'err_category' },
+  { id: 'material',      errId: 'err_material' },
+  { id: 'challanNo',     errId: 'err_challanNo' },
+  { id: 'challanQty',    errId: 'err_challanQty' },
+  { id: 'purchaseOrder', errId: 'err_purchaseOrder' },
+];
+const HAND_MANDATORY_FIELDS = [
+  { id: 'gateInDate',     errId: 'err_gateInDate' },
+  { id: 'gateInTime',     errId: 'err_gateInTime' },
+  { id: 'vendorNameHand', errId: 'err_vendorNameHand' },
+  { id: 'vendorCodeHand', errId: 'err_vendorCodeHand' },
+  { id: 'category',       errId: 'err_category' },
+  { id: 'material',       errId: 'err_material' },
+  { id: 'challanNo',      errId: 'err_challanNo' },
+  { id: 'challanQty',     errId: 'err_challanQty' },
+  { id: 'purchaseOrder',  errId: 'err_purchaseOrder' },
+];
+// Gate Pass No (RTGP) intentionally not in either mandatory list -- optional field.
+
+function _getPoFlowType() {
+  const dType  = document.querySelector('input[name="deliveryType"]:checked');
+  const poAvail = document.querySelector('input[name="poAvail"]:checked');
+  const delivery = dType   ? dType.value   : 'truck';
+  const po       = poAvail ? poAvail.value : 'with_po';
+  return delivery + '_' + po;
+}
+
+function onDeliveryTypeChange() {
+  const dType = document.querySelector('input[name="deliveryType"]:checked').value;
+  // Courier reuses the exact same "no truck" fields section as Hand Delivery
+  // (Vendor Name + Transporter, no Truck No/License No/Container No) --
+  // the only real difference between hand and courier is the placeholder
+  // rf_runner.py sends SAP for the (blank) truck number field. See
+  // execute_gate_in_sap() in services/rf_runner.py.
+  document.getElementById('truckFieldsSection').style.display = (dType === 'truck') ? '' : 'none';
+  document.getElementById('handFieldsSection').style.display  = (dType !== 'truck') ? '' : 'none';
+  const sectionTitle = document.getElementById('handSectionTitle');
+  if (sectionTitle) {
+    sectionTitle.textContent = (dType === 'courier') ? '📦 Courier Delivery Details' : '🤝 Hand Delivery Details';
+  }
+  const labelText = document.getElementById('driverNameLabelText');
+  const reqStar   = document.getElementById('driverNameReq');
+  if (labelText) labelText.textContent = (dType === 'truck') ? 'Driver Name' : 'Person Name';
+  if (reqStar)   reqStar.style.display = (dType === 'truck') ? '' : 'none';
+  _placeDriverRows(dType);
+}
+
+// FIX (2026-08-26, client request): Driver Name / No. of Persons visually
+// merged into the "Vehicle & driver" band for Truck delivery. Those two
+// fields are shared across every delivery type (read unconditionally in
+// _doSubmitGateIn()), so they can't just live permanently inside the
+// Truck-only table -- that would hide them entirely (and make them
+// unreachable) whenever Hand/Courier is selected, since #truckFieldsSection
+// is display:none in that mode. Instead, physically re-parent the same two
+// <tr> nodes (ids/values/listeners all preserved -- this moves the actual
+// elements, it does not clone them) into whichever table is currently
+// visible, and toggle each table's leading "Vehicle & driver" / "Vendor
+// info" xd-lbl rowspan (3 <-> 5) to match.
+function _placeDriverRows(dType) {
+  const row1 = document.getElementById('driverNameRow');
+  const row2 = document.getElementById('numPersonsRow');
+  const truckLbl = document.getElementById('truckVehicleDriverLbl');
+  const handLbl  = document.getElementById('handVendorInfoLbl');
+  if (!row1 || !row2) return;
+  if (dType === 'truck') {
+    const anchor = document.getElementById('transporterRowTruck');
+    if (anchor && anchor.nextSibling !== row1) anchor.after(row1, row2);
+    if (truckLbl) truckLbl.rowSpan = 5;
+    if (handLbl)  handLbl.rowSpan  = 3;
+  } else {
+    const anchor = document.getElementById('transporterRowHand');
+    if (anchor && anchor.nextSibling !== row1) anchor.after(row1, row2);
+    if (handLbl)  handLbl.rowSpan  = 5;
+    if (truckLbl) truckLbl.rowSpan = 3;
+  }
+}
+
+function onPoAvailChange() {
+  const poAvail  = document.querySelector('input[name="poAvail"]:checked').value;
+  const poEl     = document.getElementById('purchaseOrder');
+  const poGroup  = document.getElementById('purchaseOrderGroup');
+  const poErr    = document.getElementById('err_purchaseOrder');
+  if (poAvail === 'without_po') {
+    // Without PO: blank the value (rf_runner.py sends PURCHASE_ORDER as "" to
+    // the SAP bot whenever po_flow_type ends in _without_po) and hide the
+    // whole field -- there's nothing to fill in, so showing a greyed-out
+    // readonly box was just clutter. Clear any stale error state too, since
+    // validateGateIn() no longer checks this field in this scenario.
+    poEl.value = '';
+    if (poGroup) poGroup.style.display = 'none';
+    poEl.classList.remove('field-error');
+    if (poErr) poErr.classList.remove('show');
+  } else {
+    if (poGroup) poGroup.style.display = '';
+  }
+}
+
+function validateGateIn() {
+  const dType    = document.querySelector('input[name="deliveryType"]:checked');
+  const delivery = dType ? dType.value : 'truck';
+  const poAvail  = document.querySelector('input[name="poAvail"]:checked');
+  const isWithoutPo = poAvail ? poAvail.value === 'without_po' : false;
+  const MANDATORY_FIELDS = (delivery === 'truck') ? TRUCK_MANDATORY_FIELDS : HAND_MANDATORY_FIELDS;
+  let valid = true;
+  [...TRUCK_MANDATORY_FIELDS, ...HAND_MANDATORY_FIELDS].forEach(f => {
+    const el  = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el)  el.classList.remove('field-error');
+    if (err) { err.classList.remove('show'); err.textContent = 'Required'; }
+  });
+  MANDATORY_FIELDS.forEach(f => {
+    // Purchase Order is hidden and intentionally blank for without_po --
+    // don't block submission on a field the user can't even see or fill in.
+    if (f.id === 'purchaseOrder' && isWithoutPo) return;
+    const el  = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el && !el.value.trim()) {
+      el.classList.add('field-error');
+      if (err) err.classList.add('show');
+      valid = false;
+    }
+  });
+  if (delivery === 'truck') {
+    const truckEl = document.getElementById('truckNo');
+    if (truckEl) {
+      const stripped = truckEl.value.replace(/\s/g, '');
+      if (stripped.length > 12) {
+        truckEl.classList.add('field-error');
+        const errEl = document.getElementById('err_truckNo');
+        if (errEl) { errEl.textContent = 'Max 12 characters'; errEl.classList.add('show'); }
+        valid = false;
+      }
+    }
+    const licEl = document.getElementById('licenseNo');
+    if (licEl && licEl.value.length > 20) {
+      licEl.classList.add('field-error');
+      const errEl = document.getElementById('err_licenseNo');
+      if (errEl) { errEl.textContent = 'Max 20 characters (incl. space)'; errEl.classList.add('show'); }
+      valid = false;
+    }
+  }
+
+  // Material (and every other SAP-length-limited field) is now auto-capped
+  // server-side at page-render time via Jinja's |truncate filter, so the
+  // pre-filled value can never exceed its SAP max length in the first
+  // place -- no submit-blocking check needed here any more.
+
+  // FIX (2026-08-13): Vendor Code (not Vendor Name any more -- see the
+  // gate_in_entries.vendor_code split) must hold the SAP vendor code
+  // (LIFNR, max 10 chars) before posting. Doesn't have to come from picking
+  // a Fetch/type-ahead match (a guard may still type the code straight in
+  // from memory) -- just has to fit the code format. Checked on whichever
+  // section is active.
+  const vendorSuffix = (delivery === 'truck') ? '' : 'Hand';
+  const vendorCodeEl = document.getElementById('vendorCode' + vendorSuffix);
+  if (vendorCodeEl && vendorCodeEl.value.trim().length > 10) {
+    vendorCodeEl.classList.add('field-error');
+    const errEl = document.getElementById('err_vendorCode' + vendorSuffix);
+    if (errEl) {
+      errEl.textContent = 'Max 10 characters -- this must be the SAP vendor code (click Fetch or type it directly).';
+      errEl.classList.add('show');
+    }
+    valid = false;
+  }
+
+  return valid;
+}
+
+[...TRUCK_MANDATORY_FIELDS, ...HAND_MANDATORY_FIELDS].forEach(f => {
+  const el  = document.getElementById(f.id);
+  const err = document.getElementById(f.errId);
+  if (el) {
+    el.addEventListener('input',  () => { el.classList.remove('field-error'); if (err) err.classList.remove('show'); });
+    el.addEventListener('change', () => { el.classList.remove('field-error'); if (err) err.classList.remove('show'); });
+  }
+});
+
+(function() {
+  const el = document.getElementById('truckNo');
+  if (!el) return;
+  el.addEventListener('blur', function() {
+    const stripped = this.value.replace(/\s/g, '').toUpperCase();
+    this.value = stripped;
+    const errEl = document.getElementById('err_truckNo');
+    if (stripped.length > 12) {
+      this.classList.add('field-error');
+      if (errEl) { errEl.textContent = 'Max 12 characters'; errEl.classList.add('show'); }
+    } else if (stripped) {
+      this.classList.remove('field-error');
+      if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
+    }
+  });
+})();
+
+(function() {
+  const el = document.getElementById('licenseNo');
+  if (!el) return;
+  el.addEventListener('blur', function() {
+    let clean = this.value.replace(/\s/g, '').toUpperCase();
+    if (clean.length > 4) clean = clean.slice(0, 4) + ' ' + clean.slice(4);
+    this.value = clean;
+    const errEl = document.getElementById('err_licenseNo');
+    if (clean.length > 20) {
+      this.classList.add('field-error');
+      if (errEl) { errEl.textContent = 'Max 20 characters (incl. space)'; errEl.classList.add('show'); }
+    } else if (clean) {
+      this.classList.remove('field-error');
+      if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
+    }
+  });
+})();
+
+// Challan Quantity: numeric only, max 16 digits before the decimal point
+// and 3 after (client request, 2026-08-07). Bad characters are blocked as
+// the user types (real-time filter on 'input', which also covers paste --
+// unlike 'keypress'), rather than validated after the fact, so it's
+// physically impossible to end up with letters or an over-length value.
+// On blur, a bare integer (or a value typed with fewer than 3 decimal
+// digits) is normalized to exactly 3 decimals -- "100" becomes "100.000",
+// "100.5" becomes "100.500". Client-side only, matching how Truck No and
+// License No are handled in this same tab -- no server-side re-check.
+// Same as those two, this only fires once the user actually interacts with
+// the field, so a pre-filled value (from a saved record, or the invoice's
+// goods quantity) isn't force-reformatted just by loading the page.
+(function() {
+  const el = document.getElementById('challanQty');
+  if (!el) return;
+
+  el.addEventListener('input', function() {
+    let v = this.value;
+    // Strip anything that isn't a digit or a period -- this alone blocks
+    // alphabets, currency symbols, spaces, etc.
+    v = v.replace(/[^0-9.]/g, '');
+    // Only the first period counts as the decimal point; drop any others
+    // (e.g. typing "1.2.3" collapses to "1.23").
+    const firstDot = v.indexOf('.');
+    if (firstDot !== -1) {
+      v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+    }
+    // Cap 16 digits before the decimal, 3 after (16+3, total 20 chars).
+    const parts = v.split('.');
+    parts[0] = parts[0].slice(0, 16);
+    if (parts.length > 1) parts[1] = parts[1].slice(0, 3);
+    this.value = parts.join('.');
+  });
+
+  el.addEventListener('blur', function() {
+    const errEl = document.getElementById('err_challanQty');
+    let v = this.value.trim();
+    if (!v) return;  // required-check on submit handles blank
+    if (!v.includes('.')) {
+      v = v + '.000';
+    } else {
+      let [intPart, decPart] = v.split('.');
+      intPart = intPart || '0';  // guard against a lone "." with nothing before it
+      decPart = (decPart + '000').slice(0, 3);
+      v = intPart + '.' + decPart;
+    }
+    this.value = v;
+    this.classList.remove('field-error');
+    if (errEl) { errEl.classList.remove('show'); errEl.textContent = 'Required'; }
+  });
+})();
+
+document.getElementById('gateInForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  if (SILENT_HOURS_MODE) {
+    // Enter-key submit in Silent Hours mode -- use the Save / Post to SAP
+    // buttons instead, they're not wired to this listener at all.
+    return;
+  }
+  if (POST_LOCKED_GATEIN && STEP_LOCKS_ENABLED_GATEIN) {
+    showToast('⏸ Record must be approved before Gate In can be posted.', 'warning');
+    return;
+  }
+  if (!validateGateIn()) {
+    const firstError = document.querySelector('.field-error');
+    if (firstError) firstError.scrollIntoView({ behavior:'smooth', block:'center' });
+    return;
+  }
+  const historyId = parseInt(document.getElementById('history_id').value);
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+
+  showConfirm(
+    'Confirm Gate In Posting',
+    'You are about to post Gate In to SAP. Make sure all fields are correct — this cannot be undone from the portal.',
+    () => _doSubmitGateIn(historyId)
+  );
+});
+
+function _stripToNumeric(val) {
+  return String(val || '').replace(/[^0-9]/g, '');
+}
+
+function _doSubmitGateIn(historyId) {
+  const dType    = document.querySelector('input[name="deliveryType"]:checked');
+  const delivery = dType ? dType.value : 'truck';
+  const poFlowType = _getPoFlowType();
+
+  let vendorName, vendorCode, transporter;
+  if (delivery === 'truck') {
+    vendorName  = document.getElementById('vendorName').value;
+    vendorCode  = document.getElementById('vendorCode').value;
+    transporter = document.getElementById('transporter').value;
+  } else {
+    vendorName  = document.getElementById('vendorNameHand').value;
+    vendorCode  = document.getElementById('vendorCodeHand').value;
+    transporter = document.getElementById('transporterHand').value;
+  }
+
+  const payload = {
+    history_id:    historyId,
+    gateInDate:    document.getElementById('gateInDate').value,
+    gateInTime:    document.getElementById('gateInTime').value,
+    vendorName:    vendorName,
+    vendorCode:    vendorCode,
+    transporter:   transporter,
+    truckNo:       (delivery === 'truck') ? document.getElementById('truckNo').value    : '',
+    driverName:    document.getElementById('driverName').value,
+    licenseNo:     (delivery === 'truck') ? document.getElementById('licenseNo').value.replace(/\s/g, '') : '',
+    containerNo:   (delivery === 'truck') ? document.getElementById('containerNo').value : '',
+    numPersons:    document.getElementById('numPersons').value,
+    category:      document.getElementById('category').value,
+    material:      document.getElementById('material').value,
+    // Reverted per instruction -- keep stripping to numeric-only here in the
+    // frontend for now, same as before. (Briefly changed to send the raw
+    // value so the original OCR'd challan number would survive in the DB
+    // instead of being silently cut down to digits-only before ever being
+    // saved -- reverting that for now, revisit later.)
+    challanNo:     _stripToNumeric(document.getElementById('challanNo').value),
+    challanQty:    document.getElementById('challanQty').value,
+    boeNo:         document.getElementById('boeNo').value,
+    purchaseOrder: document.getElementById('purchaseOrder').value,
+    gatePassNo:    document.getElementById('gatePassNo').value,
+    note:          document.getElementById('note').value,
+    po_flow_type:  poFlowType,
+  };
+
+  const btn      = document.getElementById('gateInSubmitBtn');
+  const statusEl = document.getElementById('gateInStatus');
+
+  submitAndPoll('/save_gatein', payload, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `✓ Gate In posted! Gate In Number: ${result.gate_in_number || '—'}`;
+      btn.textContent        = `✓ Gate In Done (GIN: ${result.gate_in_number || ''})`;
+      btn.style.background   = '#00b894';
+      // FIX: submitAndPoll()/pollRFJob() re-enable the button once the job
+      // finishes (needed so a FAILED post can be retried) -- but that meant
+      // a SUCCESSFUL post left the button clickable again with nothing
+      // stopping a second submission. Disable it permanently here; a page
+      // reload also now renders it disabled from the start (see the
+      // {% if history.gate_in %}disabled{% endif %} above). Server-side
+      // guard is _check_step_allowed() in app.py either way.
+      btn.disabled = true;
+      // FIX: other tabs (e.g. MIGO 103's Header Text/Vendor Name, which
+      // come from this Gate In result) were staying stale until a manual
+      // page reload -- auto-reload so every tab picks up fresh data, and
+      // restore this tab afterward (see main.js's DOMContentLoaded hook).
+      sessionStorage.setItem('mi_reload_tab', 'gateIn');
+      setTimeout(() => window.location.reload(), 1800);
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+function clearGateInForm() {
+  ['gateInDate','gateInTime','vendorName','vendorCode','transporter','truckNo',
+   'driverName','licenseNo','containerNo','numPersons','category',
+   'material','challanNo','challanQty','boeNo','purchaseOrder',
+   'gatePassNo','note',
+   'vendorNameHand','vendorCodeHand','transporterHand'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const np = document.getElementById('numPersons');
+  if (np) np.value = '1';
+  document.getElementById('gateInDate').value = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  document.getElementById('gateInTime').value = now.toTimeString().slice(0, 5);
+  const poEl = document.getElementById('purchaseOrder');
+  if (poEl) { poEl.readOnly = false; poEl.placeholder = ''; poEl.style.background = ''; poEl.style.color = ''; }
+  closePoDropdown();
+  const dd = document.getElementById('driverDropdown');
+  if (dd) dd.classList.remove('show');
+}
+
+// ============================================================
+// SILENT HOURS GATE-IN -- Save / Post to SAP (client request, 2026-08-31)
+//
+// Save collects whatever the guard has filled in so far, with NO
+// field-level validation, and either creates the history record (first
+// Save for this walk-in -- history_id starts blank) or re-saves it
+// (later Saves, history_id already set). Post to SAP runs the exact same
+// full-field validation the normal single-button flow uses, auto-saving
+// first if the guard clicks Post without having Saved yet, then posts to
+// SAP via the same _execute_gate_in_post() path /save_gatein uses.
+// ============================================================
+
+function _collectGateInPayload(historyId) {
+  const dType    = document.querySelector('input[name="deliveryType"]:checked');
+  const delivery = dType ? dType.value : 'truck';
+  const poFlowType = _getPoFlowType();
+  let vendorName, vendorCode, transporter;
+  if (delivery === 'truck') {
+    vendorName  = document.getElementById('vendorName').value;
+    vendorCode  = document.getElementById('vendorCode').value;
+    transporter = document.getElementById('transporter').value;
+  } else {
+    vendorName  = document.getElementById('vendorNameHand').value;
+    vendorCode  = document.getElementById('vendorCodeHand').value;
+    transporter = document.getElementById('transporterHand').value;
+  }
+  return {
+    history_id:    historyId || undefined,
+    gateInDate:    document.getElementById('gateInDate').value,
+    gateInTime:    document.getElementById('gateInTime').value,
+    vendorName:    vendorName,
+    vendorCode:    vendorCode,
+    transporter:   transporter,
+    truckNo:       (delivery === 'truck') ? document.getElementById('truckNo').value    : '',
+    driverName:    document.getElementById('driverName').value,
+    licenseNo:     (delivery === 'truck') ? document.getElementById('licenseNo').value.replace(/\s/g, '') : '',
+    containerNo:   (delivery === 'truck') ? document.getElementById('containerNo').value : '',
+    numPersons:    document.getElementById('numPersons').value,
+    category:      document.getElementById('category').value,
+    material:      document.getElementById('material').value,
+    challanNo:     _stripToNumeric(document.getElementById('challanNo').value),
+    challanQty:    document.getElementById('challanQty').value,
+    boeNo:         document.getElementById('boeNo').value,
+    purchaseOrder: document.getElementById('purchaseOrder').value,
+    gatePassNo:    document.getElementById('gatePassNo').value,
+    note:          document.getElementById('note').value,
+    po_flow_type:  poFlowType,
+  };
+}
+
+function _doSaveSilentHours(onSaved) {
+  const statusEl = document.getElementById('gateInStatus');
+  const saveBtn  = document.getElementById('gateInSaveBtn');
+  const historyId = parseInt(document.getElementById('history_id').value) || 0;
+  const payload = _collectGateInPayload(historyId);
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Saving...'; }
+  fetch('/api/save_gatein_silent_hours', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 Save'; }
+      if (!data || !data.success) {
+        const msg = (data && data.error) || 'Save failed.';
+        if (statusEl) {
+          statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+          statusEl.textContent   = `❌ ${msg}`;
+        }
+        showToast('❌ ' + msg, 'error');
+        return;
+      }
+      document.getElementById('history_id').value = data.history_id;
+      if (statusEl) {
+        statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+        statusEl.textContent   = `✓ Saved (Record #${data.history_id}). Post to SAP when ready.`;
+      }
+      showToast('✓ Saved.', 'success');
+      if (onSaved) onSaved(data.history_id);
+    })
+    .catch(err => {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 Save'; }
+      console.error('Silent Hours save error:', err);
+      showToast('❌ Network error while saving.', 'error');
+    });
+}
+
+function _doPostSilentHours() {
+  if (!validateGateIn()) {
+    const firstError = document.querySelector('.field-error');
+    if (firstError) firstError.scrollIntoView({ behavior:'smooth', block:'center' });
+    return;
+  }
+  showConfirm(
+    'Confirm Gate In Posting',
+    'You are about to post Gate In to SAP. Make sure all fields are correct — this cannot be undone from the portal.',
+    () => {
+      const existingId = parseInt(document.getElementById('history_id').value) || 0;
+      if (existingId) {
+        _executePostSilentHours(existingId);
+      } else {
+        // Not saved yet -- save first (same guard, same click), then post.
+        _doSaveSilentHours((newId) => _executePostSilentHours(newId));
+      }
+    }
+  );
+}
+
+function _executePostSilentHours(historyId) {
+  const payload  = _collectGateInPayload(historyId);
+  const btn      = document.getElementById('gateInPostBtn');
+  const saveBtn  = document.getElementById('gateInSaveBtn');
+  const statusEl = document.getElementById('gateInStatus');
+  if (saveBtn) saveBtn.disabled = true;
+  submitAndPoll('/api/post_gatein_silent_hours', payload, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `✓ Gate In posted! Gate In Number: ${result.gate_in_number || '—'}`;
+      btn.textContent        = `✓ Gate In Done (GIN: ${result.gate_in_number || ''})`;
+      btn.style.background   = '#00b894';
+      btn.disabled = true;
+      // Record now behaves like any other -- send the guard to its normal
+      // record view (Documents tab etc.) so paperwork can be uploaded once
+      // it's on hand, same as the rest of the workflow from here on.
+      setTimeout(() => { window.location.href = '/view/' + historyId; }, 1800);
+    },
+    onFailure: (error) => {
+      if (saveBtn) saveBtn.disabled = false;
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      if (saveBtn) saveBtn.disabled = false;
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+// ============================================================
+// v26: Category dropdown confirm-on-change. The field loads preselected
+// (see data-preselected on the <select> above, either a real saved
+// category or the Extracted-Data-derived default) but stays a normal,
+// fully editable dropdown with all 7 options. Any manual change reverts
+// immediately (no visible flicker -- happens synchronously inside this
+// same change event, before the user perceives the new value) and asks
+// for confirmation via the app's existing showConfirm() modal; only
+// applying the change if the user confirms. Re-confirms on every
+// subsequent change too, not just the first one away from the default.
+// ============================================================
+(function () {
+  const catEl = document.getElementById('category');
+  if (!catEl) return;
+  let _confirmedCategoryValue = catEl.value;
+
+  catEl.addEventListener('change', function () {
+    const pendingValue = catEl.value;
+    if (pendingValue === _confirmedCategoryValue) return;
+    catEl.value = _confirmedCategoryValue;  // revert first, so Cancel is a no-op
+    showConfirm(
+      'Change Category?',
+      'This category was pre-filled based on the Extracted Data review. Are you sure you want to change it?',
+      function () {
+        catEl.value = pendingValue;
+        _confirmedCategoryValue = pendingValue;
+      },
+      'Yes, Change It'
+    );
+  });
+})();
+
+// ============================================================
+// VEHICLE MASTER LOOKUP
+// ============================================================
+
+function lookupVehicle() {
+  const truckNo = document.getElementById('truckNo').value.trim();
+  if (!truckNo) { showToast('Enter Truck No first.', 'warning'); return; }
+
+  // Was `document.querySelector('.btn-lookup')` -- grabs the FIRST element
+  // with that class in the DOM, which is actually the Vendor Name Fetch
+  // button (it comes before Truck No in the markup), not this one. That
+  // meant every truck lookup was silently disabling/relabeling the vendor
+  // button to "Fetch Driver" instead of the real Truck No button -- exactly
+  // the mislabeling bug reported. Fixed to target this button specifically.
+  const btn = document.getElementById('fetchDriverBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
+
+  fetch('/api/vehicle_lookup/' + encodeURIComponent(truckNo))
+    .then(r => r.json())
+    .then(data => {
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 Fetch Driver'; }
+      if (!data.success) { showToast(data.error || 'Lookup failed', 'error'); return; }
+      if (data.count === 0) {
+        showToast('No driver found for this truck number in vehicle master.', 'warning');
+      } else if (data.count === 1) {
+        _applyDriver(data.drivers[0]);
+      } else {
+        _renderDriverDropdown(data.drivers);
+      }
+    })
+    .catch(err => {
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 Fetch Driver'; }
+      showToast('Lookup error: ' + err.message, 'error');
+    });
+}
+
+function _applyDriver(driver) {
+  document.getElementById('driverName').value  = driver.driver_name || '';
+  let lic = (driver.licence_number || '').replace(/\s/g, '').toUpperCase();
+  if (lic.length > 4) lic = lic.slice(0, 4) + ' ' + lic.slice(4);
+  document.getElementById('licenseNo').value   = lic;
+  document.getElementById('transporter').value = driver.transporter_name || '';
+  const dd = document.getElementById('driverDropdown');
+  if (dd) dd.classList.remove('show');
+}
+
+function _renderDriverDropdown(drivers) {
+  const dd = document.getElementById('driverDropdown');
+  if (!dd) return;
+  dd.innerHTML = `<div class="po-dropdown-header">
+    <span>${drivers.length} Driver(s) Found</span>
+    <span onclick="document.getElementById('driverDropdown').classList.remove('show')"
+    style="cursor:pointer;color:#888;font-size:14px;">✕</span></div>`;
+  drivers.forEach(function(d) {
+    const item = document.createElement('div');
+    item.className = 'driver-dropdown-item';
+    item.innerHTML =
+      '<div class="drv-name">' + _escHtml(d.driver_name) + '</div>' +
+      '<div class="drv-meta">' +
+        (d.transporter_name ? _escHtml(d.transporter_name) + ' &nbsp;|&nbsp; ' : '') +
+        (d.licence_number   ? 'Lic: ' + _escHtml(d.licence_number) : '') +
+      '</div>';
+    item.onclick = function() { _applyDriver(d); };
+    dd.appendChild(item);
+  });
+  dd.classList.add('show');
+}
+
+// ============================================================
+// VENDOR CODE LOOKUP (supplier_master, synced nightly by the
+// standalone VENDOR_MASTER_SYNC bot -- see database/schema_migration_v8.sql)
+//
+// FIX (2026-08-13): Vendor Name / Vendor Code split. Fetch/type-ahead is
+// still driven off the Vendor Name text (the user searches/types a name,
+// same as before) -- but picking a candidate now fills TWO fields instead
+// of one: Vendor Name gets the real resolved name (name_1/name), and the
+// new Vendor Code field gets the SAP code (candidate.supplier). Gate In's
+// SAP posting reads Vendor Code (see services/rf_runner.py's
+// execute_gate_in_sap()), not Vendor Name -- Vendor Name is display/search
+// only from here on. Vendor Code is still a plain editable text input (not
+// locked to Fetch-only), so a guard can still type a known code directly.
+// ============================================================
+let _vendorTypeaheadTimer  = null;
+// FIX: the debounce timer only ever guarded when a request gets SENT, not
+// which response wins if two are in flight at once -- a slower response to
+// an earlier, shorter query (e.g. "supreme") could resolve AFTER a later,
+// more specific one ("supreme petrochem") and silently overwrite it,
+// which looked exactly like a stale-cache bug even though nothing was
+// actually being cached anywhere. Each outgoing request now gets a
+// sequence number per field; a response is only rendered if it's still
+// the latest one issued for that field.
+let _vendorFetchSeq       = {};   // suffix -> latest issued sequence number
+let _vendorCandidatesCache = {};  // suffix -> full unfiltered list from the last successful fetch
+
+// suffix is '' for the truck-flow fields, 'Hand' for hand-delivery fields --
+// same vendorName id either way, just with/without the suffix, since only
+// one of the two sections is visible at a time.
+function fetchVendorCode(suffix) {
+  const nameEl = document.getElementById('vendorName' + suffix);
+  const name   = nameEl ? nameEl.value.trim() : '';
+  if (!name) { showToast('Enter Vendor Name first.', 'warning'); return; }
+  _searchVendorCandidates(name, suffix, /*isTypeahead=*/false);
+}
+
+function onVendorNameTypeahead(suffix) {
+  clearTimeout(_vendorTypeaheadTimer);
+  const nameEl = document.getElementById('vendorName' + suffix);
+  const name   = nameEl ? nameEl.value.trim() : '';
+  const dd = document.getElementById('vendorCodeDropdown' + suffix);
+  if (name.length < 3) { if (dd) dd.classList.remove('show'); return; }
+  _vendorTypeaheadTimer = setTimeout(() => {
+    _searchVendorCandidates(name, suffix, /*isTypeahead=*/true);
+  }, 400);
+}
+
+function _searchVendorCandidates(name, suffix, isTypeahead) {
+  const seq = (_vendorFetchSeq[suffix] || 0) + 1;
+  _vendorFetchSeq[suffix] = seq;
+
+  fetch('/api/vendor_lookup?name=' + encodeURIComponent(name))
+    .then(r => r.json())
+    .then(data => {
+      if (_vendorFetchSeq[suffix] !== seq) return; // superseded by a newer request -- discard
+      if (!data.success) {
+        if (!isTypeahead) showToast(data.error || 'Vendor lookup failed', 'error');
+        return;
+      }
+      if (data.count === 0) {
+        if (!isTypeahead) showToast('No matching vendor found in supplier master.', 'warning');
+        const dd = document.getElementById('vendorCodeDropdown' + suffix);
+        if (dd) dd.classList.remove('show');
+        return;
+      }
+      _vendorCandidatesCache[suffix] = data.candidates;
+      _renderVendorCodeDropdown(data.candidates, suffix);
+    })
+    .catch(err => {
+      if (_vendorFetchSeq[suffix] !== seq) return;
+      if (!isTypeahead) showToast('Vendor lookup error: ' + err.message, 'error');
+    });
+}
+
+function _applyVendorCode(candidate, suffix) {
+  // FIX (2026-08-13): fills Vendor Name AND Vendor Code separately now --
+  // Vendor Name gets the real resolved name (falls back to whatever the
+  // user had typed if the candidate has neither name_1 nor name), Vendor
+  // Code gets the SAP code that actually posts to SAP. Both are still
+  // plain editable text inputs: if the wrong line gets picked by mistake,
+  // just type over either one, or hit Fetch again to reopen this list.
+  const nameEl = document.getElementById('vendorName' + suffix);
+  const codeEl = document.getElementById('vendorCode' + suffix);
+  if (nameEl) nameEl.value = candidate.name_1 || candidate.name || nameEl.value;
+  if (codeEl) {
+    codeEl.value = candidate.supplier || '';
+    codeEl.classList.remove('field-error');
+    const codeErr = document.getElementById('err_vendorCode' + suffix);
+    if (codeErr) codeErr.classList.remove('show');
+  }
+  const dd = document.getElementById('vendorCodeDropdown' + suffix);
+  if (dd) dd.classList.remove('show');
+}
+
+// Some vendors have multiple SAP codes for the same name AND same postal
+// code (e.g. two departments/plants at one address) -- city/district alone
+// can't tell those apart. Detect that specific case and only THEN show the
+// full street/building address, so the dropdown stays compact for the
+// common case (different city/district is enough) and only gets denser
+// when it's genuinely needed to disambiguate.
+function _groupKey(c) {
+  const name = (c.name_1 || c.name || '').trim().toLowerCase();
+  const postal = (c.postal_code || '').trim();
+  return name + '|' + postal;
+}
+
+function _fullAddress(c) {
+  return [c.street_2, c.street_3, c.street_4, c.street_5, c.building, c.floor]
+    .filter(Boolean).join(', ');
+}
+
+// Builds the pane shell ONCE per fetch: header + a small filter box + a
+// scrollable items container. The filter box re-filters the already-fetched
+// full list client-side (see _filterVendorDropdown) -- no extra server
+// round trip, since the server already did the real fuzzy/code-prefix
+// matching to build this set; this box just narrows what's already there,
+// e.g. down to one city when a name matches several plants.
+function _renderVendorCodeDropdown(candidates, suffix) {
+  const dd = document.getElementById('vendorCodeDropdown' + suffix);
+  if (!dd) return;
+
+  dd.innerHTML = `<div class="po-dropdown-header">
+    <span id="vendorDdCount${suffix}">${candidates.length} Match(es) Found</span>
+    <span onclick="document.getElementById('vendorCodeDropdown${suffix}').classList.remove('show')"
+    style="cursor:pointer;color:#888;font-size:14px;">✕</span></div>
+    <div class="vendor-dropdown-search">
+      <input type="text" placeholder="🔎 Search this list (name, code, city...)"
+             id="vendorDdFilter${suffix}" oninput="_filterVendorDropdown('${suffix}')" autocomplete="off">
+    </div>
+    <div class="vendor-dd-items" id="vendorDdItems${suffix}"></div>`;
+
+  _renderVendorItems(candidates, suffix);
+  dd.classList.add('show');
+}
+
+// Client-side "proximity" filter over the full fetched list: matches a row
+// if every whitespace-separated word the user typed is a substring of SOME
+// field on that row (name, code, city, district, postal code), in any
+// order and regardless of which field it's in -- e.g. "supreme mumbai"
+// matches a Supreme Petrochem row located in Mumbai even though "mumbai"
+// isn't part of the vendor name itself.
+function _filterVendorDropdown(suffix) {
+  const filterEl = document.getElementById('vendorDdFilter' + suffix);
+  const raw = (filterEl ? filterEl.value : '').trim().toLowerCase();
+  const all = _vendorCandidatesCache[suffix] || [];
+
+  const filtered = !raw ? all : all.filter(function(c) {
+    const haystack = [c.name_1, c.name, c.supplier, c.city, c.district, c.postal_code]
+      .filter(Boolean).join(' ').toLowerCase();
+    return raw.split(/\s+/).every(w => haystack.indexOf(w) !== -1);
+  });
+
+  const countEl = document.getElementById('vendorDdCount' + suffix);
+  if (countEl) countEl.textContent = filtered.length + ' Match(es) Found' + (raw ? ' (filtered)' : '');
+  _renderVendorItems(filtered, suffix);
+}
+
+function _renderVendorItems(candidates, suffix) {
+  const itemsEl = document.getElementById('vendorDdItems' + suffix);
+  if (!itemsEl) return;
+
+  if (candidates.length === 0) {
+    itemsEl.innerHTML = '<div class="driver-dropdown-item" style="color:#999;cursor:default;">No matches for this filter.</div>';
+    return;
+  }
+
+  const groupCounts = {};
+  candidates.forEach(c => {
+    const key = _groupKey(c);
+    groupCounts[key] = (groupCounts[key] || 0) + 1;
+  });
+
+  itemsEl.innerHTML = '';
+  candidates.forEach(function(c) {
+    const item = document.createElement('div');
+    item.className = 'driver-dropdown-item';
+    const displayName = c.name_1 || c.name || '(no name)';
+    const location = [c.city, c.district].filter(Boolean).join(', ');
+    const locationWithPin = [
+      location ? _escHtml(location) : '',
+      c.postal_code ? ('PIN: ' + _escHtml(c.postal_code)) : ''
+    ].filter(Boolean).join(' &nbsp;|&nbsp; ');
+    const isAmbiguous = groupCounts[_groupKey(c)] > 1;
+    const address = isAmbiguous ? _fullAddress(c) : '';
+    item.innerHTML =
+      '<div class="drv-name">' + _escHtml(displayName) + ' &nbsp;<span style="color:#888;font-weight:400;">(' + _escHtml(c.supplier) + ')</span></div>' +
+      '<div class="drv-meta">' + (locationWithPin || 'No location on file') + '</div>' +
+      (address ? '<div class="drv-meta" style="color:#c0392b;">' + _escHtml(address) + '</div>' : '');
+    item.onclick = function() { _applyVendorCode(c, suffix); };
+    itemsEl.appendChild(item);
+  });
+}
+
+// ============================================================
+// PO LIST FETCH
+// ============================================================
+let _poFetchJobId  = null;
+let _poFetchPoller = null;
+
+function fetchPoList() {
+  const vendorName = document.getElementById('vendorName').value.trim();
+  if (!vendorName) {
+    _showPoStatus('Please fill in the Vendor Name first.', 'error');
+    return;
+  }
+  const historyId = parseInt(document.getElementById('history_id').value);
+  if (!historyId) return;
+
+  const btn = document.getElementById('fetchPoBtn');
+  btn.disabled = true;
+  btn.classList.add('loading');
+  closePoDropdown();
+  _showPoStatus('⏳ Fetching pending POs from SAP...', 'info');
+
+  fetch('/api/run_po_list_fetch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ history_id: historyId, vendor_name: vendorName })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (!data.success) {
+      _resetFetchBtn();
+      _showPoStatus(`❌ ${data.error || 'Failed to queue PO fetch.'}`, 'error');
+      return;
+    }
+    _poFetchJobId = data.job_id;
+    _pollPoFetch();
+  })
+  .catch(err => {
+    _resetFetchBtn();
+    _showPoStatus(`❌ Network error: ${err.message}`, 'error');
+  });
+}
+
+function _pollPoFetch() {
+  if (!_poFetchJobId) return;
+  _poFetchPoller = setInterval(() => {
+    fetch(`/api/queue_status/${_poFetchJobId}`)
+      .then(r => r.json())
+      .then(data => {
+        const job = data.job;
+        if (!job) return;
+        if (job.status === 'done') {
+          clearInterval(_poFetchPoller);
+          _resetFetchBtn();
+          const result = job.result || {};
+          if (result.po_list && result.po_list.length > 0) {
+            _showPoStatus(`✓ Found ${result.po_list.length} pending PO(s)`, 'success');
+            _renderPoDropdown(result.po_list);
+          } else {
+            _showPoStatus('No pending POs found for this vendor.', 'info');
+          }
+        } else if (job.status === 'failed') {
+          clearInterval(_poFetchPoller);
+          _resetFetchBtn();
+          _showPoStatus(`❌ ${job.error_message || 'Fetch failed'}`, 'error');
+        }
+      })
+      .catch(() => { });
+  }, 3000);
+}
+
+function _renderPoDropdown(poList) {
+  const listEl  = document.getElementById('poDropdownList');
+  const titleEl = document.getElementById('poDropdownTitle');
+  titleEl.textContent = `${poList.length} Pending PO(s)`;
+  listEl.innerHTML = '';
+  poList.forEach(po => {
+    const item = document.createElement('div');
+    item.className = 'po-dropdown-item';
+    item.innerHTML = `
+      <div class="po-num">${_escHtml(po.po_number)}</div>
+      <div class="po-meta">
+        ${po.vendor ? _escHtml(po.vendor) + ' &nbsp;|&nbsp; ' : ''}
+        ${po.creation_date ? 'Created: ' + _escHtml(po.creation_date) + ' &nbsp;|&nbsp; ' : ''}
+        ${po.open_qty ? 'Open Qty: ' + _escHtml(po.open_qty) : ''}
+      </div>`;
+    item.onclick = () => selectPo(po.po_number);
+    listEl.appendChild(item);
+  });
+  document.getElementById('poDropdown').classList.add('show');
+}
+
+function selectPo(poNumber) {
+  document.getElementById('purchaseOrder').value = poNumber;
+  document.getElementById('purchaseOrder').classList.remove('field-error');
+  document.getElementById('err_purchaseOrder').classList.remove('show');
+  closePoDropdown();
+  _showPoStatus(`✓ PO ${poNumber} selected`, 'success');
+}
+
+function closePoDropdown() {
+  document.getElementById('poDropdown').classList.remove('show');
+}
+
+function _resetFetchBtn() {
+  const btn = document.getElementById('fetchPoBtn');
+  btn.disabled = false;
+  btn.classList.remove('loading');
+}
+
+function _showPoStatus(msg, type) {
+  const el = document.getElementById('poFetchStatus');
+  el.textContent = msg;
+  el.className   = `po-fetch-status show ${type}`;
+}
+
+function _escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>

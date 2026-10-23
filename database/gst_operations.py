@@ -1,0 +1,333 @@
+"""
+database/gst_operations.py
+CRUD operations for the gst_approval table.
+
+All functions follow the same pattern as gatein_operations.py:
+  - history_id is the FK linking back to history.id
+  - get_connection() from the shared pool
+  - logger from config.logger
+"""
+
+from datetime import datetime
+from typing import Optional
+import psycopg2.extras
+
+from database.connection import get_connection
+from config.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# ── Upsert (insert or update) ─────────────────────────────────────────────────
+
+def upsert_gst_approval(history_id: int, data: dict) -> bool:
+    """
+    Insert or update the gst_approval row for this history_id.
+    Called by gst_runner after both bots complete.
+    data keys match the table columns (all optional).
+
+    v16: added auto_retry_exhausted -- see mark_auto_retry_exhausted()
+    below and services/gst_runner.py for why this needs to be persisted
+    rather than tracked only in memory. Defaults to False so a normal
+    successful/retriable result clears any previous exhaustion; the
+    terminal-error path in gst_runner.py explicitly passes True.
+    """
+    sql = """
+        INSERT INTO gst_approval (
+            history_id,
+            einvoice_status,   einvoice_screenshot,
+            gstin_status,      legal_name,          taxpayer_type,
+            gstr3b_last_filed, gstr3b_tax_period,   gstr3b_status,
+            gstr1_last_filed,  gstr1_tax_period,    gstr1_status,
+            taxpayer_screenshot,
+            bot_error,         checked_at,          auto_retry_exhausted
+        ) VALUES (
+            %s,
+            %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s,
+            %s, %s, %s
+        )
+        ON CONFLICT (history_id) DO UPDATE SET
+            einvoice_status      = EXCLUDED.einvoice_status,
+            einvoice_screenshot  = EXCLUDED.einvoice_screenshot,
+            gstin_status         = EXCLUDED.gstin_status,
+            legal_name           = EXCLUDED.legal_name,
+            taxpayer_type        = EXCLUDED.taxpayer_type,
+            gstr3b_last_filed    = EXCLUDED.gstr3b_last_filed,
+            gstr3b_tax_period    = EXCLUDED.gstr3b_tax_period,
+            gstr3b_status        = EXCLUDED.gstr3b_status,
+            gstr1_last_filed     = EXCLUDED.gstr1_last_filed,
+            gstr1_tax_period     = EXCLUDED.gstr1_tax_period,
+            gstr1_status         = EXCLUDED.gstr1_status,
+            taxpayer_screenshot  = EXCLUDED.taxpayer_screenshot,
+            bot_error            = EXCLUDED.bot_error,
+            checked_at           = EXCLUDED.checked_at,
+            auto_retry_exhausted = EXCLUDED.auto_retry_exhausted
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (
+                    history_id,
+                    data.get("einvoice_status"),   data.get("einvoice_screenshot"),
+                    data.get("gstin_status"),      data.get("legal_name"),       data.get("taxpayer_type"),
+                    data.get("gstr3b_last_filed"), data.get("gstr3b_tax_period"), data.get("gstr3b_status"),
+                    data.get("gstr1_last_filed"),  data.get("gstr1_tax_period"),  data.get("gstr1_status"),
+                    data.get("taxpayer_screenshot"),
+                    data.get("bot_error"),         data.get("checked_at", datetime.now()),
+                    data.get("auto_retry_exhausted", False),
+                ))
+            conn.commit()
+        logger.info(f"[gst_ops] upserted gst_approval for history_id={history_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[gst_ops] upsert failed for history_id={history_id}: {e}")
+        return False
+
+
+def mark_auto_retry_exhausted(history_id: int) -> bool:
+    """
+    v16: persists "auto-retry cap reached, stop retrying automatically" so
+    it survives an app restart. gst_runner.trigger_async's in-memory
+    _attempts dict cannot survive a restart on its own -- without this,
+    a record that had already exhausted its 5 auto-retries would silently
+    start a fresh burst the moment anyone next opened its view page after
+    a restart, every 5s poll, indefinitely. Does not touch bot result
+    columns -- only the flag. Cleared back to False by
+    reset_gst_for_rerun() (a deliberate manual Re-run).
+    """
+    sql = "UPDATE gst_approval SET auto_retry_exhausted = TRUE WHERE history_id = %s"
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (history_id,))
+            conn.commit()
+        logger.info(f"[gst_ops] auto_retry_exhausted=TRUE for history_id={history_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[gst_ops] mark_auto_retry_exhausted failed for history_id={history_id}: {e}")
+        return False
+
+
+# ── Read ──────────────────────────────────────────────────────────────────────
+
+def get_gst_approval(history_id: int) -> Optional[dict]:
+    """Return the gst_approval row for this history_id, or None if not found."""
+    sql = "SELECT * FROM gst_approval WHERE history_id = %s"
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, (history_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"[gst_ops] get failed for history_id={history_id}: {e}")
+        return None
+
+
+# v27 (2026-08-14): backs the new GST Verification admin page -- lists every
+# record that HAS invoice data (only those are GST-eligible at all, since
+# there's no seller GSTIN to check without one) alongside whatever
+# gst_approval result exists for it, if any. "Was it run" here is exactly
+# "does a gst_approval row exist" -- no new column needed, see the design
+# discussion this was built from. is_running() is checked separately by the
+# caller (app.py), in-memory, since that's not something SQL can see.
+#
+# v28 (2026-08-14, client request): added the status param -- the admin
+# page's filter dropdown (Not Run / Approved / All, default Not Run) has to
+# be applied HERE, in the WHERE clause, rather than after the fact in
+# app.py -- app.py's per-record status derivation (not_run/pending_review/
+# needs_rerun/approved/checking) runs on whatever page of rows comes back,
+# so filtering after that point would paginate over the wrong row set
+# (e.g. page 1 of "Not Run" could come back mostly empty because the SQL
+# LIMIT/OFFSET already sliced off a different 20 rows before filtering).
+# "checking" can't be expressed in SQL at all (it's in-memory, see above)
+# -- not a problem here since it isn't one of the 3 filter values; a row
+# that happens to be actively running when fetched under "All" or "Not
+# Run" still gets the correct live "checking" label from app.py, same as
+# before, just computed after this already-correct page of rows returns.
+def list_gst_verification_status(search: str = "", status: str = "", page: int = 1, per_page: int = 50) -> dict:
+    """
+    Returns {"total": int, "records": [ {id, invoice_number, seller_name,
+    seller_gstin, created_at, gst_row: {...} or None}, ... ]}, newest
+    first. gst_row is the full gst_approval row (or None) so the caller
+    can derive not_run/pending_review/needs_re_run/approved without a
+    second query per record. status: "" or "all" (no filter), "not_run"
+    (no gst_approval row at all), "approved" (gst_approval.approval_status
+    = 'approved'), "needs_rerun" (gst_approval.bot_error is set), or
+    "pending_review" (a gst_approval row exists, isn't approved, and has
+    no bot_error -- i.e. checked cleanly and just awaiting Compliance's
+    review/approve action).
+
+    FIX (2026-08-18, client request): needs_rerun/pending_review filter
+    options added -- these mirror the exact same status logic app.py's
+    api_gst_verification_list() already computes per-row (kept in sync
+    with that function's if/elif chain), just expressed as SQL conditions
+    here instead of a per-row Python branch, so filtering + pagination
+    both apply at the DB level. NOTE: this doesn't account for a record
+    currently mid-run (api_gst_verification_list()'s in-memory
+    is_running() check, which SQL has no visibility into) -- a record
+    actively being checked could theoretically appear under
+    "Pending Review" here for the few seconds it's running, same caveat
+    that already existed for not_run/approved before this change.
+    """
+    conditions = ["inv.id IS NOT NULL"]
+    params: list = []
+    if search:
+        conditions.append(
+            "(CAST(h.id AS TEXT) ILIKE %s OR inv.seller_gstin ILIKE %s "
+            "OR inv.seller_name ILIKE %s OR inv.invoice_number ILIKE %s)"
+        )
+        like = f"%{search}%"
+        params.extend([like, like, like, like])
+    if status == "not_run":
+        conditions.append("ga.history_id IS NULL")
+    elif status == "approved":
+        conditions.append("ga.approval_status = 'approved'")
+    elif status == "needs_rerun":
+        conditions.append("ga.bot_error IS NOT NULL AND ga.bot_error != ''")
+    elif status == "pending_review":
+        conditions.append(
+            "ga.history_id IS NOT NULL AND ga.approval_status IS DISTINCT FROM 'approved' "
+            "AND (ga.bot_error IS NULL OR ga.bot_error = '')"
+        )
+    where_clause = "WHERE " + " AND ".join(conditions)
+
+    base_sql = f"""
+        FROM history h
+        JOIN invoice_data inv ON inv.id = h.id
+        LEFT JOIN gst_approval ga ON ga.history_id = h.id
+        {where_clause}
+    """
+    count_sql = f"SELECT COUNT(*) {base_sql}"
+    data_sql = f"""
+        SELECT
+            h.id, h.created_at,
+            inv.invoice_number, inv.seller_name, inv.seller_gstin,
+            ga.approval_status AS gst_approval_status,
+            ga.bot_error, ga.checked_at
+        {base_sql}
+        ORDER BY h.created_at DESC
+        LIMIT %s OFFSET %s
+    """
+    offset = (page - 1) * per_page
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(count_sql, params)
+                total = cur.fetchone()["count"]
+                cur.execute(data_sql, params + [per_page, offset])
+                records = [dict(r) for r in cur.fetchall()]
+        return {"total": total, "records": records}
+    except Exception as e:
+        logger.error(f"[gst_ops] list_gst_verification_status failed: {e}")
+        return {"total": 0, "records": []}
+
+
+# ── Approve ───────────────────────────────────────────────────────────────────
+
+def approve_gst(history_id: int, approved_by: str) -> bool:
+    """Mark GST approval as approved."""
+    sql = """
+        UPDATE gst_approval
+        SET approval_status = 'approved',
+            approval_by     = %s,
+            approval_at     = %s,
+            hold_reason     = NULL
+        WHERE history_id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (approved_by, datetime.now(), history_id))
+            conn.commit()
+        # Also mark gst_check step done on history table
+        _mark_gst_check_done(history_id)
+        logger.info(f"[gst_ops] approved history_id={history_id} by {approved_by}")
+        return True
+    except Exception as e:
+        logger.error(f"[gst_ops] approve failed for history_id={history_id}: {e}")
+        return False
+
+
+# ── Hold ──────────────────────────────────────────────────────────────────────
+
+def hold_gst(history_id: int, held_by: str, reason: str = "") -> bool:
+    """Place GST approval on hold. reason is optional."""
+    sql = """
+        UPDATE gst_approval
+        SET approval_status = 'hold',
+            approval_by     = %s,
+            approval_at     = %s,
+            hold_reason     = %s
+        WHERE history_id = %s
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (held_by, datetime.now(), reason or None, history_id))
+            conn.commit()
+        logger.info(f"[gst_ops] hold history_id={history_id} by {held_by} reason={reason!r}")
+        return True
+    except Exception as e:
+        logger.error(f"[gst_ops] hold failed for history_id={history_id}: {e}")
+        return False
+
+
+# ── Re-run reset ─────────────────────────────────────────────────────────────
+
+def reset_gst_for_rerun(history_id: int) -> bool:
+    """
+    Reset gst_approval back to clean state so bots can re-run.
+    Clears all bot results and resets approval_status to pending.
+    Also rolls back gst_check on history so Gate In is re-locked.
+    """
+    sql_approval = (
+        "UPDATE gst_approval "
+        "SET einvoice_status = NULL, einvoice_screenshot = NULL, "
+        "    gstin_status = NULL, legal_name = NULL, taxpayer_type = NULL, "
+        "    gstr3b_last_filed = NULL, gstr3b_tax_period = NULL, gstr3b_status = NULL, "
+        "    gstr1_last_filed = NULL, gstr1_tax_period = NULL, gstr1_status = NULL, "
+        "    taxpayer_screenshot = NULL, approval_status = 'pending', "
+        "    approval_by = NULL, approval_at = NULL, hold_reason = NULL, "
+        "    bot_error = NULL, checked_at = NULL, auto_retry_exhausted = FALSE "
+        "WHERE history_id = %s"
+    )
+    sql_history = (
+        "UPDATE history "
+        "SET gst_check = 0, gst_check_done_at = NULL, updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = %s"
+    )
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql_approval, (history_id,))
+                cur.execute(sql_history,  (history_id,))
+            conn.commit()
+        logger.info(f"[gst_ops] reset for rerun history_id={history_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[gst_ops] reset_gst_for_rerun failed id={history_id}: {e}")
+        return False
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _mark_gst_check_done(history_id: int) -> None:
+    """Set history.gst_check = 1 and gst_check_done_at = now."""
+    sql = (
+        "UPDATE history "
+        "SET gst_check = 1, gst_check_done_at = %s, updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = %s"
+    )
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (datetime.now(), history_id))
+            conn.commit()
+        logger.info(f"[gst_ops] history.gst_check=1 for id={history_id}")
+    except Exception as e:
+        logger.error(f"[gst_ops] _mark_gst_check_done failed id={history_id}: {e}")
