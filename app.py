@@ -2634,6 +2634,10 @@ def run_zgrn_print(history_id):
         "material_doc_number": mat_doc,
         "history_id": history_id,
         "print_twice": bool(data.get("print_twice", True)),
+        # ADDED: who clicked Print -- rf_queue_worker.py's _process_zgrn_print()
+        # sends the "Print Ready / Failed" bell entry to THIS user only
+        # (same pattern as migo_103's _submitted_by_username).
+        "_submitted_by_username": session.get("username"),
     }
 
     job_id, err = _enqueue_sap_job(history_id, "zgrn_print", payload)

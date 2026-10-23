@@ -143,7 +143,10 @@
       head.className = 'mi-jt-head';
       var title = document.createElement('span');
       title.className = 'mi-jt-title';
-      title.textContent = (ok ? '✓ ' : '✗ ') + (meta.label || 'SAP posting') + (ok ? ' posted' : ' failed');
+      var isPrint = meta.step === 'zgrn_print';
+      title.textContent = isPrint
+        ? (ok ? '✓ Print ready' : '✗ Print failed')
+        : (ok ? '✓ ' : '✗ ') + (meta.label || 'SAP posting') + (ok ? ' posted' : ' failed');
       var x = document.createElement('button');
       x.type = 'button'; x.className = 'mi-jt-x'; x.title = 'Dismiss'; x.textContent = '✕';
       x.onclick = function () { card.remove(); };
@@ -162,6 +165,14 @@
       }
 
       var copyVal = '';
+      var printFiles = (isPrint && ok && Array.isArray(result.files)) ? result.files : [];
+      printFiles.forEach(function (f) {
+        if (!f || !f.label) return;
+        var line = document.createElement('div');
+        line.className = 'mi-jt-line';
+        line.textContent = f.label + ' is ready';
+        card.appendChild(line);
+      });
       if (ok) {
         DOC_KEYS.forEach(function (k) {
           if (result[k[0]]) {
@@ -178,7 +189,7 @@
       } else {
         var em = document.createElement('div');
         em.className = 'mi-jt-err';
-        var msg = String(job.error_message || result.error || 'Posting failed. Open the invoice to see details.');
+        var msg = String(job.error_message || result.error || (isPrint ? 'Print failed. Open the invoice to try again.' : 'Posting failed. Open the invoice to see details.'));
         em.textContent = msg.length > 240 ? msg.slice(0, 240) + '…' : msg;
         card.appendChild(em);
       }
@@ -192,6 +203,14 @@
         a.textContent = 'Open invoice';
         act.appendChild(a);
       }
+      printFiles.forEach(function (f) {
+        if (!f || !f.view_url) return;
+        var v = document.createElement('a');
+        v.className = 'mi-jt-btn' + (act.childNodes.length ? '' : ' pri');
+        v.href = f.view_url; v.target = '_blank'; v.rel = 'noopener';
+        v.textContent = 'View ' + (f.label || 'certificate');
+        act.appendChild(v);
+      });
       if (copyVal) {
         var cb = document.createElement('button');
         cb.type = 'button'; cb.className = 'mi-jt-btn'; cb.textContent = 'Copy number';
@@ -236,6 +255,9 @@
       var entry = { job: slim(job), meta: meta };
 
       if (pagePolled) {
+        // Print (ZGRN): this page's own status line + "View" links already show
+        // the result, so no extra toast here (only when the user has moved on).
+        if (meta.step === 'zgrn_print') return;
         // This page polled the job itself: its own inline status already shows
         // a failure, and on success the tab reloads in ~0.4s -- so carry the
         // toast over the reload. Fallback: if no reload happens, show it now.

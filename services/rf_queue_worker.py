@@ -1184,7 +1184,7 @@ def _process_miro_link(history_id: int, payload: dict) -> dict:
     return result
 
 
-def _process_zgrn_print(history_id: int, payload: dict) -> dict:
+def _run_zgrn_print(history_id: int, payload: dict) -> dict:
     """
     ADDED (2026-08-14): MIGO 103 tab's "Print" button -- runs zgrn.robot
     (always spl_rpa, see execute_zgrn_print_sap's own docstring) to print
@@ -1260,6 +1260,43 @@ def _process_zgrn_print(history_id: int, payload: dict) -> dict:
 
     logger.info(f"zgrn_print complete — history_id={history_id} attached={attached}")
     return {"success": True, "error": None, "files": attached_files}
+
+
+def _process_zgrn_print(history_id: int, payload: dict) -> dict:
+    """
+    Runs the Print job (_run_zgrn_print above, unchanged) and then drops a
+    bell entry for the user who clicked Print, so they still find out when
+    they have moved on to another invoice. The live toast is shown by
+    static/js/job_watcher.js. Notification is best-effort and can never
+    change the job's own result.
+    """
+    result = _run_zgrn_print(history_id, payload)
+    try:
+        inv_no = ""
+        try:
+            inv_no = ((get_history_details_by_id(history_id) or {}).get("invoice_data") or {}).get("invoice_number") or ""
+        except Exception:
+            inv_no = ""
+        label = f"Inv {inv_no}" if inv_no else f"Record #{history_id}"
+        if result.get("success"):
+            names = ", ".join(f.get("label", "") for f in (result.get("files") or []) if f.get("label"))
+            _notify_submitter(
+                history_id, payload,
+                title="Print Ready",
+                message=f"{label} — {names or 'certificate'} ready to view",
+                notification_type="migo_103",
+            )
+        else:
+            err = str(result.get("error") or "Print failed.")
+            _notify_submitter(
+                history_id, payload,
+                title="Print Failed",
+                message=f"{label} — {err[:240]}",
+                notification_type="migo_103",
+            )
+    except Exception as e:
+        logger.warning(f"zgrn_print notification failed (non-fatal) history_id={history_id}: {e}")
+    return result
 
 
 # _process_dms_upload REMOVED (2026-08-14): dms_upload no longer runs as an

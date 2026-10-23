@@ -115,6 +115,13 @@ function _miJobMetaFromUrl(url) {
              label: 'MIGO ' + m[1] + ' Reversal',
              invoice: ctx.invoiceNumber || '', vendor: ctx.vendor || '' };
   }
+  // ADDED: the MIGO 103 / Tax Classification "Print" (ZGRN) button, so its
+  // "Print ready" toast also reaches the user after they open another invoice.
+  m = /^\/api\/zgrn_print\/(\d+)/.exec(url || '');
+  if (m) {
+    return { historyId: parseInt(m[1], 10), step: 'zgrn_print', label: 'Print',
+             invoice: ctx.invoiceNumber || '', vendor: ctx.vendor || '' };
+  }
   return null;
 }
 
