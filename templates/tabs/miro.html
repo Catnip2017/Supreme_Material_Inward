@@ -1,0 +1,402 @@
+<style>
+.req { color:#e74c3c; margin-left:2px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+
+.gate-banner {
+  background:#fff3cd; border:1px solid #ffc107;
+  border-radius:8px; padding:14px 18px; margin-bottom:20px;
+  color:#856404; font-weight:500; font-size:14px;
+}
+.gate-banner.unlocked {
+  background:#ecfdf5; border-color:#00b894; color:#1a7a3c;
+}
+
+/* ───────── Visual redesign (2026-08-28, client request): restyled to
+   match the xd-* design system already used by gate_in.html /
+   migo_103.html / migo_105.html (gold section-title band + vertical-
+   label attribute table), copied verbatim from those files -- not
+   shared via main.css, each tab template is self-contained. Every
+   existing field id, JS function, name/value binding, and
+   disabled/readonly state is unchanged -- this only restyles the
+   surrounding markup. ───────────── */
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table input:hover { border-color:#dfe3e8; }
+.xd-table input:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table input[readonly] { color:#4a5568; cursor:not-allowed; background:#f8f9fb; }
+.xd-table .field-error-msg { margin:2px 4px 0; }
+.xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
+
+/* PO Line Items reference panel (new, 2026-08-28) -- same visual
+   language as MIGO 103's Invoice/PO comparison tables, but view-only
+   here: MIRO is the final posting step, so this exists purely so the
+   Accounts Payable Officer can see which PO lines this invoice covers
+   before posting, not to re-match anything (matching already happened
+   at MIGO 103). Reads the same po_data already loaded for that tab. */
+.miro-po-table { width:100%; border-collapse:collapse; font-size:12px; }
+.miro-po-table th {
+  background:#f5f6f8; padding:7px 8px; text-align:left; font-weight:700;
+  font-size:10.5px; color:#666; text-transform:uppercase; white-space:nowrap;
+  border-bottom:2px solid #e3e3e3;
+}
+.miro-po-table td { padding:6px 8px; border-bottom:1px solid #eee; }
+.miro-po-table .short-text-row {
+  display:flex; align-items:stretch; font-size:11.5px; color:#555;
+  padding:0 8px 6px;
+}
+.miro-po-table .short-text-chip {
+  background:#eaf7f0; color:#00796b; font-size:9.5px; font-weight:700;
+  border-radius:4px; padding:1px 6px; margin-right:8px; align-self:flex-start;
+  white-space:nowrap;
+}
+.miro-po-empty { color:#888; font-size:12.5px; padding:14px 8px; text-align:center; }
+</style>
+
+<div class="content-card">
+  <h3>💰 MIRO — Invoice Verification & Posting</h3>
+
+<!-- {% set post_locked = (history is none) or (not history.migo_105) %}
+{% set step_locked = false %}
+
+  {% if step_locked %}
+  <div class="gate-banner">
+    ⏸ <strong>Awaiting MIGO 105</strong> — Complete Gate In → MIGO 103 → MIGO 105 before MIRO.
+  </div>
+  {% else %}
+  <div class="gate-banner unlocked">
+    ✓ <strong>MIGO 105 Done</strong> — Ready for MIRO posting.
+  </div>
+  {% endif %} -->
+
+ {% set post_locked = (history is none) or (not history.migo_105) %}
+{% set migo_105_done = history and history.migo_105 %}
+{% if not migo_105_done %}
+<div class="gate-banner">⏸ <strong>Awaiting MIGO 105</strong> — Complete MIGO 105 before posting MIRO.</div>
+{% else %}
+<div class="gate-banner unlocked">✓ <strong>MIGO 105 Done</strong> — Ready for MIRO posting.</div>
+{% endif %}
+
+  <form id="miroForm" novalidate>
+    <input type="hidden" id="history_id_miro" value="{{ history_id or '' }}">
+    {% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
+
+{# ADDED (2026-08-21): same proactive warning as MIGO 105's tab. In
+   practice a reversal can no longer even be triggered once MIGO 105 is
+   done (see app.py's run_migo_103_reversal guard), so this shouldn't be
+   reachable through the normal UI flow -- kept as defense-in-depth in
+   case of older/inconsistent data. #}
+{% if history and history.migo_103_reversed %}
+<div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:0 0 16px;font-weight:500;">
+  ↩️ MIGO 103 for this record was reversed in SAP
+  {% if history.migo_103_reversal_doc_number %}(new document {{ history.migo_103_reversal_doc_number }}){% endif %}.
+  MIRO cannot be posted.
+</div>
+{% endif %}
+
+{# ADDED (2026-10-14): same warning for a reversed MIGO 105 (see app.py's
+   _check_step_allowed). Normally not reachable -- a reversal auto-resets
+   MIGO 105 -- but shown if that reset ever failed. #}
+{% if history and history.migo_105_reversed %}
+<div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:0 0 16px;font-weight:500;">
+  ↩️ MIGO 105 for this record was reversed in SAP
+  {% if history.migo_105_reversal_doc_number %}(new document {{ history.migo_105_reversal_doc_number }}){% endif %}.
+  MIRO cannot be posted.
+</div>
+{% endif %}
+
+    <!-- <div class="form-row">
+      <div class="form-group">
+        <label>Transaction</label>
+        <select class="form-select" id="miroTransaction" {% if step_locked %}disabled{% endif %}>
+          <option value="1">1 Invoice</option>
+          <option value="2">2 Credit Memo</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Diff. Posting</label>
+        <select class="form-select" id="miroDiffPosting" {% if step_locked %}disabled{% endif %}>
+          <option value="">Not Applicable</option>
+          <option value="1">Option 1</option>
+        </select>
+      </div>
+    </div> -->
+
+    <div class="xd-section-title">📋 Basic Data</div>
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Invoice</td>
+        <td class="xd-attr-lbl">Invoice Date <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="date" id="miroInvoiceDate"
+                 value="{{ (miro_data.get('miro_invoice_date') if miro_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_miroInvoiceDate">Required</div>
+        </td>
+        <td class="xd-attr-lbl">Posting Date <span class="xd-attr-note">(today, auto)</span></td>
+        <td class="xd-attr-val">
+          <input type="date" id="miroPostingDate" value="" readonly>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Reference <span class="req">*</span> <span class="xd-attr-note">(Invoice No.)</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="miroReference" maxlength="16"
+                 value="{{ (miro_data.get('miro_reference') if miro_data else '') or (invoice_data.get('invoice_number') if invoice_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_miroReference">Required</div>
+        </td>
+        <td class="xd-attr-lbl">Amount <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="miroAmount" maxlength="23"
+                 value="{{ (miro_data.get('miro_amount') if miro_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_miroAmount">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Tax Amount</td>
+        <td class="xd-attr-val">
+          <input type="text" id="miroTaxAmount" maxlength="23"
+                 value="{{ (miro_data.get('miro_tax_amount') if miro_data else '') or (invoice_data.get('total_tax_amount') if invoice_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+        </td>
+        <td class="xd-attr-lbl">Purchase Order <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="miroPurchaseOrder" maxlength="10"
+                 value="{{ (miro_data.get('miro_purchase_order') if miro_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_miroPurchaseOrder">Required</div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Kept disabled, unchanged from before the redesign -- not wired to
+         any backend field.
+    <div class="form-group">
+      <label>Tax Code</label>
+      <select class="form-select" id="miroTaxCode" {% if step_locked %}disabled{% endif %}>
+        <option value="V0" {% if miro_data and miro_data.get('miro_tax_code')=='V0' %}selected{% endif %}>V0 (TAX - NIL)</option>
+        <option value="V1" {% if miro_data and miro_data.get('miro_tax_code')=='V1' %}selected{% endif %}>V1 (CGST+SGST)</option>
+        <option value="V2" {% if miro_data and miro_data.get('miro_tax_code')=='V2' %}selected{% endif %}>V2 (IGST)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Text</label>
+      <input type="text" id="miroText" class="form-input"
+             value="{{ (miro_data.get('miro_text') if miro_data else '') or '' }}"
+             {% if step_locked %}disabled{% endif %}>
+    </div>
+    -->
+
+    {# New (2026-08-28, per client-approved wireframe for this tab): view-
+       only PO Line Items reference panel. Reads the same po_data
+       (get_po_line_items) already loaded above for MIGO 103's comparison
+       table -- no new query/endpoint. MIRO doesn't re-match lines, this
+       exists so the Accounts Payable Officer can see which PO lines this
+       invoice covers before posting. Deleted-in-SAP lines are skipped,
+       same convention as MIGO 103's po-row-deleted handling. #}
+    <div class="xd-section-title">🔗 PO Line Items Included In This Invoice</div>
+    {% if po_data and po_data|length > 0 %}
+    <table class="miro-po-table">
+      <thead>
+        <tr>
+          <th>#</th><th>Mat. Code</th><th>HSN/SAC</th><th>Qty</th><th>Rate</th><th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in po_data %}
+        {% if item.get('row_status') != 'Deleted' %}
+        <tr>
+          <td style="color:#888;font-size:11px;">{{ item.get('item_no','') }}</td>
+          <td>{{ item.get('material_code','') }}</td>
+          <td>{{ item.get('hsn_sac','') }}</td>
+          <td>{{ item.get('qty','') }}</td>
+          <td>{{ item.get('rate','') }}</td>
+          <td>{{ item.get('amount','') }}</td>
+        </tr>
+        {% if item.get('short_text') %}
+        <tr>
+          <td colspan="6" style="padding:0;">
+            <div class="short-text-row">
+              <span class="short-text-chip">Short text</span>
+              <span>{{ item.get('short_text','') }}</span>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="miro-po-empty">No PO line items fetched for this record yet.</div>
+    {% endif %}
+
+    <div id="miroStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+    <div class="action-buttons">
+      <button type="submit" id="miroSubmitBtn" class="btn btn-primary"
+        {% if history and history.miro %}disabled style="background:#00b894;"
+        {% elif history and history.migo_103_reversed %}disabled title="MIGO 103 was reversed -- MIRO cannot be posted."
+        {% elif history and history.migo_105_reversed %}disabled title="MIGO 105 was reversed -- MIRO cannot be posted."{% endif %}>
+        {% if history and history.miro %}✓ MIRO Posted — Complete{% else %}📮 Post MIRO{% endif %}
+      </button>
+    </div>
+  </form>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'miro' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
+</div>
+
+
+
+<script>
+
+const POST_LOCKED_MIRO = {{ 'true' if post_locked else 'false' }};
+// FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
+// v20 FIX: renamed to a per-tab name -- this collided with the other tabs'
+// identically-named const in the shared page-level scope and was silently
+// killing this whole script block (see gate_in.html's comment for detail).
+const STEP_LOCKS_ENABLED_MIRO = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+
+(function() {
+  const el = document.getElementById('miroPostingDate');
+  if (el) el.value = new Date().toISOString().split('T')[0];
+})();
+
+function validateMiro() {
+  let valid = true;
+  const mandatory = [
+    { id: 'miroInvoiceDate',   errId: 'err_miroInvoiceDate' },
+    { id: 'miroReference',     errId: 'err_miroReference' },
+    { id: 'miroAmount',        errId: 'err_miroAmount' },
+    { id: 'miroPurchaseOrder', errId: 'err_miroPurchaseOrder' },
+  ];
+  mandatory.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el) el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  mandatory.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el && !el.value.trim()) {
+      el.classList.add('field-error');
+      if (err) err.classList.add('show');
+      valid = false;
+    }
+  });
+  return valid;
+}
+
+document.getElementById('miroForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  if (POST_LOCKED_MIRO && STEP_LOCKS_ENABLED_MIRO) {
+    showToast('⏸ MIGO 105 must be completed before posting MIRO.', 'warning');
+    return;
+  }
+  if (!validateMiro()) {
+    const firstErr = document.querySelector('.field-error');
+    if (firstErr) firstErr.scrollIntoView({ behavior:'smooth', block:'center' });
+    return;
+  }
+  const historyId = parseInt(document.getElementById('history_id_miro').value);
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+  showConfirm(
+    'Confirm MIRO Posting',
+    'You are about to post MIRO (Invoice Verification) to SAP. This is the final step — make sure reference and amount are correct.',
+    () => _doSubmitMiro(historyId)
+  );
+});
+
+function _doSubmitMiro(historyId) {
+  // Safe getter — returns fallback if element is commented out or missing
+  function val(id, fallback) {
+    fallback = fallback === undefined ? '' : fallback;
+    var el = document.getElementById(id);
+    return el ? el.value : fallback;
+  }
+
+  var payload = {
+    history_id:        historyId,
+    miroTransaction:   val('miroTransaction', '1'),   // default: Invoice
+    miroDiffPosting:   val('miroDiffPosting', ''),
+    miroInvoiceDate:   val('miroInvoiceDate'),
+    miroPostingDate:   val('miroPostingDate'),
+    miroReference:     val('miroReference'),
+    miroAmount:        val('miroAmount'),
+    miroTaxAmount:     val('miroTaxAmount'),
+    miroTaxCode:       val('miroTaxCode', 'V0'),
+    miroText:          val('miroText', ''),
+    miroPurchaseOrder: val('miroPurchaseOrder'),
+  };
+
+  var btn      = document.getElementById('miroSubmitBtn');
+  var statusEl = document.getElementById('miroStatus');
+
+  submitAndPoll('/api/run_miro', payload, btn, {
+    onSuccess: function() {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '✓ MIRO posted successfully! Process complete.';
+      btn.textContent        = '✓ MIRO Posted — Complete';
+      btn.style.background   = '#00b894';
+      // FIX: see gate_in.html's identical comment -- prevents a second
+      // MIRO submission once this one succeeds.
+      btn.disabled = true;
+      // FIX: see gate_in.html's identical comment -- other tabs were
+      // staying stale until a manual reload.
+      sessionStorage.setItem('mi_reload_tab', 'miro');
+      setTimeout(() => window.location.reload(), 400);
+    },
+    onFailure: function(error) {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '❌ ' + error;
+    },
+    onError: function(error) {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '❌ ' + error;
+    }
+  });
+}
+</script>

@@ -1,0 +1,1477 @@
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   MIGO 101 -- Goods Receipt against Outbound Delivery.
+   Built as a mix of MIGO 103 (PO-fetch/matching UI, manual override +
+   retry-fetch button, EBELP-based pairing) and MIGO 105 (searchable
+   Storage Location picker, Vendor Invoice Amount, Remarks), plus its
+   own fields (Outbound Delivery Number, Bill of Lading, Header Text)
+   and its own per-line Batch column baked directly into the same
+   matched-pairs row (NOT a separate pass like MIGO 105 uses -- see
+   migo_operations.py's save_migo_101_fields docstring).
+
+   IMPORTANT -- collision safety: this tab can render on the SAME page
+   as migo_103.html and/or migo_105.html at once (any user holding more
+   than one of those roles sees all their tabs in one page load, all
+   script blocks sharing one global scope). Every top-level const/let/
+   function name below is suffixed "101" specifically so it can never
+   collide with migo_103.html's or migo_105.html's identically-shaped
+   (but differently named) globals -- a plain redeclaration collision
+   would silently corrupt or crash whichever tab's script parses second.
+   Every element id is likewise suffixed "101" for the same reason,
+   following the exact same per-tab-suffix convention migo_103.html/
+   migo_105.html already use for their own ids.
+   ═══════════════════════════════════════════════════════════════════ */
+.req { color:#e74c3c; margin-left:2px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+
+.approval-banner {
+  border-radius:10px; padding:9px 18px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:13px; margin-bottom:14px;
+}
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+.xd-section-title .xd-orig-links { display:flex; align-items:center; gap:8px; }
+
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input, .xd-table select {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table select { border-color:#dfe3e8; background:white; }
+.xd-table input:hover, .xd-table select:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table select:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table select:disabled { color:#4a5568; cursor:not-allowed; }
+/* FIX: every .xd-table input is borderless/transparent until hover/focus
+   (see rule above) -- fine for a field that's always pre-filled, but the
+   PO Number box is exactly the one field a user needs to notice is EDITABLE
+   (gate-in staff sometimes enter the wrong PO), and when it's empty or
+   blends into the table background there's no visual cue it's even a text
+   box, not a bug in the wiring -- it was always editable and Retry PO Fetch
+   already reads the live typed value, just impossible to see. Always-on
+   border/background makes it read as an editable box regardless of content. */
+.po-input-visible { border-color:#dfe3e8 !important; background:#fff !important; }
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; align-items:stretch; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
+.xd-table .field-error-msg { margin-top:2px; }
+
+/* Storage Location searchable picker -- same pattern as MIGO 105 */
+.sloc-search-wrap { position:relative; }
+.sloc-dropdown {
+  display:none; position:absolute; top:100%; left:0; right:0; z-index:50;
+  background:#fff; border:1px solid #dfe3e8; border-radius:6px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.15); margin-top:2px; max-height:260px;
+  overflow-y:auto;
+}
+.sloc-dropdown.show { display:block; }
+.sloc-dropdown-count {
+  padding:6px 10px; font-size:11px; color:#888; background:#f7f9fc;
+  border-bottom:1px solid #f0f4ff; position:sticky; top:0;
+}
+.sloc-item { padding:7px 10px; cursor:pointer; font-size:12.5px; border-bottom:1px solid #f5f5f5; }
+.sloc-item:hover { background:#f0f4ff; }
+.sloc-item .sloc-code { font-weight:700; color:#1e5ca8; }
+.sloc-item .sloc-desc { color:#555; margin-left:6px; }
+.sloc-empty { padding:10px; color:#999; font-size:12px; text-align:center; }
+
+/* Invoice/PO verification tables -- same pattern as MIGO 103 */
+.table-scroll-wrap {
+  overflow-x:auto; overflow-y:auto; max-height:340px;
+  border:1px solid #e0e0e0; border-top:none; border-radius:0 0 6px 6px;
+}
+.verify-panel {
+  display:grid; grid-template-columns:1fr 1fr; gap:16px;
+  margin-top:8px; min-width:0;
+}
+.verify-panel > div { min-width:0; overflow:hidden; }
+.verify-panel-header {
+  font-size:13px; font-weight:700; padding:9px 14px;
+  border-radius:6px 6px 0 0; letter-spacing:0.3px;
+}
+.invoice-header { background:#eaf1fd; color:#1e5ca8; }
+.po-header { background:#eaf7f0; color:#00796b; }
+.verify-table { width:100%; border-collapse:collapse; font-size:12px; }
+.verify-table thead th {
+  background:#f7f9fc; padding:7px 8px; text-align:left; color:#37424d;
+  font-weight:600; border-bottom:2px solid #e0e0e0; white-space:nowrap;
+  position:sticky; top:0; z-index:1;
+}
+.verify-table td {
+  padding:5px 7px; border-bottom:1px solid #f0f0f0; vertical-align:middle;
+  white-space:nowrap;
+}
+.verify-table tr:hover td { background:#fafbff; }
+.verify-table input.form-input {
+  width:100%; padding:3px 6px; font-size:12px; min-width:55px; max-width:100px;
+}
+.verify-table td.field-mismatch,
+.verify-table input.form-input.field-mismatch {
+  background:#fdecea !important; border-color:#e74c3c;
+  color:#c0392b; font-weight:600;
+  box-shadow:inset 0 0 0 1px #e74c3c;
+}
+.item-desc-row td {
+  white-space:normal; padding:4px 7px 8px 7px; border-bottom:1px solid #f0f0f0;
+}
+.short-text-row { display:flex; align-items:stretch; font-size:12px; }
+.short-text-chip {
+  background:#e8f0fe; color:#1e5ca8; font-weight:600; white-space:nowrap;
+  padding:3px 10px; border-radius:4px 0 0 4px; flex-shrink:0;
+  display:flex; align-items:center;
+}
+.short-text-chip.po-chip { background:#e8f7f0; color:#00796b; }
+.verify-table .short-text-value.cell-text,
+.verify-table .short-text-input.form-input {
+  border:1px solid #e0e0e0; border-left:none; border-radius:0 4px 4px 0;
+  padding:3px 10px; flex:1; min-width:0; max-width:none; width:auto;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.short-text-value.cell-text { display:flex; align-items:center; background:#fafbfb; }
+
+.pair-btn {
+  width:28px; height:28px; border-radius:50%;
+  border:2px solid #ccc; background:white;
+  cursor:pointer; font-weight:700; font-size:13px;
+  color:#999; transition:all .2s;
+  display:flex; align-items:center; justify-content:center;
+}
+.pair-btn:hover:not(:disabled) { border-color:#1e5ca8; }
+.pair-btn:disabled { cursor:not-allowed; opacity:0.4; }
+.pair-btn.paired-inv { border-color:#1e5ca8; background:#1e5ca8; color:white; }
+.pair-btn.paired-po  { border-color:#00b894; background:#00b894; color:white; }
+
+.po-row-deleted td { color:#aaa !important; text-decoration:line-through; background:#f7f7f7; }
+.po-row-deleted td[data-field] { color:#aaa !important; }
+.po-deleted-badge {
+  display:inline-block; margin-left:4px; padding:1px 6px;
+  border-radius:4px; font-size:10px; font-weight:700;
+  background:#ffe3e3; color:#c0392b; text-decoration:none;
+}
+
+.btn-match, .btn-auto-pair, .btn-reset {
+  border:none; padding:8px 22px; border-radius:6px; cursor:pointer;
+  font-weight:600; font-size:13px; transition:.2s;
+}
+.btn-match { background:#1e5ca8; color:#fff; }
+.btn-match:hover:not(:disabled) { background:#154a8a; }
+.btn-match:disabled { background:#b0bec5; cursor:not-allowed; }
+.btn-auto-pair { background:#1e5ca8; color:white; }
+.btn-auto-pair:hover { background:#164a8a; }
+.btn-reset { background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; }
+.btn-reset:hover { background:#fecaca; }
+
+.match-hint { font-size:12px; color:#888; margin-left:12px; transition:color .2s; }
+.match-hint.ready { color:#00b894; font-weight:600; }
+
+.matched-section {
+  margin-top:18px;
+  border:2px solid #f0a500; border-radius:8px; overflow:hidden;
+  animation:fadeIn101 .3s ease;
+}
+@keyframes fadeIn101 { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+.matched-section-header {
+  background:#f0a500; color:#fff;
+  padding:9px 16px; font-weight:700; font-size:13px;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.matched-table { width:100%; border-collapse:collapse; font-size:12px; }
+.matched-table th {
+  background:#fff8e6; padding:7px 10px; text-align:left;
+  font-weight:600; border-bottom:2px solid #ffe6a8;
+  white-space:nowrap; position:sticky; top:0; z-index:1;
+}
+.matched-table td {
+  padding:6px 10px; border-bottom:1px solid #fff3d6;
+  white-space:nowrap;
+}
+.matched-table td input.form-input { width:80px; padding:4px 6px; font-size:12px; }
+.matched-table input.batch-input-101 {
+  width:120px; padding:4px 6px; font-size:12px;
+  border:1.5px solid #f0d9a0; border-radius:5px;
+}
+.matched-table input.batch-input-101:focus { outline:none; border-color:#f0a500; }
+.btn-unmatch {
+  background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;
+  cursor:pointer; font-size:12px; padding:3px 8px;
+  border-radius:4px; font-weight:600;
+}
+
+.po-status-badge {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 12px; border-radius:12px;
+  font-size:11px; font-weight:700;
+}
+.po-fetched { background:#d1fae5; color:#065f46; }
+.po-pending { background:#fef3c7; color:#92400e; }
+
+.row-move-btns { display:flex; flex-direction:column; gap:2px; align-items:center; }
+.btn-row-move {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:22px; height:22px; padding:0;
+  background:#f0f4ff; border:1px solid #c5d8f8; border-radius:4px;
+  color:#1e5ca8; font-size:12px; cursor:pointer; line-height:1;
+  transition: background .15s;
+}
+.btn-row-move:hover:not(:disabled) { background:#dce7f5; }
+.btn-row-move:disabled { color:#ccc; border-color:#e0e0e0; background:#fafafa; cursor:default; }
+</style>
+
+<div class="content-card">
+  <h3>📦 MIGO 101 — Goods Receipt against Outbound Delivery</h3>
+
+{% set post_locked_101 = (history is none) or (not history.gate_in) %}
+{% set migo101_posted = history and history.migo_101 %}
+{# Local to this template, same as MIGO 103's own po_flow_type -- each tab
+   template is self-contained, no shared Jinja state between included
+   tab templates, so this must be recomputed here rather than assumed
+   available from migo_103.html's own {% set %}. #}
+{% set po_flow_type_101 = (history.po_flow_type if history else 'truck_with_po') or 'truck_with_po' %}
+{% if not (history and history.gate_in) %}
+<div class="approval-banner pending">⏸ <strong>Awaiting Gate In</strong> — Complete Gate In before posting MIGO 101.</div>
+{% else %}
+<div class="approval-banner approved">✓ <strong>Gate In Done</strong> — Ready for MIGO 101 posting.</div>
+{% endif %}
+
+{# MIGO 101 has no relationship to MIGO 103/105/MIRO -- this status block
+   is purely informational, matching the same block shown on those other
+   tabs, so a user checking any tab sees the full picture. Nothing here
+   gates the Post button below except history.gate_in (see post_locked_101). #}
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 101: {% if history.migo_101 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_101_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
+
+  <input type="hidden" id="history_id_migo101" value="{{ history_id or '' }}">
+
+  {# Bill of Lading default -- identical LR-No + Transporter computation as
+     MIGO 103's own _bol_default, kept local to this template (each tab
+     template is self-contained, no shared Jinja macros between them). #}
+  {% set _lr_no_101 = ((lr_data.get('lr_number') if lr_data else '') or '')|trim %}
+  {% set _lr_transporter_101 = ((lr_data.get('transporter_name') if lr_data else '') or (ewaybill_data.get('transporter_name') if ewaybill_data else '') or '')|trim %}
+  {% set _bol_default_101 = _lr_no_101 %}
+  {% if _lr_no_101 and _lr_transporter_101 and _lr_no_101|length < 16 %}
+    {% set _bol_remaining_101 = 16 - _lr_no_101|length - 1 %}
+    {% if _bol_remaining_101 > 0 %}
+      {% set _bol_default_101 = _lr_no_101 ~ ' ' ~ _lr_transporter_101[:_bol_remaining_101] %}
+    {% endif %}
+  {% endif %}
+  {% set _bol_default_101 = _bol_default_101[:16] %}
+
+  <div class="xd-section-title"><span>📄 DOCUMENT DETAILS</span></div>
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      <tr>
+        {# rowspan must always equal the number of <tr>s in this table --
+           currently 7: PO Number, Document Date, Posting Date, Outbound
+           Delivery, Bill of Lading, GR/GI Slip, Header Text. #}
+        <td class="xd-lbl" rowspan="7">Doc details</td>
+        <td class="xd-attr-lbl">Purchase Order No <span class="xd-attr-note">for matching only, not required</span></td>
+        <td class="xd-attr-val">
+          <div style="display:flex;gap:8px;align-items:center;">
+            {# Sourced from Gate In's confirmed purchase_order field, same
+               as MIGO 103's PO box -- not a persisted migo_101 column,
+               it's only used here to drive the fetch/matching flow below. #}
+            <input type="text" id="migoPoNumber101" class="form-input po-input-visible" style="flex:1;" maxlength="10"
+                   placeholder="PO number (editable)"
+                   value="{{ (gatein_data.get('purchase_order') if gatein_data else '') or (invoice_data.get('po_number') if invoice_data else '') or '' }}"
+                   {% if migo101_posted %}disabled{% endif %}>
+            {% set fetch_po_label_101 = '📋 Fetch PO Items' if 'without_po' in po_flow_type_101 else '🔄 Retry PO Fetch' %}
+            <button type="button" id="fetchPoItemsBtn101"
+                    onclick="fetchMigo101PoItems()"
+                    data-default-label="{{ fetch_po_label_101 }}"
+                    {% if migo101_posted %}disabled{% endif %}
+                    style="display:inline-flex;align-items:center;gap:5px;padding:0 14px;height:32px;
+                           background:#e67e22;color:#fff;border:none;border-radius:6px;
+                           cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;flex-shrink:0;">
+              {{ fetch_po_label_101 }}
+            </button>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Document Date <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="date" id="migoDocDate101" class="form-input"
+                 value="{{ (migo_data.get('migo_101_doc_date') if migo_data else '') or (invoice_data.get('invoice_date') if invoice_data else '') or '' }}"
+                 {% if migo101_posted %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_migoDocDate101">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Posting Date <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          {# Same client requirement as MIGO 103's Posting Date: only show
+             the saved date once MIGO 101 has actually posted
+             (history.migo_101) -- that's a real historical record worth
+             showing. Otherwise leave blank so today's local date fills in
+             fresh on every visit (see the page-load script below). #}
+          <input type="date" id="migoPostDate101" class="form-input"
+                 value="{{ (migo_data.get('migo_101_post_date') if (migo_data and history and history.migo_101) else '') or '' }}"
+                 {% if migo101_posted %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_migoPostDate101">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Outbound Delivery No <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoOutboundDelivery101" class="form-input" maxlength="10"
+                 value="{{ (migo_data.get('migo_101_outbound_delivery') if migo_data else '') or (invoice_data.get('outbound_delivery_number') if invoice_data and history and history.approval_status == 'approved' else '') or '' }}"
+                 {% if migo101_posted %}disabled{% endif %}>
+          <div class="field-error-msg" id="err_migoOutboundDelivery101">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Bill of Lading <span class="xd-attr-note">LR No + Transporter, max 16</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoBillOfLading101" class="form-input" maxlength="16"
+                 value="{{ (migo_data.get('migo_101_bill_of_lading') if migo_data else '') or _bol_default_101 }}"
+                 {% if migo101_posted %}disabled{% endif %}
+                 title="SAP limit is 16 characters: LR No, one space, then as much of the Transporter Name as fits.">
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">GR/GI Slip No</td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoGRSlipNo101" class="form-input" maxlength="10"
+                 value="{{ (migo_data.get('migo_101_gr_slip_no') if migo_data else '') or '' }}"
+                 {% if migo101_posted %}disabled{% endif %}>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Header Text <span class="xd-attr-note">defaults to Gate In Number</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoHeaderText101" class="form-input" maxlength="25"
+                 value="{{ (migo_data.get('migo_101_header_text') if migo_data else '') or (history.gate_in_number if history and history.gate_in_number else '') or '' }}"
+                 {% if migo101_posted %}disabled{% endif %}>
+        </td>
+      </tr>
+    </table>
+
+    <table class="xd-table">
+      {% if resolved_vendor_name %}
+      <tr>
+        <td class="xd-lbl" rowspan="4">Vendor &amp; storage</td>
+        <td class="xd-attr-lbl">Vendor Name <span class="xd-attr-note">from Gate In — view only</span></td>
+        <td class="xd-attr-val">
+          <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled style="background:#f5f6f8;color:#555;">
+        </td>
+      </tr>
+      <tr>
+      {% else %}
+      <tr>
+        <td class="xd-lbl" rowspan="3">Vendor &amp; storage</td>
+      {% endif %}
+        <td class="xd-attr-lbl">Storage Location <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <div class="sloc-search-wrap">
+            <input type="text" id="storageLocation101Search" class="form-input"
+                   placeholder="Loading..." autocomplete="off"
+                   oninput="_filterStorageLocation101()" onfocus="_openStorageLocationDropdown101()"
+                   {% if migo101_posted %}disabled{% endif %}>
+            <input type="hidden" id="storageLocation101">
+            <div class="sloc-dropdown" id="storageLocationDropdown101"></div>
+          </div>
+          <div class="field-error-msg" id="err_storageLocation101">Required</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Vendor Invoice Amt</td>
+        <td class="xd-attr-val">
+          <input type="text" id="vendorInvoiceDetail101" class="form-input"
+                 value="{{ (migo_data.get('migo_101_vendor_invoice') if migo_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
+                 {% if migo101_posted %}disabled{% endif %}>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Remarks</td>
+        <td class="xd-attr-val">
+          <input type="text" id="migoRemarks101" class="form-input" maxlength="40"
+                 value="{{ (migo_data.get('migo_101_remarks') if migo_data else '') or '' }}"
+                 {% if migo101_posted %}disabled{% endif %}>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Line Item Verification (PO-fetch/matching, same flow as MIGO 103) -->
+  <div style="margin-top:8px;">
+    <div class="xd-section-title">
+      <span>📋 LINE ITEM VERIFICATION</span>
+      <div class="xd-orig-links">
+        <span id="poStatusBadge101">
+          {% if po_data and po_data|length > 0 %}
+          <span class="po-status-badge po-fetched">✓ {{ po_data|length }} PO line(s)</span>
+          {% else %}
+          <span class="po-status-badge po-pending">⏳ PO data pending</span>
+          {% endif %}
+        </span>
+      </div>
+    </div>
+
+    {% if not migo101_posted %}
+    <p style="font-size:12px;color:#888;margin-bottom:14px;line-height:1.5;">
+      Click the circle on each side to mark pairs (numbers auto-assigned). Click again to unpair.
+      Use <strong>Auto-Pair</strong> to detect matches automatically. Enter a <strong>Batch</strong> per line
+      directly in the Matched Pairs table below (leave blank for SAP auto-generation).
+    </p>
+
+    <div class="verify-panel">
+      <!-- Invoice table -->
+      <div>
+        <div class="verify-panel-header invoice-header">📄 Invoice Line Items (from OCR)</div>
+        <div class="table-scroll-wrap" style="border-color:#dde3f0;">
+          <table class="verify-table" id="invoiceItemsTable101">
+            <thead>
+              <tr>
+                <th style="width:40px;">Pair</th>
+                <th>#</th>
+                <th>Mat. Code</th>
+                <th>Qty</th>
+                <th>UOM</th>
+                <th>Rate</th>
+                <th>Amount</th>
+                <th>HSN/SAC</th>
+              </tr>
+            </thead>
+            <tbody id="invoiceItemsBody101">
+              {% set items_101 = invoice_line_items or [] %}
+              {% for item in items_101 %}
+              <tr data-idx="{{ loop.index0 }}">
+                <td><button type="button" class="pair-btn pair-btn-inv-101" data-pair="" onclick="onInvPairClick101(this)"></button></td>
+                <td style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                <td><input type="text" class="form-input" data-field="material_code" value="{{ ((item.get('material_code') if item else '') or '') }}"></td>
+                <td><input type="text" class="form-input" data-field="qty" value="{{ ((item.get('qty_expected') if item else '') or '') }}"></td>
+                <td><input type="text" class="form-input" data-field="unit" value="{{ ((item.get('unit') if item else '') or '') }}"></td>
+                <td><input type="text" class="form-input" data-field="rate" value="{{ ((item.get('rate') if item else '') or '') }}"></td>
+                <td><input type="text" class="form-input" data-field="amount" value="{{ ((item.get('amount') if item else '') or '') }}"></td>
+                <td><input type="text" class="form-input" data-field="hsn_sac" value="{{ ((item.get('hsn_sac') if item else '') or '') }}"></td>
+              </tr>
+              <tr class="item-desc-row">
+                <td colspan="8">
+                  <div class="short-text-row">
+                    <span class="short-text-chip">Short text</span>
+                    <input type="text" class="form-input short-text-input" data-field="short_text" value="{{ ((item.get('short_text') if item else '') or '') }}" title="{{ ((item.get('short_text') if item else '') or '') }}" oninput="this.title=this.value">
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PO table -->
+      <div>
+        <div class="verify-panel-header po-header">🏭 PO Line Items (from SAP)</div>
+        <div class="table-scroll-wrap" style="border-color:#c8e6c9;">
+          <table class="verify-table" id="poItemsTable101">
+            <thead>
+              <tr>
+                <th style="width:40px;">Pair</th>
+                <th>#</th>
+                <th>Mat. Code</th>
+                <th>Qty</th>
+                <th>UOM</th>
+                <th>Rate</th>
+                <th>Amount</th>
+                <th>HSN/SAC</th>
+                <th title="Outstanding/undelivered quantity remaining on this PO line in SAP -- view only.">Open Qty</th>
+              </tr>
+            </thead>
+            <tbody id="poItemsBody101">
+              {% if po_data and po_data|length > 0 %}
+                {% for item in po_data %}
+                {% set is_deleted_101 = item.get('row_status') == 'Deleted' %}
+                <tr data-idx="{{ loop.index0 }}" data-item-no="{{ item.get('item_no','') }}" data-deleted="{{ 'true' if is_deleted_101 else 'false' }}"{% if is_deleted_101 %} class="po-row-deleted" title="This line is marked deleted in SAP -- not selectable for pairing."{% endif %}>
+                  <td>
+                    {% if is_deleted_101 %}
+                    <button type="button" class="pair-btn pair-btn-po-101" data-pair="" disabled title="Deleted in SAP -- not pairable"></button>
+                    {% else %}
+                    <button type="button" class="pair-btn pair-btn-po-101" data-pair="" onclick="onPoPairClick101(this)"></button>
+                    {% endif %}
+                  </td>
+                  <td style="color:#888;font-size:11px;" title="PO item number (SAP EBELP)">{{ item.get('item_no','') }}{% if is_deleted_101 %} <span class="po-deleted-badge">Deleted</span>{% endif %}</td>
+                  <td data-field="material_code">{{ item.get('material_code','') }}</td>
+                  <td data-field="qty">{{ item.get('qty','') }}</td>
+                  <td data-field="unit">{{ item.get('unit','') }}</td>
+                  <td data-field="rate">{{ item.get('rate','') }}</td>
+                  <td data-field="amount">{{ item.get('amount','') }}</td>
+                  <td data-field="hsn_sac">{{ item.get('hsn_sac','') }}</td>
+                  <td data-field="open_qty" style="color:#666;">{{ item.get('open_qty','') }}</td>
+                </tr>
+                <tr class="item-desc-row">
+                  <td colspan="9">
+                    <div class="short-text-row">
+                      <span class="short-text-chip po-chip">Short text</span>
+                      <span class="cell-text short-text-value" data-field="short_text" title="{{ ((item.get('short_text') if item else '') or '') }}">{{ ((item.get('short_text') if item else '') or '') }}</span>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div style="position:relative;margin-top:14px;">
+
+      <!-- Add Line Item — extreme left (same as MIGO 103's addInvoiceRow(),
+           for a line the OCR/invoice extraction missed) -->
+      <button type="button" class="btn-row-add" onclick="addInvoiceRow101()"
+              style="position:absolute;left:0;top:50%;transform:translateY(-50%);">
+        ➕ Add Line Item
+      </button>
+
+      <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
+        <button type="button" class="btn-auto-pair" onclick="autoPair101()">🪄 Auto-Pair</button>
+        <button type="button" class="btn-match" id="confirmMatchBtn101" onclick="confirmMatches101()">🔗 Confirm Matches</button>
+        <button type="button" id="confirmSingleBtn101" class="btn-match" onclick="confirmSingleInvoiceLine101()" style="background:#e67e22;display:none;">✓ Add Without PO Match</button>
+        <button type="button" class="btn-reset" onclick="resetAllMatches101()">🗑 Reset All</button>
+      </div>
+      <span class="match-hint" id="matchHint101"
+            style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:12px;color:#888;">
+        No pairs marked yet
+      </span>
+    </div>
+    {% endif %}
+
+    <!-- Matched pairs section -->
+    <div class="matched-section" id="matchedSection101" {% if not migo101_posted %}style="display:none;"{% endif %}>
+      <div class="matched-section-header">
+        <span>🔗 Matched Pairs {% if migo101_posted %}(Posted){% endif %}</span>
+        <span style="font-size:11px;font-weight:400;opacity:0.9;">{% if migo101_posted %}— Posted (read-only){% else %}— Edit Batch/Qty before posting{% endif %}</span>
+      </div>
+      <div style="overflow-x:auto;overflow-y:auto;max-height:300px;">
+        <table class="matched-table" id="matchedTable101">
+          <thead>
+            <tr>
+              {% if not migo101_posted %}<th style="width:44px;">Order</th>{% endif %}
+              <th>#</th>
+              <th>Mat. Code</th>
+              <th>Short Text</th>
+              <th>HSN/SAC</th>
+              <th>UOM</th>
+              <th>Qty</th>
+              <th>Delivery Qty</th>
+              <th>Batch</th>
+              {% if not migo101_posted %}<th>Rate</th><th>Amount</th><th></th>{% endif %}
+            </tr>
+          </thead>
+          <tbody id="matchedBody101">
+            {% if migo101_posted %}
+              {% set posted_items_101 = (migo_data.get('migo_101_items_data') if migo_data else []) or [] %}
+              {% for item in posted_items_101 %}
+              <tr>
+                <td style="font-weight:600;color:#8a6100;">{{ loop.index }}</td>
+                <td>{{ item.get('material_code','') }}</td>
+                <td class="cell-text" title="{{ item.get('short_text','') }}">{{ item.get('short_text','') }}</td>
+                <td>{{ item.get('hsn_sac','') }}</td>
+                <td>{{ item.get('unit','') }}</td>
+                <td>{{ item.get('qty_expected','') }}</td>
+                <td>{{ item.get('qty_actual','') }}</td>
+                <td>{{ item.get('batch','') or '(auto)' }}</td>
+              </tr>
+              {% endfor %}
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="migo101Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+  <div class="action-buttons">
+    <button type="button" id="migo101Btn" class="btn btn-primary" onclick="submitMigo101()"
+        {% if migo101_posted %}disabled style="background:#00b894;"{% endif %}>
+        {% if migo101_posted %}✓ MIGO 101 Done{% else %}📮 Post MIGO 101{% endif %}
+    </button>
+    {# ADDED (2026-10-14): MIGO 101 Reversal (SAP action A03), same bot and
+       same pattern as MIGO 103's Reverse button -- only offered once MIGO 101
+       has actually posted, and not once already reversed. Real, final SAP
+       posting, so it is confirmed in submitMigo101Reversal(). #}
+    {% if history and history.migo_101 and not history.migo_101_reversed %}
+    <button type="button" id="migo101ReversalBtn" class="btn btn-danger" onclick="submitMigo101Reversal()"
+        style="background:#e17055;border-color:#e17055;">
+        ↩️ Reverse
+    </button>
+    {% endif %}
+  </div>
+
+  {% if history and history.migo_101_reversed %}
+  <div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;">
+    ↩️ MIGO 101 was reversed in SAP
+    {% if history.migo_101_reversal_doc_number %}(new document {{ history.migo_101_reversal_doc_number }}){% endif %}
+    {% if history.migo_101_reversed_at %}on {{ history.migo_101_reversed_at }}{% endif %}
+    {% if history.migo_101_reversed_by %}by {{ history.migo_101_reversed_by }}{% endif %}. MIGO 101 stays blocked until an admin resets it.
+  </div>
+  {% endif %}
+  <div id="migo101ReversalStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'migo101' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
+</div>
+
+<script>
+const POST_LOCKED_101 = {{ 'true' if post_locked_101 else 'false' }};
+const STEP_LOCKS_ENABLED_101 = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+const MIGO_101_ALREADY_POSTED = {{ 'true' if migo101_posted else 'false' }};
+
+// Same fix as MIGO 103's Posting Date auto-fill: build today's date from
+// the browser's own LOCAL getters, not toISOString() (which converts to
+// UTC first -- wrong calendar date for IST between ~00:00-05:30).
+(function() {
+  const pd = document.getElementById('migoPostDate101');
+  if (pd && !pd.value) {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    pd.value = `${yyyy}-${mm}-${dd}`;
+  }
+})();
+
+// ============================================================
+// Storage Location search -- same pattern as MIGO 105's, namespaced 101.
+// ============================================================
+let _storageLocations101 = [];
+
+(function() {
+  if (MIGO_101_ALREADY_POSTED) return;
+  const savedCode = "{{ (migo_data.get('migo_101_storage_loc') if migo_data else '') or '' }}";
+  const searchEl  = document.getElementById('storageLocation101Search');
+
+  // FIX: this used to be a single fetch with no retry -- a transient
+  // hiccup (DB pool momentarily busy, one slow request right after
+  // server/session start, etc.) landed straight on "Error loading --
+  // refresh page" with no way to recover except a manual reload, even
+  // though the very next request almost always succeeds. Retries twice
+  // more (3 attempts total, 1s apart) before giving up, so a one-off
+  // blip resolves itself silently instead of surfacing as a user-visible
+  // error. Same fix applied to MIGO 105's identical pattern.
+  function _loadStorageLocations101(attemptsLeft) {
+    fetch('/api/storage_locations')
+      .then(r => r.json())
+      .then(data => {
+        _storageLocations101 = data.data || [];
+        const saved = _storageLocations101.find(l => l.code === savedCode);
+        if (saved) {
+          document.getElementById('storageLocation101').value = saved.code;
+          if (searchEl) searchEl.value = saved.code + ' — ' + saved.description;
+        }
+        if (searchEl) searchEl.placeholder = '🔎 Search storage location (code or name)...';
+      })
+      .catch(() => {
+        if (attemptsLeft > 0) {
+          setTimeout(() => _loadStorageLocations101(attemptsLeft - 1), 1000);
+        } else if (searchEl) {
+          searchEl.placeholder = 'Error loading — refresh page';
+        }
+      });
+  }
+  _loadStorageLocations101(2);
+})();
+
+function _openStorageLocationDropdown101() {
+  const el = document.getElementById('storageLocation101Search');
+  if (el && el.disabled) return;
+  _renderStorageLocationItems101(_storageLocations101);
+  document.getElementById('storageLocationDropdown101').classList.add('show');
+}
+
+function _filterStorageLocation101() {
+  const raw = (document.getElementById('storageLocation101Search').value || '').trim().toLowerCase();
+  const filtered = !raw ? _storageLocations101 : _storageLocations101.filter(function(loc) {
+    const haystack = [loc.code, loc.description].filter(Boolean).join(' ').toLowerCase();
+    return raw.split(/\s+/).every(w => haystack.indexOf(w) !== -1);
+  });
+  _renderStorageLocationItems101(filtered);
+  document.getElementById('storageLocationDropdown101').classList.add('show');
+  document.getElementById('storageLocation101').value = '';
+}
+
+function _renderStorageLocationItems101(list) {
+  const dd = document.getElementById('storageLocationDropdown101');
+  if (!dd) return;
+  if (list.length === 0) {
+    dd.innerHTML = '<div class="sloc-empty">No matches.</div>';
+    return;
+  }
+  dd.innerHTML = '<div class="sloc-dropdown-count">' + list.length + ' location(s)</div>' +
+    list.map((loc, i) =>
+      '<div class="sloc-item" data-idx="' + i + '">' +
+        '<span class="sloc-code">' + _escSloc101(loc.code) + '</span>' +
+        '<span class="sloc-desc">' + _escSloc101(loc.description || '') + '</span>' +
+      '</div>'
+    ).join('');
+  Array.from(dd.querySelectorAll('.sloc-item')).forEach((el, i) => {
+    el.onclick = function() { _selectStorageLocation101(list[i]); };
+  });
+}
+
+function _selectStorageLocation101(loc) {
+  document.getElementById('storageLocation101').value = loc.code;
+  const searchEl = document.getElementById('storageLocation101Search');
+  if (searchEl) {
+    searchEl.value = loc.code + ' — ' + loc.description;
+    searchEl.classList.remove('field-error');
+  }
+  document.getElementById('storageLocationDropdown101').classList.remove('show');
+  const err = document.getElementById('err_storageLocation101');
+  if (err) err.classList.remove('show');
+}
+
+function _escSloc101(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+document.addEventListener('click', function(e) {
+  const wrap = document.getElementById('storageLocation101Search') ? document.getElementById('storageLocation101Search').closest('.sloc-search-wrap') : null;
+  const dd = document.getElementById('storageLocationDropdown101');
+  if (wrap && dd && !wrap.contains(e.target)) {
+    dd.classList.remove('show');
+  }
+});
+
+// ============================================================
+// Pair-marking state (namespaced 101) -- same two-sided selection
+// mechanics as MIGO 103's confirmMatches() flow.
+// ============================================================
+let _selectedInvRow101 = null;
+let _selectedPoRow101  = null;
+let _pairCounter101    = 1;
+let _pairs101           = [];
+
+const MISMATCH_FIELDS_101 = ['material_code', 'qty', 'unit', 'rate', 'amount', 'hsn_sac'];
+
+function _normForCompare101(field, raw) {
+  const v = (raw == null ? '' : String(raw)).trim();
+  if (field === 'qty' || field === 'rate' || field === 'amount') {
+    const n = parseFloat(v.replace(/,/g, ''));
+    return isNaN(n) ? v.toLowerCase() : n;
+  }
+  return v.toLowerCase();
+}
+
+function _fieldsMismatch101(field, invVal, poVal) {
+  const a = _normForCompare101(field, invVal);
+  const b = _normForCompare101(field, poVal);
+  if (a === '' && b === '') return false;
+  return a !== b;
+}
+
+function _highlightPairMismatches101(invIdx, poIdx) {
+  const invRow = document.querySelector(`#invoiceItemsBody101 tr[data-idx="${invIdx}"]`);
+  const poRow  = (poIdx === null || poIdx === undefined || isNaN(poIdx))
+    ? null
+    : document.querySelector(`#poItemsBody101 tr[data-idx="${poIdx}"]`);
+
+  MISMATCH_FIELDS_101.forEach(field => {
+    const invEl = invRow ? invRow.querySelector(`[data-field="${field}"]`) : null;
+    if (!invEl) return;
+    const poEl = poRow ? poRow.querySelector(`[data-field="${field}"]`) : null;
+    if (!poEl) { invEl.classList.remove('field-mismatch'); return; }
+    const invVal = ('value' in invEl) ? invEl.value : invEl.textContent;
+    const poVal  = ('value' in poEl)  ? poEl.value  : poEl.textContent;
+    const mismatch = _fieldsMismatch101(field, invVal, poVal);
+    invEl.classList.toggle('field-mismatch', mismatch);
+    poEl.classList.toggle('field-mismatch', mismatch);
+  });
+}
+
+function _clearPairHighlights101(invIdx, poIdx) {
+  const invRow = document.querySelector(`#invoiceItemsBody101 tr[data-idx="${invIdx}"]`);
+  const poRow  = (poIdx === null || poIdx === undefined || isNaN(poIdx))
+    ? null
+    : document.querySelector(`#poItemsBody101 tr[data-idx="${poIdx}"]`);
+  MISMATCH_FIELDS_101.forEach(field => {
+    const invEl = invRow ? invRow.querySelector(`[data-field="${field}"]`) : null;
+    const poEl  = poRow  ? poRow.querySelector(`[data-field="${field}"]`)  : null;
+    if (invEl) invEl.classList.remove('field-mismatch');
+    if (poEl)  poEl.classList.remove('field-mismatch');
+  });
+}
+
+function _refreshMismatchForInvRow101(invIdx) {
+  const pair = _pairs101.find(p => p.invIdx === invIdx);
+  if (pair) _highlightPairMismatches101(pair.invIdx, pair.poIdx);
+}
+
+document.getElementById('invoiceItemsBody101')?.addEventListener('input', (e) => {
+  const row = e.target.closest('tr[data-idx]');
+  if (!row) return;
+  const idx = parseInt(row.getAttribute('data-idx'));
+  if (!isNaN(idx)) _refreshMismatchForInvRow101(idx);
+});
+
+function onInvPairClick101(btn) {
+  const rowIdx = parseInt(btn.closest('tr').getAttribute('data-idx'));
+  const existingPair = _pairs101.find(p => p.invIdx === rowIdx);
+  if (existingPair) { _removePair101(existingPair.pairNum); return; }
+
+  if (_selectedInvRow101 !== null) {
+    const prevBtn = document.querySelector(`#invoiceItemsBody101 tr[data-idx="${_selectedInvRow101}"] .pair-btn-inv-101`);
+    if (prevBtn && !_pairs101.find(p => p.invIdx === _selectedInvRow101)) {
+      prevBtn.classList.remove('paired-inv');
+      prevBtn.textContent = '';
+    }
+  }
+  _selectedInvRow101 = rowIdx;
+  btn.classList.add('paired-inv');
+  btn.textContent = '✓';
+  _tryFormPair101();
+  _updateMatchHint101();
+}
+
+function onPoPairClick101(btn) {
+  const rowIdx = parseInt(btn.closest('tr').getAttribute('data-idx'));
+  const existingPair = _pairs101.find(p => p.poIdx === rowIdx);
+  if (existingPair) { _removePair101(existingPair.pairNum); return; }
+
+  if (_selectedPoRow101 !== null) {
+    const prevBtn = document.querySelector(`#poItemsBody101 tr[data-idx="${_selectedPoRow101}"] .pair-btn-po-101`);
+    if (prevBtn && !_pairs101.find(p => p.poIdx === _selectedPoRow101)) {
+      prevBtn.classList.remove('paired-po');
+      prevBtn.textContent = '';
+    }
+  }
+  _selectedPoRow101 = rowIdx;
+  btn.classList.add('paired-po');
+  btn.textContent = '✓';
+  _tryFormPair101();
+  _updateMatchHint101();
+}
+
+function _tryFormPair101() {
+  if (_selectedInvRow101 === null || _selectedPoRow101 === null) return;
+  const pairNum = _pairCounter101++;
+  _pairs101.push({ invIdx: _selectedInvRow101, poIdx: _selectedPoRow101, pairNum });
+
+  const invBtn = document.querySelector(`#invoiceItemsBody101 tr[data-idx="${_selectedInvRow101}"] .pair-btn-inv-101`);
+  if (invBtn) { invBtn.textContent = pairNum; invBtn.setAttribute('data-pair', pairNum); }
+  const poBtn = document.querySelector(`#poItemsBody101 tr[data-idx="${_selectedPoRow101}"] .pair-btn-po-101`);
+  if (poBtn) { poBtn.textContent = pairNum; poBtn.setAttribute('data-pair', pairNum); }
+
+  _highlightPairMismatches101(_selectedInvRow101, _selectedPoRow101);
+  _selectedInvRow101 = null;
+  _selectedPoRow101  = null;
+}
+
+function _removePair101(pairNum) {
+  const pair = _pairs101.find(p => p.pairNum === pairNum);
+  _pairs101 = _pairs101.filter(p => p.pairNum !== pairNum);
+  document.querySelectorAll('.pair-btn-inv-101, .pair-btn-po-101').forEach(b => {
+    if (parseInt(b.getAttribute('data-pair')) === pairNum) {
+      b.setAttribute('data-pair', '');
+      b.textContent = '';
+      b.classList.remove('paired-inv', 'paired-po');
+    }
+  });
+  if (pair) _clearPairHighlights101(pair.invIdx, pair.poIdx);
+  _updateMatchHint101();
+}
+
+function _updateMatchHint101() {
+  const hint = document.getElementById('matchHint101');
+  const singleBtn = document.getElementById('confirmSingleBtn101');
+  if (!hint || !singleBtn) return;
+
+  if (_pairs101.length === 0 && _selectedInvRow101 === null && _selectedPoRow101 === null) {
+    hint.textContent = 'Click a circle on each side to mark a pair';
+    hint.classList.remove('ready');
+    singleBtn.style.display = 'none';
+  } else if (_selectedInvRow101 !== null && _selectedPoRow101 === null) {
+    hint.textContent = 'Invoice line selected — click a PO circle to pair, or add without PO match';
+    hint.classList.remove('ready');
+    singleBtn.style.display = 'inline-block';
+  } else if (_selectedPoRow101 !== null && _selectedInvRow101 === null) {
+    hint.textContent = 'PO line selected — click an invoice circle to pair';
+    hint.classList.remove('ready');
+    singleBtn.style.display = 'none';
+  } else if (_selectedInvRow101 !== null && _selectedPoRow101 !== null) {
+    hint.textContent = 'Both sides selected — click Confirm Matches';
+    hint.classList.add('ready');
+    singleBtn.style.display = 'none';
+  } else {
+    hint.textContent = `✓ ${_pairs101.length} pair(s) ready to confirm`;
+    hint.classList.add('ready');
+    singleBtn.style.display = 'none';
+  }
+}
+
+function confirmSingleInvoiceLine101() {
+  if (_selectedInvRow101 === null) return;
+  const pairNum = _pairCounter101++;
+  _pairs101.push({ invIdx: _selectedInvRow101, poIdx: null, pairNum });
+  const invBtn = document.querySelector(`#invoiceItemsBody101 tr[data-idx="${_selectedInvRow101}"] .pair-btn-inv-101`);
+  if (invBtn) { invBtn.textContent = pairNum; invBtn.setAttribute('data-pair', pairNum); }
+  _selectedInvRow101 = null;
+  _updateMatchHint101();
+}
+
+// ============================================================
+// Add Line Item -- ported from MIGO 103's addInvoiceRow(). Adds one blank,
+// editable invoice-side row (same fields, same short-text row underneath)
+// for a line the OCR/invoice extraction missed, so it can still be paired
+// against a PO line manually below.
+// ============================================================
+function addInvoiceRow101() {
+  const tbody = document.getElementById('invoiceItemsBody101');
+  // Count data rows only (tr[data-idx]) -- tbody.rows.length would also
+  // count the item-desc-row siblings now, double-counting every item.
+  const idx = tbody.querySelectorAll('tr[data-idx]').length;
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-idx', idx);
+  tr.innerHTML = `
+    <td><button type="button" class="pair-btn pair-btn-inv-101" data-pair="" onclick="onInvPairClick101(this)"></button></td>
+    <td style="color:#888;font-size:11px;">${idx + 1}</td>
+    <td><input type="text" class="form-input" data-field="material_code" placeholder="Mat. Code"></td>
+    <td><input type="text" class="form-input" data-field="qty" placeholder="Qty" maxlength="13"></td>
+    <td><input type="text" class="form-input" data-field="unit" placeholder="UOM"></td>
+    <td><input type="text" class="form-input" data-field="rate" placeholder="Rate"></td>
+    <td><input type="text" class="form-input" data-field="amount" placeholder="Amount"></td>
+    <td><input type="text" class="form-input" data-field="hsn_sac" placeholder="HSN/SAC"></td>
+  `;
+  tbody.appendChild(tr);
+
+  // Short Text's own full-width row, immediately after -- see
+  // confirmMatches101()'s "invRow.nextElementSibling" equivalent logic.
+  const descTr = document.createElement('tr');
+  descTr.className = 'item-desc-row';
+  descTr.innerHTML = `
+    <td colspan="8">
+      <div class="short-text-row">
+        <span class="short-text-chip">Short text</span>
+        <input type="text" class="form-input short-text-input" data-field="short_text" placeholder="Short Text">
+      </div>
+    </td>
+  `;
+  tbody.appendChild(descTr);
+}
+
+// ============================================================
+// Auto-Pair -- same strict all-four-fields-match logic as MIGO 103.
+// ============================================================
+function autoPair101(silent) {
+  resetAllMatches101();
+
+  const invRows = document.querySelectorAll('#invoiceItemsBody101 tr[data-idx]');
+  const poRows  = document.querySelectorAll('#poItemsBody101 tr[data-idx]:not([data-deleted="true"])');
+
+  function norm(v) {
+    if (!v) return '';
+    return String(v).trim().replace(/,/g, '').split(/\s+/)[0].replace(/\.0+$/, '').toLowerCase();
+  }
+
+  const invData = Array.from(invRows).map(r => ({
+    el:            r.querySelector('.pair-btn-inv-101'),
+    material_code: norm(r.querySelector('[data-field="material_code"]')?.value),
+    hsn_sac:       norm(r.querySelector('[data-field="hsn_sac"]')?.value),
+    quantity:      norm(r.querySelector('[data-field="qty"]')?.value),
+    rate:          norm(r.querySelector('[data-field="rate"]')?.value),
+    amount:        norm(r.querySelector('[data-field="amount"]')?.value),
+  }));
+
+  const poData = Array.from(poRows).map(r => ({
+    el:            r.querySelector('.pair-btn-po-101'),
+    material_code: norm(r.querySelector('[data-field="material_code"]')?.textContent),
+    hsn_sac:       norm(r.querySelector('[data-field="hsn_sac"]')?.textContent),
+    quantity:      norm(r.querySelector('[data-field="qty"]')?.textContent),
+    rate:          norm(r.querySelector('[data-field="rate"]')?.textContent),
+    amount:        norm(r.querySelector('[data-field="amount"]')?.textContent),
+  }));
+
+  let usedPo = new Set();
+  invData.forEach((inv, i) => {
+    if (!inv.el) return;
+    poData.forEach((po, idx) => {
+      if (usedPo.has(idx) || !po.el) return;
+      const hsnMatch    = inv.hsn_sac  && po.hsn_sac  && inv.hsn_sac  === po.hsn_sac;
+      const rateMatch   = inv.rate     && po.rate     && inv.rate     === po.rate;
+      const qtyMatch    = inv.quantity && po.quantity && inv.quantity === po.quantity;
+      const amountMatch = inv.amount   && po.amount   && inv.amount   === po.amount;
+      if (hsnMatch && rateMatch && qtyMatch && amountMatch) {
+        const pairNum = _pairCounter101++;
+        _pairs101.push({ invIdx: i, poIdx: idx, pairNum });
+        inv.el.setAttribute('data-pair', pairNum);
+        inv.el.textContent = pairNum;
+        inv.el.classList.add('paired-inv');
+        po.el.setAttribute('data-pair', pairNum);
+        po.el.textContent = pairNum;
+        po.el.classList.add('paired-po');
+        _highlightPairMismatches101(i, idx);
+        usedPo.add(idx);
+      }
+    });
+  });
+
+  _updateMatchHint101();
+  const count = _pairs101.length;
+  if (count === 0) {
+    if (!silent) showToast('Auto-pair: no rows matched (HSN/SAC + Rate + Quantity + Amount must all match). Use manual pairing if values differ.', 'warning');
+  } else {
+    const hint = document.getElementById('matchHint101');
+    if (hint) { hint.textContent = `✓ ${count} pair(s) matched — click Confirm Matches`; hint.classList.add('ready'); }
+  }
+}
+
+// ============================================================
+// Confirm Matches → build Matched Pairs table (with baked-in Batch column)
+// ============================================================
+function confirmMatches101() {
+  if (_pairs101.length === 0) {
+    showToast('No pairs to confirm. Click circles on both invoice and PO sides.', 'warning');
+    return;
+  }
+
+  const tbody = document.getElementById('matchedBody101');
+  const existingPairNums = new Set(
+    Array.from(tbody.querySelectorAll('tr[data-pair]')).map(r => parseInt(r.getAttribute('data-pair')))
+  );
+
+  _pairs101
+    .filter(pair => !existingPairNums.has(pair.pairNum))
+    .sort((a, b) => a.pairNum - b.pairNum)
+    .forEach((pair) => {
+      const invRow = document.querySelector(`#invoiceItemsBody101 tr[data-idx="${pair.invIdx}"]`);
+      const poRow  = pair.poIdx !== null ? document.querySelector(`#poItemsBody101 tr[data-idx="${pair.poIdx}"]`) : null;
+      const invDescRow = invRow ? invRow.nextElementSibling : null;
+      const poDescRow  = poRow  ? poRow.nextElementSibling  : null;
+
+      const inv = {
+        material_code: invRow?.querySelector('[data-field="material_code"]')?.value || '',
+        short_text:    invDescRow?.querySelector('[data-field="short_text"]')?.value || '',
+        quantity:      invRow?.querySelector('[data-field="qty"]')?.value || '',
+        unit:          invRow?.querySelector('[data-field="unit"]')?.value || '',
+        rate:          invRow?.querySelector('[data-field="rate"]')?.value || '',
+        amount:        invRow?.querySelector('[data-field="amount"]')?.value || '',
+        hsn_sac:       invRow?.querySelector('[data-field="hsn_sac"]')?.value || '',
+      };
+      // Same "PO is ground truth" precedence as MIGO 103's confirmMatches().
+      const po = {
+        item_no:       poRow?.getAttribute('data-item-no') || '',
+        material_code: poRow?.querySelector('[data-field="material_code"]')?.textContent.trim() || '',
+        short_text:    poDescRow?.querySelector('[data-field="short_text"]')?.textContent.trim() || '',
+        quantity:      poRow?.querySelector('[data-field="qty"]')?.textContent.trim() || '',
+        unit:          poRow?.querySelector('[data-field="unit"]')?.textContent.trim() || '',
+        rate:          poRow?.querySelector('[data-field="rate"]')?.textContent.trim() || '',
+        amount:        poRow?.querySelector('[data-field="amount"]')?.textContent.trim() || '',
+        hsn_sac:       poRow?.querySelector('[data-field="hsn_sac"]')?.textContent.trim() || '',
+      };
+
+      const tr = document.createElement('tr');
+      tr.setAttribute('data-pair', pair.pairNum);
+      tr.setAttribute('data-item-no', po.item_no);
+      tr.innerHTML = `
+        <td>
+          <div class="row-move-btns">
+            <button type="button" class="btn-row-move" title="Move up" onclick="_moveRowUp101(this)">▲</button>
+            <button type="button" class="btn-row-move" title="Move down" onclick="_moveRowDown101(this)">▼</button>
+          </div>
+        </td>
+        <td class="_num-cell" style="font-weight:600;color:#8a6100;"></td>
+        <td>${_esc101(po.material_code)}</td>
+        <td class="cell-text" title="${_esc101(inv.short_text || po.short_text)}">${_esc101(inv.short_text || po.short_text)}</td>
+        <td>${_esc101(po.hsn_sac)}</td>
+        <td>${_esc101(po.unit)}</td>
+        <td><input type="text" class="form-input" value="${_esc101(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
+        <td><input type="text" class="form-input matched-dn-qty-101" value="${_esc101(inv.quantity || po.quantity)}" maxlength="13" style="width:70px;"></td>
+        <td><input type="text" class="batch-input-101" maxlength="10" placeholder="(auto)"></td>
+        <td><input type="text" class="form-input" value="${_esc101(inv.rate || po.rate)}" style="width:80px;"></td>
+        <td><input type="text" class="form-input" value="${_esc101(inv.amount || po.amount)}" style="width:90px;"></td>
+        <td><button type="button" class="btn-unmatch" onclick="unmatchPair101(this, ${pair.pairNum})">↩ Undo</button></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+  _renumberMatchedRows101();
+  _updateArrowStates101();
+  document.getElementById('matchedSection101').style.display = 'block';
+  document.getElementById('matchedSection101').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function unmatchPair101(btn, pairNum) {
+  _removePair101(pairNum);
+  btn.closest('tr').remove();
+  if (document.querySelectorAll('#matchedBody101 tr').length === 0) {
+    document.getElementById('matchedSection101').style.display = 'none';
+  }
+}
+
+function resetAllMatches101() {
+  _pairs101 = [];
+  _selectedInvRow101 = null;
+  _selectedPoRow101  = null;
+  _pairCounter101    = 1;
+  document.querySelectorAll('.pair-btn-inv-101, .pair-btn-po-101').forEach(b => {
+    b.setAttribute('data-pair', '');
+    b.textContent = '';
+    b.classList.remove('paired-inv', 'paired-po');
+  });
+  document.querySelectorAll('#invoiceItemsBody101 .field-mismatch, #poItemsBody101 .field-mismatch').forEach(el => el.classList.remove('field-mismatch'));
+  const body = document.getElementById('matchedBody101');
+  if (body) body.innerHTML = '';
+  const section = document.getElementById('matchedSection101');
+  if (section) section.style.display = 'none';
+  _updateMatchHint101();
+}
+
+function _moveRowUp101(btn) {
+  const row = btn.closest('tr');
+  const prev = row.previousElementSibling;
+  if (prev) { row.parentNode.insertBefore(row, prev); _renumberMatchedRows101(); _updateArrowStates101(); }
+}
+function _moveRowDown101(btn) {
+  const row = btn.closest('tr');
+  const next = row.nextElementSibling;
+  if (next) { row.parentNode.insertBefore(next, row); _renumberMatchedRows101(); _updateArrowStates101(); }
+}
+function _updateArrowStates101() {
+  const rows = document.querySelectorAll('#matchedBody101 tr');
+  rows.forEach((row, idx) => {
+    const moveBtns = row.querySelectorAll('.btn-row-move');
+    if (moveBtns[0]) moveBtns[0].disabled = (idx === 0);
+    if (moveBtns[1]) moveBtns[1].disabled = (idx === rows.length - 1);
+  });
+}
+function _renumberMatchedRows101() {
+  document.querySelectorAll('#matchedBody101 tr').forEach((row, idx) => {
+    const numCell = row.querySelector('._num-cell');
+    if (numCell) numCell.textContent = idx + 1;
+  });
+}
+
+function _esc101(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Auto-match on page load -- same single-pair convenience as MIGO 103's
+// DOMContentLoaded block, namespaced 101. Skipped entirely once posted
+// (matched section is server-rendered read-only in that case).
+document.addEventListener('DOMContentLoaded', function() {
+  if (MIGO_101_ALREADY_POSTED) return;
+
+  const invRows = document.querySelectorAll('#invoiceItemsBody101 tr[data-idx]');
+  const poRows  = document.querySelectorAll('#poItemsBody101 tr[data-idx]');
+  if (invRows.length === 0 || poRows.length === 0) return;
+
+  if (invRows.length === 1 && poRows.length === 1) {
+    const invBtn = invRows[0].querySelector('.pair-btn-inv-101');
+    const poBtn  = poRows[0].querySelector('.pair-btn-po-101');
+    if (invBtn && poBtn) {
+      const pairNum = _pairCounter101++;
+      _pairs101.push({ invIdx: 0, poIdx: 0, pairNum });
+      invBtn.setAttribute('data-pair', pairNum); invBtn.textContent = pairNum; invBtn.classList.add('paired-inv');
+      poBtn.setAttribute('data-pair', pairNum);  poBtn.textContent  = pairNum;  poBtn.classList.add('paired-po');
+      _highlightPairMismatches101(0, 0);
+      _updateMatchHint101();
+      confirmMatches101();
+    }
+  } else {
+    autoPair101(true);
+  }
+});
+
+// ============================================================
+// Manual/retry PO fetch -- same route as MIGO 103's, generic and
+// already keyed only by history_id/po_number (see app.py's run_po_fetch).
+// ============================================================
+let _migo101PoFetchJobId  = null;
+let _migo101PoFetchPoller = null;
+
+function fetchMigo101PoItems() {
+  const poNumber = document.getElementById('migoPoNumber101').value.trim();
+  if (!poNumber) { _showMigo101PoStatus('Enter a PO number first.', 'error'); return; }
+  if (!/^\d+$/.test(poNumber)) {
+    _showMigo101PoStatus('"' + poNumber + '" doesn\'t look like a valid PO number (numbers only). Please correct it before fetching.', 'error');
+    return;
+  }
+  const historyId = parseInt(document.getElementById('history_id_migo101').value);
+  if (!historyId) return;
+
+  _resetFetchPoBtn101(true);
+  _showMigo101PoStatus('⏳ Fetching PO line items from SAP (ME23N)...', 'info');
+
+  fetch('/api/run_po_fetch/' + historyId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ po_number: poNumber })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (!data.success) {
+      _resetFetchPoBtn101(false);
+      _showMigo101PoStatus('❌ ' + (data.error || 'Failed to queue PO fetch.'), 'error');
+      return;
+    }
+    _migo101PoFetchJobId = data.job_id;
+    _pollMigo101PoFetch();
+  })
+  .catch(err => {
+    _resetFetchPoBtn101(false);
+    _showMigo101PoStatus('❌ Network error: ' + err.message, 'error');
+  });
+}
+
+function _pollMigo101PoFetch() {
+  if (!_migo101PoFetchJobId) return;
+  _migo101PoFetchPoller = setInterval(function() {
+    fetch('/api/queue_status/' + _migo101PoFetchJobId)
+      .then(r => r.json())
+      .then(data => {
+        const job = data.job;
+        if (!job) return;
+        if (job.status === 'done') {
+          clearInterval(_migo101PoFetchPoller);
+          _resetFetchPoBtn101(false);
+          const result = job.result || {};
+          const items  = result.po_items || [];
+          if (items.length > 0) {
+            _showMigo101PoStatus('✓ Loaded ' + items.length + ' PO line(s) — reloading...', 'success');
+            reloadToFreshData('migo101', 1200);
+          } else {
+            _showMigo101PoStatus('⚠ PO fetched but no open line items found.', 'info');
+          }
+        } else if (job.status === 'failed') {
+          clearInterval(_migo101PoFetchPoller);
+          _resetFetchPoBtn101(false);
+          _showMigo101PoStatus('❌ ' + (job.error_message || 'Fetch failed'), 'error');
+        }
+      })
+      .catch(function() {});
+  }, 3000);
+}
+
+function _resetFetchPoBtn101(loading) {
+  const btn = document.getElementById('fetchPoItemsBtn101');
+  if (!btn) return;
+  btn.disabled    = loading;
+  btn.textContent = loading ? '⏳ Fetching...' : (btn.dataset.defaultLabel || '📋 Fetch PO Items');
+}
+
+function _showMigo101PoStatus(msg, type) {
+  let el = document.getElementById('migo101PoStatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'migo101PoStatus';
+    el.style.cssText = 'font-size:12px;margin-top:5px;padding:4px 8px;border-radius:4px;';
+    const poGroup = document.getElementById('migoPoNumber101').closest('.xd-attr-val');
+    if (poGroup) poGroup.appendChild(el);
+  }
+  const colors = { info: '#e8f0fe:#1e5ca8', error: '#fee2e2:#b91c1c', success: '#d1fae5:#065f46' };
+  const [bg, color] = (colors[type] || colors.info).split(':');
+  el.style.background = bg;
+  el.style.color      = color;
+  el.style.display    = 'block';
+  el.textContent      = msg;
+}
+
+// ============================================================
+// Collect + validate + submit
+// ============================================================
+function _collectMigo101Items() {
+  const items = [];
+  document.querySelectorAll('#matchedBody101 tr[data-pair]').forEach((row, idx) => {
+    const inputs = row.querySelectorAll('input[type="text"]');
+    const cells  = row.querySelectorAll('td');
+    // matchedBody101 <tr> cell layout (see confirmMatches101() above):
+    // [0]=move [1]=# [2]=material_code(PO) [3]=short_text [4]=hsn_sac(PO)
+    // [5]=UOM [6]=qty-input [7]=dn-qty-input [8]=batch-input
+    // [9]=rate-input [10]=amount-input [11]=undo-button.
+    items.push({
+      line:          idx + 1,
+      item_no:       row.getAttribute('data-item-no') || '',
+      material_code: cells[2]?.textContent.trim() || '',
+      short_text:    cells[3]?.textContent.trim() || '',
+      hsn_sac:       cells[4]?.textContent.trim() || '',
+      unit:          cells[5]?.textContent.trim() || '',
+      qty_expected:  inputs[0]?.value || '',
+      qty_actual:    inputs[1]?.value || '',
+      batch:         inputs[2]?.value || '',
+      rate:          inputs[3]?.value || '',
+      amount:        inputs[4]?.value || '',
+    });
+  });
+  return items;
+}
+
+function validateMigo101() {
+  let valid = true;
+  const fields = [
+    { id: 'migoOutboundDelivery101', errId: 'err_migoOutboundDelivery101' },
+    { id: 'migoDocDate101', errId: 'err_migoDocDate101' },
+    { id: 'migoPostDate101', errId: 'err_migoPostDate101' },
+  ];
+  fields.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el) el.classList.remove('field-error');
+    if (err) err.classList.remove('show');
+  });
+  fields.forEach(f => {
+    const el = document.getElementById(f.id);
+    const err = document.getElementById(f.errId);
+    if (el && !el.value.trim()) {
+      el.classList.add('field-error');
+      if (err) err.classList.add('show');
+      valid = false;
+    }
+  });
+
+  const sel = document.getElementById('storageLocation101');
+  const searchEl = document.getElementById('storageLocation101Search');
+  const slocErr = document.getElementById('err_storageLocation101');
+  if (searchEl) searchEl.classList.remove('field-error');
+  if (slocErr) slocErr.classList.remove('show');
+  if (!sel || !sel.value) {
+    if (searchEl) searchEl.classList.add('field-error');
+    if (slocErr) slocErr.classList.add('show');
+    valid = false;
+  }
+
+  if (document.querySelectorAll('#matchedBody101 tr[data-pair]').length === 0) {
+    valid = false;
+    showToast('Confirm at least one matched pair before posting.', 'warning');
+  }
+  return valid;
+}
+
+function submitMigo101() {
+  if (POST_LOCKED_101 && STEP_LOCKS_ENABLED_101) {
+    showToast('⏸ Gate In must be completed before posting MIGO 101.', 'warning');
+    return;
+  }
+  if (!validateMigo101()) return;
+  const historyId = parseInt(document.getElementById('history_id_migo101').value);
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+  showConfirm(
+    'Confirm MIGO 101 Posting',
+    'You are about to post MIGO 101 (Goods Receipt against Outbound Delivery) to SAP. Make sure the delivery number, storage location and line items are correct.',
+    () => _doSubmitMigo101(historyId)
+  );
+}
+
+function _doSubmitMigo101(historyId) {
+  const payload = {
+    history_id:              historyId,
+    outboundDeliveryNumber:  document.getElementById('migoOutboundDelivery101').value,
+    migo101DocDate:          document.getElementById('migoDocDate101').value,
+    migo101PostDate:         document.getElementById('migoPostDate101').value,
+    migo101BillOfLading:     document.getElementById('migoBillOfLading101').value,
+    migo101GRSlipNo:         document.getElementById('migoGRSlipNo101').value,
+    migo101HeaderText:       document.getElementById('migoHeaderText101').value,
+    storageLocation:         document.getElementById('storageLocation101').value,
+    vendorInvoiceDetail:     document.getElementById('vendorInvoiceDetail101').value,
+    remarks101:              document.getElementById('migoRemarks101').value,
+    items_data:              _collectMigo101Items()
+  };
+
+  const btn      = document.getElementById('migo101Btn');
+  const statusEl = document.getElementById('migo101Status');
+
+  submitAndPoll('/api/run_migo_101', payload, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `✓ MIGO 101 posted! Material Doc: ${result.migo_101_doc_number || '—'}`;
+      btn.textContent        = '✓ MIGO 101 Done';
+      btn.style.background   = '#00b894';
+      btn.disabled = true;
+      sessionStorage.setItem('mi_reload_tab', 'migo101');
+      setTimeout(() => window.location.reload(), 400);
+    },
+    onFailure: (error) => {
+      // error text already carries SAP's exact status-bar rejection
+      // message verbatim for the DELIVERY_NOT_VALID case (see
+      // execute_migo_101_sap's sap_status_suffix in rf_runner.py) --
+      // displayed as-is, no rewording.
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+// ── MIGO 101 Reversal (SAP action A03) ─────────────────────────────────────
+// ADDED (2026-10-14, client request): reverses this record's own already-posted
+// MIGO 101 document. A REAL, final SAP posting (not a dry run). Same pattern as
+// MIGO 103's submitMigoReversal(): confirm, submitAndPoll, reload this tab. The
+// server picks the document number itself (this record's MIGO 101 document) --
+// nothing about it is sent from the browser. After a successful reversal the
+// step is reset automatically, so MIGO 101 can be posted again right away.
+function submitMigo101Reversal() {
+  const historyId = parseInt(document.getElementById('history_id_migo101').value);
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+
+  const confirmed = confirm(
+    'Reverse this MIGO 101 in SAP?\n\n' +
+    'This posts a real cancellation (SAP action A03) -- it is not a preview ' +
+    'or dry run, and it cannot be undone from this app. MIGO 101 will then be ' +
+    'reset so it can be posted again for this record.\n\n' +
+    'Continue?'
+  );
+  if (!confirmed) return;
+
+  const btn      = document.getElementById('migo101ReversalBtn');
+  const statusEl = document.getElementById('migo101ReversalStatus');
+
+  submitAndPoll(`/api/run_migo_101_reversal/${historyId}`, {}, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `✓ MIGO 101 reversed in SAP${result.reversal_doc_number ? ' — new document ' + result.reversal_doc_number : ''}.`;
+      sessionStorage.setItem('mi_reload_tab', 'migo101');
+      setTimeout(() => window.location.reload(), 400);
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+</script>

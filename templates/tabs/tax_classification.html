@@ -1,0 +1,208 @@
+<!-- ADDED (2026-09-23, client request): Tax Classification tab -- a mandatory
+     compliance attestation (Eligible/Verified by GST, Ineligible, or both)
+     that must be set before MIRO can proceed (see app.py's
+     _check_step_allowed "miro" branch). Deliberately has no dependency on
+     any other tab/step (client-confirmed) -- Compliance can set/correct
+     it at any point in the record's workflow; only MIRO itself waits on
+     it.
+
+     CHANGED (2026-10-08, client request): the two options are now a
+     checklist (checkboxes), not mutually-exclusive radios -- both can be
+     ticked at once, at least one is required. Stored in the same
+     history.tax_classification column as 'eligible', 'ineligible' or
+     'eligible,ineligible' (see schema_migration_v31.sql).
+
+     ADDED (2026-10-08, client request): ZGRN certificates (GR Certificate /
+     Certificate of Goods Delivery) section at the bottom -- shows the
+     already-printed PDFs (display only), or a Print button if they are
+     missing. Same bot/endpoint as MIGO 103's Print button. -->
+<style>
+.taxclass-card { background:white; padding:24px 28px; border-radius:12px;
+  box-shadow:0 2px 12px rgba(0,0,0,0.08); max-width:640px; }
+.taxclass-title { font-size:16px; color:#2c3e50; font-weight:700; margin-bottom:6px; }
+.taxclass-sub { font-size:13px; color:#888; margin-bottom:20px; }
+.taxclass-locked-banner { background:#ecfdf5; border:1px solid #b8f0d4; color:#1a7a3c;
+  border-radius:8px; padding:12px 16px; margin-bottom:18px; font-size:13px; }
+.taxclass-locked-banner.ineligible { background:#fff3cd; border-color:#ffeaa7; color:#856404; }
+.taxclass-marked-meta { color:inherit; opacity:0.8; font-size:12px; margin-top:4px; }
+.taxclass-options { display:flex; flex-direction:column; gap:12px; margin-bottom:20px; }
+.taxclass-option {
+  display:flex; align-items:center; gap:12px; padding:14px 18px;
+  border:2px solid #e0e0e0; border-radius:10px; cursor:pointer; transition:.15s;
+}
+.taxclass-option:hover { border-color:#1e5ca8; background:#f8faff; }
+.taxclass-option.selected { border-color:#1e5ca8; background:#f0f4ff; }
+.taxclass-option input[type="checkbox"] { width:18px; height:18px; accent-color:#1e5ca8; cursor:pointer; }
+.taxclass-option-label { font-size:14px; color:#2c3e50; font-weight:600; }
+.taxclass-save-btn {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; border:none;
+  padding:10px 28px; border-radius:8px; font-size:14px; font-weight:600;
+  cursor:pointer; transition:.2s;
+}
+.taxclass-save-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.taxclass-save-btn:disabled { opacity:0.5; cursor:not-allowed; transform:none; box-shadow:none; }
+.taxclass-status { font-size:13px; font-weight:500; margin-top:12px; }
+.taxclass-readonly-note { font-size:12px; color:#999; margin-top:10px; }
+.taxclass-zgrn { margin-top:28px; padding-top:20px; border-top:1px solid #eee; }
+.taxclass-zgrn-title { font-size:14px; color:#2c3e50; font-weight:700; margin-bottom:6px; }
+.taxclass-zgrn-note { font-size:12px; color:#888; margin-bottom:12px; }
+.taxclass-zgrn-links a {
+  display:inline-block; margin:0 8px 8px 0; padding:9px 16px; border-radius:8px;
+  background:#f0f4ff; border:1px solid #c5d8f8; color:#1e5ca8; font-size:13px;
+  font-weight:600; text-decoration:none;
+}
+.taxclass-zgrn-links a:hover { background:#e3ecff; }
+.taxclass-zgrn-status { display:none; padding:10px 14px; border-radius:8px; margin-top:12px; font-size:13px; font-weight:500; }
+</style>
+
+{% set _tc_vals = ((history.tax_classification or '').split(',')) if history else [] %}
+
+<div class="taxclass-card">
+  <div class="taxclass-title">Tax Classification</div>
+  <div class="taxclass-sub">Mandatory before MIRO. Tick one or both. No dependency on any other tab -- this can be set at any time.</div>
+
+  {% if history.tax_classification %}
+  <div class="taxclass-locked-banner{% if 'ineligible' in _tc_vals %} ineligible{% endif %}">
+    {% if 'eligible' in _tc_vals and 'ineligible' in _tc_vals %}
+    Marked <strong>Eligible / Verified by GST</strong> and <strong>Ineligible</strong>
+    {% elif 'eligible' in _tc_vals %}
+    ✓ Marked <strong>Eligible / Verified by GST</strong>
+    {% else %}
+    Marked <strong>Ineligible</strong>
+    {% endif %}
+    <div class="taxclass-marked-meta">
+      by {{ history.tax_classification_marked_by or '—' }}{% if history.tax_classification_marked_at %} on {{ history.tax_classification_marked_at }}{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if is_superadmin or has_role('compliance') %}
+  <div class="taxclass-options" id="taxClassOptions">
+    <label class="taxclass-option{% if 'eligible' in _tc_vals %} selected{% endif %}">
+      <input type="checkbox" name="taxClassificationChoice" value="eligible"
+             onchange="this.closest('.taxclass-option').classList.toggle('selected', this.checked)"
+             {% if 'eligible' in _tc_vals %}checked{% endif %}>
+      <span class="taxclass-option-label">1. Eligible / Verified by GST</span>
+    </label>
+    <label class="taxclass-option{% if 'ineligible' in _tc_vals %} selected{% endif %}">
+      <input type="checkbox" name="taxClassificationChoice" value="ineligible"
+             onchange="this.closest('.taxclass-option').classList.toggle('selected', this.checked)"
+             {% if 'ineligible' in _tc_vals %}checked{% endif %}>
+      <span class="taxclass-option-label">2. Ineligible</span>
+    </label>
+  </div>
+  <button id="taxClassSaveBtn" class="taxclass-save-btn" onclick="saveTaxClassification({{ history_id }})">
+    💾 Save Classification
+  </button>
+  <div id="taxClassStatus" class="taxclass-status"></div>
+  {% else %}
+  <div class="taxclass-readonly-note">Only Compliance can set this -- you're viewing read-only.</div>
+  {% endif %}
+
+  {# ── ZGRN certificates ──────────────────────────────────────────────
+     zgrn_files = the already-printed PDFs for this record whose file is
+     still on disk (built by app.py's _zgrn_saved_files()). If there are
+     any, they are shown as View links and the bot is NOT offered again.
+     If none (never printed, or the file was cleaned up after 30 days),
+     a Print button is offered -- enabled only once MIGO 103 has posted.
+     The bot only ever runs when the user clicks Print. #}
+  {% set _zgrn_list = zgrn_files if zgrn_files is defined and zgrn_files else [] %}
+  <div class="taxclass-zgrn">
+    <div class="taxclass-zgrn-title">ZGRN Certificates</div>
+    <div class="taxclass-zgrn-links" id="taxZgrnLinks">
+      {% for f in _zgrn_list %}
+      <a href="{{ f.view_url }}" target="_blank" rel="noopener">👁️ View {{ f.label }}</a>
+      {% endfor %}
+    </div>
+    {% if not _zgrn_list %}
+    <div id="taxZgrnPrintWrap">
+      {% if history and history.migo_103 %}
+      <div class="taxclass-zgrn-note">No certificate is saved for this record yet. Click Print to generate it from the MIGO 103 document.</div>
+      <button type="button" id="taxZgrnPrintBtn" class="taxclass-save-btn" onclick="submitTaxZgrnPrint({{ history_id }})">
+        🖨️ Print
+      </button>
+      {% else %}
+      <div class="taxclass-zgrn-note" style="color:#b9770e;">MIGO 103 isn't posted yet -- the certificate can be printed once it is.</div>
+      <button type="button" class="taxclass-save-btn" disabled title="MIGO 103 isn't posted yet">
+        🖨️ Print
+      </button>
+      {% endif %}
+    </div>
+    {% endif %}
+    <div id="taxZgrnStatus" class="taxclass-zgrn-status"></div>
+  </div>
+</div>
+
+<script>
+function saveTaxClassification(historyId) {
+  const checked = Array.from(document.querySelectorAll('input[name="taxClassificationChoice"]:checked'))
+    .map(function (i) { return i.value; });
+  const statusEl = document.getElementById('taxClassStatus');
+  const btn = document.getElementById('taxClassSaveBtn');
+  if (!checked.length) {
+    statusEl.style.color = '#e74c3c';
+    statusEl.textContent = 'Tick at least one option -- Tax Classification is mandatory before MIRO can proceed.';
+    return;
+  }
+  btn.disabled = true;
+  statusEl.style.color = '#888';
+  statusEl.textContent = 'Saving...';
+
+  fetch(`/api/save_tax_classification/${historyId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ classifications: checked })
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        statusEl.style.color = '#00b894';
+        statusEl.textContent = 'Saved — reloading...';
+        setTimeout(() => window.location.reload(), 700);
+      } else {
+        statusEl.style.color = '#e74c3c';
+        statusEl.textContent = data.error || 'Save failed.';
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      statusEl.style.color = '#e74c3c';
+      statusEl.textContent = 'Network error — please retry.';
+      btn.disabled = false;
+    });
+}
+
+// ZGRN Print from this tab -- same endpoint/bot as MIGO 103's Print button
+// (runs only when clicked; the server also refuses to re-run it if the
+// certificate is already saved and returns the existing links instead).
+function submitTaxZgrnPrint(historyId) {
+  const btn      = document.getElementById('taxZgrnPrintBtn');
+  const statusEl = document.getElementById('taxZgrnStatus');
+  const linksEl  = document.getElementById('taxZgrnLinks');
+  const wrapEl   = document.getElementById('taxZgrnPrintWrap');
+
+  function showStatus(ok, text) {
+    statusEl.style.display = 'block';
+    statusEl.style.background = ok ? '#ecfdf5' : '#fff5f5';
+    statusEl.style.color = ok ? '#00b894' : '#e17055';
+    statusEl.style.border = '1px solid ' + (ok ? '#00b894' : '#e17055');
+    statusEl.textContent = text;
+  }
+
+  statusEl.style.display = 'none';
+  submitAndPoll(`/api/zgrn_print/${historyId}`, { print_twice: true }, btn, {
+    onSuccess: (result) => {
+      const files = (result && result.files) || [];
+      if (files.length) {
+        linksEl.innerHTML = files.map(f =>
+          `<a href="${f.view_url}" target="_blank" rel="noopener">👁️ View ${f.label}</a>`
+        ).join('');
+        if (wrapEl) wrapEl.style.display = 'none';
+      }
+      showStatus(true, '✓ Print complete — certificate(s) ready above.');
+    },
+    onFailure: (error) => showStatus(false, '❌ ' + error),
+    onError:   (error) => showStatus(false, '❌ ' + error)
+  });
+}
+</script>

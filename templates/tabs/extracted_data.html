@@ -1,0 +1,2103 @@
+<style>
+.approval-banner {
+  border-radius:10px; padding:9px 18px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:13px;
+}
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+.approval-banner.hold     { background:#fee; color:#c0392b; border:1px solid #e74c3c; }
+
+.approval-actions { display:flex; gap:10px; }
+.btn-approve {
+  background:linear-gradient(135deg,#00b894,#00cec9); color:white; border:none;
+  padding:10px 24px; border-radius:8px; font-size:14px; font-weight:600;
+  cursor:pointer; transition:.2s;
+}
+.btn-approve:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(0,184,148,0.4); }
+.btn-hold {
+  background:white; color:#e74c3c; border:2px solid #e74c3c;
+  padding:10px 24px; border-radius:8px; font-size:14px; font-weight:600;
+  cursor:pointer; transition:.2s;
+}
+.btn-hold:hover { background:#fee; }
+
+.btn-rerun-ocr {
+  background:linear-gradient(135deg,#f39c12,#d35400); color:white; border:none;
+  padding:10px 22px; border-radius:8px; font-size:14px; font-weight:600;
+  cursor:pointer;
+}
+.btn-rerun-ocr:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(243,156,18,0.4); }
+.btn-rerun-ocr:disabled { background:#b0bec5; cursor:not-allowed; }
+
+/* v25 excel-style redesign: banners row (approval status + delivery-mode
+   lock summary side by side, matching the pasted mockup) */
+.xd-banners-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; align-items:stretch; }
+.xd-banners-row .approval-banner { margin-bottom:0; }
+/* v26-follow-up-2: shorter boxes now that up to 4 sit in one row (client
+   request, 2026-08-14) -- padding trimmed to match .approval-banner. */
+.xd-lock-banner {
+  background:#ecfdf5; border:1px solid #00b894; border-radius:10px;
+  padding:9px 16px; font-size:13px; color:#1a7a3c;
+  display:flex; flex-direction:column; justify-content:center;
+}
+.xd-lock-banner .xd-lock-title { font-weight:700; margin-bottom:4px; }
+.xd-lock-banner .xd-lock-title:last-child { margin-bottom:0; }
+.xd-lock-banner .xd-lock-sub { color:#3a8a5c; margin-top:6px; }
+.xd-category-options { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.xd-cat-pill {
+  background:white; border:1.5px solid #b9e4cd; border-radius:20px;
+  padding:3px 12px; font-size:12px; font-weight:600; color:#3a8a5c;
+  cursor:pointer; user-select:none; transition:.15s;
+}
+.xd-cat-pill:hover { border-color:#00b894; }
+.xd-cat-pill.selected { border-color:#00b894; background:#00b894; color:white; }
+.xd-cat-pill input { display:none; }
+
+/* Section title bars ("INVOICE DATA" / "TRANSPORT DETAILS") -- amber,
+   square left accent (client request: straight, unrounded accent edge). */
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+.xd-section-title .xd-orig-links a {
+  color:#8a6100; font-size:11px; font-weight:600; text-decoration:none;
+  letter-spacing:normal; margin-left:8px; display:inline-block;
+  background:#fff; border:1.5px solid #f0a500; border-radius:6px;
+  padding:4px 10px;
+}
+.xd-section-title .xd-orig-links a:hover { background:#fff2cf; text-decoration:none; }
+
+/* Excel-style grid tables -- straight, continuous 1px borders throughout
+   a row-band (client request, 2026-08-13: "the line in between must be
+   straight"). Real <table> elements so row heights (and therefore
+   divider lines) stay natively synced across paired sub-sections without
+   any manual alignment work. */
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-hd {
+  background:#f5f6f8; font-weight:700; font-size:10.5px; color:#666;
+  text-transform:uppercase; letter-spacing:0.3px;
+}
+.xd-cap {
+  display:block; font-size:10.5px; color:#5a6472; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.3px; margin-bottom:1px;
+}
+/* v26-follow-up: strict 2-cell "Attribute Name | Value" row format
+   (client hand-sketch, 2026-08-13) replaces the old single-cell
+   caption-above-input layout across every Invoice Data / Transport
+   Details band.
+   FIX (2026-08-14, client request): label column used to be width:1%
+   (shrink-to-fit ITS OWN content) -- since each band is a separate
+   <table>, that meant a table with a short longest label (e.g. Doc
+   details' "Invoice No.") ended up with a narrower label column, and
+   therefore a value column starting further left, than a table with a
+   longer longest label (e.g. Buyer info's "Buyer Address") -- values
+   didn't line up between left/right tables in a row, or across bands.
+   A fixed px width shared by every .xd-table makes every label column
+   (and therefore every value column's start position) identical. Sized
+   to fit "Out Bound Delivery No." (the longest label anywhere in this
+   file) with room to spare. */
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input, .xd-table textarea {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table textarea { resize:none; overflow:hidden; line-height:1.35; white-space:pre-wrap; word-break:break-word; }
+.xd-table input:hover, .xd-table textarea:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table textarea:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table textarea:disabled { color:#4a5568; cursor:not-allowed; }
+.xd-table input.field-expired, .xd-table textarea.field-expired { border-color:#e74c3c; background:#fee; }
+.xd-table input.field-mismatch, .xd-table textarea.field-mismatch { border-color:#e08e0b; background:#fff8e6; }
+.xd-table td.xd-num { text-align:right; }
+
+/* v29 (2026-08-14, client request): "Copy from Invoice" / "Copy from
+   E-Way Bill" quick-fill buttons -- input + button share the cell via a
+   small flex row instead of the input alone taking the full width. */
+.xd-val-with-copy { display:flex; align-items:center; gap:6px; }
+.xd-val-with-copy input { flex:1; width:auto; }
+.copy-field-btn {
+  flex:0 0 auto; font-size:10px; font-weight:600; padding:3px 9px;
+  border:1px solid #c5d8f8; background:#f0f4ff; color:#1e5ca8;
+  border-radius:5px; cursor:pointer; white-space:nowrap;
+}
+.copy-field-btn:hover:not(:disabled) { background:#e0eaff; }
+.copy-field-btn:disabled { opacity:0.4; cursor:not-allowed; }
+.field-error-msg-inline { color:#e74c3c; font-size:10.5px; margin-top:2px; display:none; }
+.field-error-msg-inline.show { display:block; }
+.field-error-msg-inline.mismatch { color:#b8720a; }
+
+/* Two row-bands sit side by side (e.g. Doc Details | Buyer Info) as one
+   flex row so each band's own straight lines stay independent of the
+   other band's row count. */
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-transport-pair { display:flex; gap:10px; align-items:stretch; }
+.xd-transport-pair > .xd-table { flex:1; }
+
+/* Material Info -- clamps to ~3 visible rows by default; "View N more"
+   moves the live table (not a copy) into a modal so add/delete-row and
+   the save-time collector (#invGoodsBody) keep working unchanged
+   regardless of which container currently holds the table. */
+.xd-material-card { display:flex; gap:0; }
+.xd-material-clamp { max-height:118px; overflow:hidden; flex:1; }
+/* FIX (2026-08-18, client request): inside the "view all" modal, cap the
+   table to ~7 visible rows with its own scrollbar instead of letting it
+   grow to fit every row -- 264px ~= 1 header row (~26px) + 7 data rows
+   (~34px each). Header uses position:sticky (see .hsn-table-edit thead th
+   below) so it stays pinned while the body scrolls. */
+.xd-material-expanded .xd-material-clamp { max-height:264px; overflow-y:auto; overflow-x:hidden; }
+/* The "Showing X of Y / View more" footer only makes sense on the small
+   collapsed card behind the modal -- redundant once every row is already
+   visible in the modal, so hide it there. */
+.xd-material-expanded .xd-material-more-row { display:none; }
+.xd-material-more-row { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; background:#fafbfc; border:1px solid #e3e3e3; border-top:none; }
+.xd-material-count { font-size:11px; color:#888; }
+.btn-view-more {
+  background:#fff8e6; color:#8a6100; border:1px solid #f0d58c;
+  padding:5px 14px; border-radius:6px; font-size:12px; font-weight:700;
+  cursor:pointer;
+}
+.btn-view-more:hover { background:#fdeecb; }
+.btn-view-more[hidden] { display:none; }
+
+.hsn-table-edit { width:100%; border-collapse:collapse; font-size:12px; background:#f0f4ff; }
+.hsn-table-edit th {
+  background:#fff3c4; color:#7a5c00; padding:6px 8px; text-align:left; font-weight:700;
+  border-bottom:2px solid #f0d58c; font-size:10.5px; text-transform:uppercase;
+  /* Pinned header while the modal's 7-row-tall body scrolls -- background
+     above is required for sticky to look right (so scrolled-under rows
+     don't show through). Harmless in the compact (non-modal) clamp too,
+     since that one has overflow:hidden and never actually scrolls. */
+  position:sticky; top:0; z-index:1;
+}
+.hsn-table-edit td { padding:4px 6px; border-bottom:1px solid #e3e3e3; }
+.hsn-table-edit input {
+  width:100%; padding:4px 6px; font-size:12px; border:1px solid #e0e0e0;
+  border-radius:4px;
+}
+.btn-row-add { background:#e8f0fe; color:#1e5ca8; border:1px solid #c5d8f8;
+  padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600;
+  cursor:pointer; margin-top:8px; }
+.btn-row-add:hover { background:#dbeafe; }
+.btn-row-delete { background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5;
+  padding:4px 8px; border-radius:4px; font-size:12px; font-weight:700;
+  cursor:pointer; }
+
+/* Bottom action bar -- Hold + Save and Proceed only (client request,
+   2026-08-13: this single action now replaces the old per-section
+   Save-and-Next / Approve flow entirely; GST Verification is a separate
+   standalone on-demand tab, no longer part of this chain). */
+.xd-action-bar {
+  margin-top:18px; display:flex; align-items:center; gap:10px;
+  padding-top:14px; border-top:1px solid #f0f0f0;
+}
+.btn-save-proceed {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white;
+  border:none; padding:11px 28px; border-radius:8px;
+  font-size:14px; font-weight:700; cursor:pointer;
+}
+.btn-save-proceed:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.btn-save-proceed:disabled { background:#ccc; cursor:not-allowed; }
+.save-status { font-size:12px; font-weight:500; }
+.save-status.success { color:#00b894; }
+.save-status.error { color:#e17055; }
+
+/* Shared modal shell -- approve / courier / hold / material-info popups
+   all reuse this one pattern instead of four near-duplicate blocks. */
+.xd-modal {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.6); z-index:10000;
+  align-items:center; justify-content:center;
+}
+.xd-modal.show { display:flex; }
+.xd-modal-box {
+  background:white; border-radius:12px; padding:26px;
+  width:90%; max-width:460px; box-shadow:0 8px 32px rgba(0,0,0,0.2);
+}
+.xd-modal-box.wide { max-width:920px; max-height:82vh; overflow-y:auto; }
+.xd-modal-box h3 { color:#1e5ca8; margin-bottom:10px; }
+.xd-modal-box p { color:#555; font-size:13px; margin-bottom:22px; }
+.xd-modal-actions { display:flex; gap:10px; }
+.xd-modal-actions button { flex:1; padding:12px; border:none; border-radius:8px;
+  font-weight:600; font-size:14px; cursor:pointer; transition:.2s; }
+.xd-modal-cancel { background:#ecf0f1; color:#333; }
+.xd-modal-cancel:hover { background:#d5dbdc; }
+.xd-modal-confirm { background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; }
+.xd-modal-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+
+/* v26-follow-up: Remarks panel, scoped to THIS tab's instance only
+   (#remarksPanel-extracted -- _remarks_panel.html is shared across 6
+   tabs, so nothing here touches the shared partial or its JS). Client
+   request: always open, no collapse affordance, on Extracted Data
+   specifically. The toggle's click handler and .open class in the
+   shared JS still run harmlessly -- .remarks-body simply never actually
+   hides because of the !important below, so nothing needs to change in
+   the shared file. */
+#remarksPanel-extracted .remarks-body { display:block !important; }
+#remarksPanel-extracted .remarks-chevron { display:none; }
+#remarksPanel-extracted .remarks-toggle { cursor:default; }
+
+/* v26-follow-up: 2-column restructure (client request, 2026-08-13, per
+   reference image) -- Comments list on the left, composer on the right.
+   The shared partial's DOM order is unchanged (title, then
+   [data-role="comments-list"], then .remarks-comment-composer, all
+   direct children of .remarks-comments-section) -- this is pure CSS grid
+   placement scoped to this one tab's panel, nothing added/removed from
+   the markup, so the other 5 tabs keep the original single-column stack. */
+#remarksPanel-extracted .remarks-comments-section {
+  display:grid; grid-template-columns:1.1fr 0.9fr; column-gap:24px; align-items:start;
+}
+#remarksPanel-extracted .remarks-comments-section-title { grid-column:1 / -1; }
+#remarksPanel-extracted [data-role="comments-list"] {
+  grid-column:1; max-height:360px; overflow-y:auto; padding-right:6px;
+}
+#remarksPanel-extracted .remarks-comment-composer {
+  grid-column:2; margin-top:0; padding-top:0; border-top:none;
+  border-left:1px solid #f0f0f0; padding-left:20px;
+}
+
+.hold-box textarea {
+  width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:8px;
+  font-family:inherit; font-size:14px; min-height:90px; margin:10px 0 18px;
+}
+
+/* v13: partial-document scenario panel. */
+.scenario-panel {
+  background:#f7f9ff; border:1.5px solid #c5d8f8; border-radius:10px;
+  padding:16px 20px; margin-bottom:16px;
+}
+.scenario-block { margin-bottom:14px; }
+.scenario-block:last-child { margin-bottom:0; }
+.scenario-title { font-weight:700; color:#1e5ca8; font-size:13px; margin-bottom:4px; }
+.scenario-subtitle { font-size:12px; color:#666; margin-bottom:10px; }
+.scenario-options { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.scenario-option {
+  background:white; border:1.5px solid #d5deee; border-radius:8px;
+  padding:8px 16px; font-size:13px; font-weight:600; color:#444;
+  cursor:pointer; user-select:none; transition:.15s;
+}
+.scenario-option:hover { border-color:#1e5ca8; }
+.scenario-option.selected {
+  border-color:#1e5ca8; background:#e8f0fe; color:#1e5ca8;
+}
+.scenario-option input { display:none; }
+.scenario-save-btn {
+  background:linear-gradient(135deg,#1e5ca8,#164a8a); color:white; border:none;
+  padding:9px 22px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;
+}
+.scenario-save-btn:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 4px 12px rgba(30,92,168,0.3); }
+.scenario-save-btn:disabled { background:#ccc; cursor:not-allowed; }
+.scenario-status { font-size:12px; font-weight:600; margin-left:10px; }
+.scenario-status.ok { color:#1a7a3c; }
+.scenario-status.err { color:#c0392b; }
+</style>
+
+<div class="content-card">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+    <h3 style="margin:0;">📊 Extracted Data — Verify &amp; Approve</h3>
+    <span style="font-size:11px;color:#999;">Click any value below to edit</span>
+  </div>
+
+  {% set status = (history.approval_status if history else 'pending') or 'pending' %}
+  {# can_edit_extracted comes from app.py's _extracted_data_view_state() --
+     False for every downstream role (Gate Security/Stores/Quality/
+     Accounts Payable) viewing this record read-only, and for a
+     view-only SuperAdmin. Folding it into is_approved reuses every
+     existing {% if is_approved %}disabled{% endif %} attribute below,
+     so downstream viewers get the same locked rendering as an approved
+     record without touching each field individually. #}
+  {% set can_edit_extracted = can_edit_extracted if can_edit_extracted is defined else true %}
+  {% set is_approved = (status == 'approved') or not can_edit_extracted %}
+
+  {# Only used now to gate what saveAndProceed() collects/saves -- the old
+     sequential Invoice -> E-way -> LR "Save & Next" tab flow is gone
+     (v25, 2026-08-13: single "Save and Proceed" action covers whichever
+     of the three documents exist for this record, then approves in one
+     shot). doc_order still only lists documents that actually exist. #}
+  {% set doc_order = [] %}
+  {% if invoice_data %}{% set _ = doc_order.append('invoice') %}{% endif %}
+  {% if ewaybill_data %}{% set _ = doc_order.append('ewaybill') %}{% endif %}
+  {% if lr_data %}{% set _ = doc_order.append('lr') %}{% endif %}
+
+  {% set need_delivery_mode = invoice_data and not lr_data %}
+  {% set need_ewb_exemption = invoice_data and not ewaybill_data %}
+  {# v26-follow-up-2 (client request, 2026-08-14): Category / Goods
+     Delivery Mode / E-Way Bill Exemption un-merged back into 3 independent
+     boxes. GDM and EWB each show only when a real value has actually been
+     chosen for this record -- otherwise the box is omitted entirely (not
+     rendered as an empty placeholder), so there's nothing on screen that
+     could read as "you forgot to pick this" for the ~majority of records
+     that never needed either picker. #}
+  {% set _show_gdm = history and history.goods_delivery_mode %}
+  {% set _show_ewb = history and history.ewb_exemption_reasons %}
+  {% set _box_count = 1 + (1 if history else 0) + (1 if _show_gdm else 0) + (1 if _show_ewb else 0) %}
+
+  {# v26-follow-up: Status line takes the spot the "Source Files" banner
+     used to occupy -- Source Files was dropped entirely (client request,
+     2026-08-13). #}
+  {% if history %}
+  <div style="background:#f0f4ff;border-radius:8px;padding:10px 16px;margin-bottom:14px;font-size:13px;color:#4a5568;">
+    <strong>Status:</strong>
+    Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp;
+    MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp;
+    MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+    &nbsp;|&nbsp;
+    MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Status banners row -- up to 4 equal-width boxes (client request,
+       2026-08-14: "1:4 for all"), whichever of Approved-by / Category /
+       Goods Delivery Mode / E-Way Bill Exemption actually apply to this
+       record. -->
+  <div class="xd-banners-row" style="grid-template-columns:repeat({{ _box_count }}, 1fr);">
+    {% if status == 'pending' %}
+    <div class="approval-banner pending">
+      <div>⏳ <strong>Pending Verification</strong> — review all extracted values below, then Save and Proceed.</div>
+    </div>
+    {% elif status == 'approved' %}
+    <div class="approval-banner approved">
+      <div>
+        ✓ <strong>Approved</strong> by {{ history.approval_by }}
+        {% if history.approval_at %}on {{ history.approval_at.strftime('%d-%m-%Y %H:%M') }}{% endif %}
+      </div>
+    </div>
+    {% elif status == 'hold' %}
+    <div class="approval-banner hold">
+      <div>
+        ⏸ <strong>On Hold</strong> by {{ history.approval_by }}: {{ history.hold_reason or 'No reason given' }}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if history %}
+    {% set _category = history.category or 'stores' %}
+    {% set _category_labels = {'stores':'Stores','sales_return':'Sales Return','job_work':'Job Work'} %}
+    <div class="xd-lock-banner">
+      {% if is_approved %}
+      {# v26-follow-up: Category collapses to the same locked-text style
+         as Goods Delivery Mode/EWB Exemption once the record is
+         approved -- no more editable pills at that point. #}
+      <div class="xd-lock-title">✓ Category: {{ _category_labels.get(_category, _category) }}</div>
+      {% else %}
+      <div class="xd-lock-title">Category</div>
+      <div class="xd-category-options" id="categoryOptions">
+        {% for _val, _label in [('stores','Stores'), ('sales_return','Sales Return'), ('job_work','Job Work')] %}
+        <label class="xd-cat-pill{% if _category == _val %} selected{% endif %}" data-value="{{ _val }}">
+          <input type="radio" name="extractedCategory" value="{{ _val }}" {% if _category == _val %}checked{% endif %}>{{ _label }}
+        </label>
+        {% endfor %}
+        <span class="save-status" id="categorySaveStatus"></span>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if _show_gdm %}
+    <div class="xd-lock-banner">
+      <div class="xd-lock-title">✓ Goods Delivery Mode: {{ {'utility_van':'Utility Van','vendor_vehicle':'Vendor Own Vehicle','hand_delivery':'Hand Delivery','courier':'Courier'}.get(history.goods_delivery_mode, history.goods_delivery_mode) }}</div>
+    </div>
+    {% endif %}
+
+    {% if _show_ewb %}
+    {% set _ewb_labels = {'value_exemption':'Value Exemption','distance_exemption':'Distance Exemption','other_exemption':'Other Exemptions'} %}
+    {% set _ewb_parts = [] %}
+    {% for _r in history.ewb_exemption_reasons.split(',') %}
+      {% set _ = _ewb_parts.append(_ewb_labels.get(_r.strip(), _r.strip())) %}
+    {% endfor %}
+    <div class="xd-lock-banner">
+      <div class="xd-lock-title">✓ E-Way Bill Exemption: {{ _ewb_parts|join(', ') }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if history and not can_edit_extracted %}
+  <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#4a5568;">
+    👁 <strong>Read-only</strong> — this data has been validated and approved by the Compliance Officer. Fields are locked for your role.
+  </div>
+  {% endif %}
+
+  <!-- v13: partial-document scenario panel.
+       FIX (2026-08-14): only render a block here while the value is still
+       UNRESOLVED (the actual picker). Once history.goods_delivery_mode /
+       ewb_exemption_reasons is set, that info is already shown as its own
+       box in the top .xd-banners-row (_show_gdm/_show_ewb above) -- showing
+       a second "— locked" copy of the same fact here was pure duplication. -->
+  {% set _need_gdm_picker = need_delivery_mode and not history.goods_delivery_mode %}
+  {% set _need_ewb_picker = need_ewb_exemption and not history.ewb_exemption_reasons %}
+  {% if (_need_gdm_picker or _need_ewb_picker) and can_edit_extracted %}
+  <div class="scenario-panel" id="scenarioPanel">
+
+    {% if _need_gdm_picker %}
+    <div class="scenario-block">
+      <div class="scenario-title">🚚 Goods Delivery Mode Required</div>
+      <div class="scenario-subtitle">No LR (Lorry Receipt) was received for this record. Select how the goods actually arrived — this cannot be changed once saved.</div>
+      <div class="scenario-options" id="deliveryModeOptions">
+        <label class="scenario-option" data-value="utility_van"><input type="radio" name="deliveryMode" value="utility_van">Utility Van</label>
+        <label class="scenario-option" data-value="vendor_vehicle"><input type="radio" name="deliveryMode" value="vendor_vehicle">Vendor Own Vehicle</label>
+        <label class="scenario-option" data-value="hand_delivery"><input type="radio" name="deliveryMode" value="hand_delivery">Hand Delivery</label>
+        <label class="scenario-option" data-value="courier"><input type="radio" name="deliveryMode" value="courier">Courier</label>
+      </div>
+      <button type="button" class="scenario-save-btn" id="deliveryModeSaveBtn" onclick="saveDeliveryMode()" disabled>💾 Save Delivery Mode</button>
+      <span class="scenario-status" id="deliveryModeStatus"></span>
+    </div>
+    {% endif %}
+
+    {% if _need_ewb_picker %}
+    <div class="scenario-block">
+      <div class="scenario-title">📋 E-Way Bill Exemption Reason Required</div>
+      <div class="scenario-subtitle">No E-Way Bill was received for this record. Select why — one or more may apply. This cannot be changed once saved.</div>
+      <div class="scenario-options" id="ewbExemptionOptions">
+        <label class="scenario-option" data-value="value_exemption"><input type="checkbox" name="ewbExemption" value="value_exemption">Value Exemption</label>
+        <label class="scenario-option" data-value="distance_exemption"><input type="checkbox" name="ewbExemption" value="distance_exemption">Distance Exemption</label>
+        <label class="scenario-option" data-value="other_exemption"><input type="checkbox" name="ewbExemption" value="other_exemption">Other Exemptions</label>
+      </div>
+      <button type="button" class="scenario-save-btn" id="ewbExemptionSaveBtn" onclick="saveEwbExemption()" disabled>💾 Save Exemption Reason(s)</button>
+      <span class="scenario-status" id="ewbExemptionStatus"></span>
+    </div>
+    {% endif %}
+
+  </div>
+  {% endif %}
+
+  <!-- OCR Failure & Retry -->
+  {% if history and history.ocr_status == 'failed' %}
+  <div style="background:#fee;border:1px solid #e74c3c;border-radius:10px;padding:14px 20px;margin-bottom:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="color:#c0392b;font-weight:500;">
+        ⚠ OCR failed for this record
+        {% if history.ocr_retry_count and history.ocr_retry_count >= 5 %}
+        <div style="color:#d35400;font-size:12px;margin-top:4px;font-weight:600;">
+          ⚠ This is retry attempt #{{ history.ocr_retry_count }}. Source PDFs may be unreadable — consider re-uploading.
+        </div>
+        {% endif %}
+      </div>
+      {% if can_edit_extracted %}
+      <button id="rerunOcrBtn" class="btn-rerun-ocr" onclick="rerunOCR()">🔄 Re-run OCR</button>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if invoice_data or ewaybill_data or lr_data %}
+
+  <!-- ============================ INVOICE DATA ============================ -->
+  {% if invoice_data %}
+  <div class="xd-section-title">
+    <span>INVOICE DATA</span>
+    {% if invoice_data.get('filename') %}
+    <span class="xd-orig-links">
+      <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data['filename']) }}" target="_blank">📄 View original invoice</a>
+    </span>
+    {% endif %}
+  </div>
+
+  <!-- Band 1: Doc Details | Buyer Info -->
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="5">Doc details</td>
+        <td class="xd-attr-lbl">Invoice No.</td>
+        <td class="xd-attr-val"><input id="inv_invoice_number" value="{{ ((invoice_data.get('invoice_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Invoice Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="inv_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((invoice_data.get('invoice_date') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">PO No.</td>
+        <td class="xd-attr-val"><input id="inv_po_number" value="{{ (invoice_data.get('po_number') if invoice_data else '') or '' }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_po_number"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">IRN</td>
+        <td class="xd-attr-val"><input id="inv_irn" value="{{ ((invoice_data.get('irn') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_irn"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Out Bound Delivery No.</td>
+        <td class="xd-attr-val"><input id="inv_outbound_delivery_number" value="{{ ((invoice_data.get('outbound_delivery_number') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
+
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="4">Buyer info</td>
+        <td class="xd-attr-lbl">Buyer Name</td>
+        <td class="xd-attr-val"><input id="inv_buyer_name" value="{{ ((invoice_data.get('buyer_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Buyer Address</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="inv_buyer_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('buyer_address') if invoice_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Buyer GSTIN</td>
+        <td class="xd-attr-val"><input id="inv_buyer_gstin" value="{{ ((invoice_data.get('buyer_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_buyer_gstin"></div></td>
+      </tr>
+      <tr>
+        <!-- Bill To Code merged into "Bill To State" display, same
+             "CODE - STATE" pattern as Ship To State below (client
+             request, 2026-08-13). -->
+        {% set _bts = ((invoice_data.get('bill_to_state') if invoice_data else '') or '') %}
+        {% set _btc = ((invoice_data.get('bill_to_code') if invoice_data else '') or '') %}
+        <td class="xd-attr-lbl">Bill To State</td>
+        <td class="xd-attr-val"><input id="inv_bill_to_state"
+               value="{% if _btc and _bts %}{{ _btc }} - {{ _bts }}{% else %}{{ _btc or _bts }}{% endif %}"
+               {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Band 2: Shipping Info | Seller Info -->
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="3">Shipping info</td>
+        <td class="xd-attr-lbl">Ship To Name</td>
+        <td class="xd-attr-val"><input id="inv_ship_to_name" value="{{ ((invoice_data.get('ship_to_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Ship To Address</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="inv_ship_to_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('ship_to_address') if invoice_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        {% set _sts = ((invoice_data.get('ship_to_state') if invoice_data else '') or '') %}
+        {% set _stc = ((invoice_data.get('ship_to_code') if invoice_data else '') or '') %}
+        <td class="xd-attr-lbl">Ship To State</td>
+        <td class="xd-attr-val">
+          <input id="inv_ship_to_state"
+                 value="{% if _stc and _sts %}{{ _stc }} - {{ _sts }}{% else %}{{ _stc or _sts }}{% endif %}"
+                 {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
+
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="4">Seller info</td>
+        <td class="xd-attr-lbl">Seller Name</td>
+        <td class="xd-attr-val"><input id="inv_seller_name" value="{{ ((invoice_data.get('seller_name') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Seller Address</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="inv_seller_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((invoice_data.get('seller_address') if invoice_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Seller GSTIN</td>
+        <td class="xd-attr-val"><input id="inv_seller_gstin" value="{{ ((invoice_data.get('seller_gstin') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_seller_gstin"></div></td>
+      </tr>
+      <tr>
+        <!-- "Company PAN" -> "Seller Company PAN" label rename (client
+             request, 2026-08-13); element id inv_company_pan unchanged so
+             the PAN-vs-GSTIN cross-check JS keeps working untouched. -->
+        <td class="xd-attr-lbl">Seller Company PAN</td>
+        <td class="xd-attr-val"><input id="inv_company_pan" value="{{ ((invoice_data.get('company_pan') if invoice_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_inv_company_pan"></div></td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Band 3: Material Info | Tax Info -->
+  <div class="xd-band-pair">
+    <div class="xd-material-card" style="flex:1;flex-direction:column;" id="materialInfoCard">
+      <div style="font-size:10.5px;color:#8a6100;background:#fff8e6;border:1px solid #f0d58c;border-radius:4px;padding:2px 8px;display:inline-block;margin-bottom:4px;font-weight:700;letter-spacing:0.3px;">📄 Based on Invoice</div>
+      <table class="xd-table" style="margin-bottom:0;">
+        <tr>
+          <td class="xd-lbl" rowspan="1" style="width:22px;">Material info</td>
+          <td colspan="6" style="padding:0;">
+            <div class="xd-material-clamp">
+              <table class="hsn-table-edit" id="invGoodsTable">
+                <thead>
+                  <tr>
+                    <th style="width:26px;">#</th>
+                    <th>Code</th>
+                    <th>HSN</th>
+                    <th>Description</th>
+                    <th>Qty</th>
+                    <th>UOM</th>
+                    <th style="text-align:right;">Value</th>
+                    <th style="width:30px;"></th>
+                  </tr>
+                </thead>
+                <tbody id="invGoodsBody">
+                  {% set hsn_list = invoice_data.get('hsn_details') or [] %}
+                  {% for hsn in hsn_list %}
+                  <tr data-orig-idx="{{ loop.index0 }}">
+                    <td class="goods-row-num" style="color:#888;font-size:11px;">{{ loop.index }}</td>
+                    <td><input type="text" data-field="material_code" value="{{ ((hsn.get('material_code') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="hsn_sac" value="{{ ((hsn.get('hsn_sac') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="description" value="{{ ((hsn.get('description') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="quantity" value="{{ ((hsn.get('quantity') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="unit" value="{{ ((hsn.get('unit') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td><input type="text" data-field="taxable_value" style="text-align:right;" value="{{ ((hsn.get('taxable_value') if hsn else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+                    <td>{% if not is_approved %}<button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button>{% endif %}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      </table>
+      <div class="xd-material-more-row">
+        <span class="xd-material-count" id="materialInfoCountLabel"></span>
+        <span style="display:flex;gap:8px;">
+          {% if not is_approved %}
+          <button type="button" class="btn-row-add" style="margin-top:0;" onclick="addGoodsRow()">➕ Add Row</button>
+          {% endif %}
+          <button type="button" class="btn-view-more" id="materialInfoMoreBtn" hidden onclick="openMaterialInfoModal()">View more line items</button>
+        </span>
+      </div>
+    </div>
+
+    <!-- Tax Info: trimmed from 8 fields to 5 -- CGST/SGST/IGST rate+amount
+         (6 fields) removed entirely, and the whole band is permanently
+         non-editable regardless of approval state (client request,
+         2026-08-13: "this entire container must be not editable"). -->
+    <table class="xd-table" style="flex:1;">
+      <tr>
+        <td class="xd-lbl" rowspan="5">Tax info</td>
+        <td class="xd-attr-lbl">Taxable Amount</td>
+        <td class="xd-attr-val"><input id="inv_total_taxable_amount" value="{{ ((invoice_data.get('total_taxable_amount') if invoice_data else '') or '') }}" disabled></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Total Tax Amount</td>
+        <td class="xd-attr-val"><input id="inv_total_tax_amount" value="{{ ((invoice_data.get('total_tax_amount') if invoice_data else '') or '') }}" disabled></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Grand Total</td>
+        <td class="xd-attr-val"><input id="inv_grand_total" style="font-weight:700;" value="{{ ((invoice_data.get('grand_total') if invoice_data else '') or '') }}" disabled></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Payment Terms</td>
+        <td class="xd-attr-val"><input id="inv_payment_terms" value="{{ ((invoice_data.get('payment_terms') if invoice_data else '') or '') }}" disabled></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Amount in Words</td>
+        <td class="xd-attr-val"><input id="inv_amount_in_words" value="{{ ((invoice_data.get('amount_in_words') if invoice_data else '') or '') }}" disabled></td>
+      </tr>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- ============================ TRANSPORT DETAILS ============================ -->
+  {% if ewaybill_data or lr_data or history.goods_delivery_mode == 'courier' %}
+  {% set lr = lr_data or {} %}
+  <div class="xd-section-title">
+    <span>TRANSPORT DETAILS</span>
+    <span class="xd-orig-links">
+      {% if ewaybill_data and ewaybill_data.get('filename') %}
+      <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data['filename']) }}" target="_blank">📄 View original E-Way Bill</a>
+      {% endif %}
+      {% if lr.get('filename') %}
+      <a href="{{ url_for('view_document', doctype='lr', filename=lr['filename']) }}" target="_blank">📄 View original LR</a>
+      {% endif %}
+    </span>
+  </div>
+
+  <div class="xd-transport-pair">
+    {% if ewaybill_data %}
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="12">E-way bill details</td>
+        <td class="xd-attr-lbl">E-Way Bill No.</td>
+        <td class="xd-attr-val"><input id="eway_ewaybill_number" value="{{ ((ewaybill_data.get('ewaybill_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Generated Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="eway_generated_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('generated_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Validity Date{% if ewb_expired %} <span style="color:#e74c3c;">*expired</span>{% endif %}</td>
+        <td class="xd-attr-val"><input class="date-field{% if ewb_expired %} field-expired{% endif %}" id="eway_validity_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('validity_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Inv. No.</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="eway_invoice_number" value="{{ ((ewaybill_data.get('invoice_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_invoice_number','eway_invoice_number','Invoice No.')">📋 Copy from Invoice</button>
+          </div>
+          <div class="field-error-msg-inline" id="err_eway_invoice_number"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Inv. Date</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input class="date-field" id="eway_invoice_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('invoice_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_invoice_date','eway_invoice_date','Invoice Date')">📋 Copy from Invoice</button>
+          </div>
+          <div class="field-error-msg-inline" id="err_eway_invoice_date"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Dispatch From</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="eway_dispatch_from" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_from') if ewaybill_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Dispatch To</td>
+        <td class="xd-attr-val"><textarea class="address-textarea" id="eway_dispatch_to" rows="1" {% if is_approved %}disabled{% endif %}>{{ ((ewaybill_data.get('dispatch_to') if ewaybill_data else '') or '') }}</textarea></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Vehicle No.</td>
+        <td class="xd-attr-val"><input id="eway_vehicle_number" maxlength="10" value="{{ ((ewaybill_data.get('vehicle_number') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_vehicle_number"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transporter Name</td>
+        <td class="xd-attr-val"><input id="eway_transporter_name" value="{{ ((ewaybill_data.get('transporter_name') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transporter GSTIN</td>
+        <td class="xd-attr-val"><input id="eway_transporter_gstin" value="{{ ((ewaybill_data.get('transporter_gstin') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_transporter_gstin"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transport Doc No.</td>
+        <td class="xd-attr-val"><input id="eway_transport_doc_no" value="{{ ((ewaybill_data.get('transport_doc_no') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_eway_transport_doc_no"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transport Doc Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="eway_transport_doc_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((ewaybill_data.get('transport_doc_date') if ewaybill_data else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
+    {% endif %}
+
+    {% if lr_data or history.goods_delivery_mode == 'courier' %}
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="9">LR details</td>
+        <td class="xd-attr-lbl">LR No.</td>
+        <td class="xd-attr-val"><input id="lr_lr_number" value="{{ ((lr.get('lr_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <div class="field-error-msg-inline" id="err_lr_lr_number"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">LR Date</td>
+        <td class="xd-attr-val"><input class="date-field" id="lr_lr_date" type="text" placeholder="dd/mm/yyyy" value="{{ ((lr.get('lr_date') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Vehicle No.</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_vehicle_number" maxlength="10" value="{{ ((lr.get('vehicle_number') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('eway_vehicle_number','lr_vehicle_number','Vehicle No.')">📋 Copy from E-Way Bill</button>
+          </div>
+          <div class="field-error-msg-inline" id="err_lr_vehicle_number"></div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Consignor Name</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_consignor_name" maxlength="40" value="{{ ((lr.get('consignor_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_seller_name','lr_consignor_name','Seller Name')">📋 Copy from Invoice</button>
+          </div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Consignee Name</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_consignee_name" maxlength="40" value="{{ ((lr.get('consignee_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_buyer_name','lr_consignee_name','Buyer Name')">📋 Copy from Invoice</button>
+          </div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">From Location</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_from_location" value="{{ ((lr.get('from_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_bill_to_state','lr_from_location','Bill To State')">📋 Copy from Invoice</button>
+          </div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">To Location</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <input id="lr_to_location" value="{{ ((lr.get('to_location') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('inv_ship_to_state','lr_to_location','Ship To State')">📋 Copy from Invoice</button>
+          </div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Delivery Address</td>
+        <td class="xd-attr-val"><div class="xd-val-with-copy">
+          <textarea class="address-textarea" id="lr_delivery_address" rows="1" {% if is_approved %}disabled{% endif %}>{{ lr.get('delivery_address') or '' }}</textarea>
+          <button type="button" class="copy-field-btn" {% if is_approved %}disabled{% endif %} onclick="copyFieldValue('eway_dispatch_to','lr_delivery_address','Dispatch To')">📋 Copy from E-Way Bill</button>
+          </div></td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Transporter Name</td>
+        <td class="xd-attr-val"><input id="lr_transporter_name" value="{{ ((lr.get('transporter_name') if lr else '') or '') }}" {% if is_approved %}disabled{% endif %}></td>
+      </tr>
+    </table>
+    {% endif %}
+  </div>
+
+  {% if not lr_data and history.goods_delivery_mode == 'courier' %}
+  <div style="background:#f0f4ff;border:1px solid #c5d8f8;border-radius:8px;padding:10px 16px;margin:10px 0 0;font-size:12px;color:#4a5568;">
+    ✍️ <strong>Manual Entry</strong> — no LR document was scanned for this record (Courier delivery). Fill in the LR details above from the courier's consignment note.
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'extracted' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
+
+  <!-- Bottom action bar -->
+  <div class="xd-action-bar">
+    {% if not is_approved %}
+    <button type="button" class="btn-hold" onclick="openHoldModal()">⏸ Hold</button>
+    <button type="button" class="btn-save-proceed" id="saveProceedBtn" onclick="saveAndProceed()">Save and Proceed</button>
+    <span class="save-status" id="invSaveStatus"></span>
+    <span class="save-status" id="ewaySaveStatus"></span>
+    <span class="save-status" id="lrSaveStatus"></span>
+    {% endif %}
+  </div>
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">📄</div>
+    <h3>No Data Available</h3>
+    <p>Upload documents to extract and view data here</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Approve confirm modal -->
+<div class="xd-modal" id="approveModal">
+  <div class="xd-modal-box">
+    <h3>✓ Save and Proceed</h3>
+    <p>Save all extracted values and approve this record? Editing will be locked.<br>GST Verification is now a separate, on-demand tab and can be run any time after this.</p>
+    <div class="xd-modal-actions">
+      <button class="xd-modal-cancel" onclick="closeApproveModal()">Cancel</button>
+      <button class="xd-modal-confirm" onclick="_doApprove()">Yes, Save and Proceed</button>
+    </div>
+  </div>
+</div>
+
+<!-- Courier confirm modal (v13) -->
+<div class="xd-modal" id="courierModal">
+  <div class="xd-modal-box">
+    <h3>🚚 Confirm Courier Delivery</h3>
+    <p>Choosing <strong>Courier</strong> will open the LR Details section so you can fill in the courier's consignment note by hand. This choice cannot be changed once saved. Continue?</p>
+    <div class="xd-modal-actions">
+      <button class="xd-modal-cancel" onclick="closeCourierModal()">Cancel</button>
+      <button class="xd-modal-confirm" onclick="_doSaveDeliveryMode('courier')">Yes, Use Courier</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hold modal -->
+<div class="xd-modal" id="holdModal">
+  <div class="xd-modal-box hold-box">
+    <h3>⏸ Place Record on Hold</h3>
+    <p style="color:#666;font-size:13px;margin-bottom:8px;">Provide a reason. The record will be paused until someone approves it.</p>
+    <textarea id="holdReason" placeholder="Reason for hold..."></textarea>
+    <div class="xd-modal-actions">
+      <button class="xd-modal-cancel" onclick="closeHoldModal()">Cancel</button>
+      <button class="xd-modal-confirm" onclick="confirmHold()">Place on Hold</button>
+    </div>
+  </div>
+</div>
+
+<!-- Material Info -- "View more line items" modal. Moves the live
+     #invGoodsTable node in/out (see openMaterialInfoModal below) rather
+     than cloning it, so add/delete-row and the save-time collector
+     (_collectInvHsn reads #invGoodsBody by id, wherever it currently
+     lives in the DOM) keep working unchanged either way. -->
+<div class="xd-modal" id="materialInfoModal">
+  <div class="xd-modal-box wide">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="margin:0;">📦 Goods Information — all line items</h3>
+      <button type="button" onclick="closeMaterialInfoModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;">✕</button>
+    </div>
+    <div id="materialInfoModalSlot"></div>
+  </div>
+</div>
+
+<script>
+const HISTORY_ID = {{ history_id|tojson }};
+const IS_APPROVED = {{ 'true' if is_approved else 'false' }};
+// v13: partial-document scenario gating -- see scenario-panel above.
+const NEED_DELIVERY_MODE = {{ 'true' if (need_delivery_mode and not history.goods_delivery_mode) else 'false' }};
+const NEED_EWB_EXEMPTION = {{ 'true' if (need_ewb_exemption and not history.ewb_exemption_reasons) else 'false' }};
+// v25: which of Invoice / E-way Bill / LR actually exist for this record
+// -- saveAndProceed() below only calls the save function for sections
+// that are present, same set of documents the old doc_order/last_doc
+// logic used to gate the per-tab Save buttons.
+const DOC_ORDER = {{ doc_order|tojson }};
+// v7: original OCR line items — used to preserve per-line fields not shown
+// in the Goods Information table (rate, taxes, total).
+const ORIGINAL_HSN = {{ ((invoice_data.get('hsn_details') or []) if invoice_data else []) | tojson }};
+
+// ============================================================
+// Address fields: auto-expand textarea height to fit full content, so
+// the complete address is always visible without scrolling (client
+// request).
+//
+// FIX (2026-08-13): this used to run once, synchronously, the moment the
+// script tag executed -- but at that instant the excel-grid <table>'s
+// column widths haven't necessarily been laid out/committed by the
+// browser yet (this script runs during initial parse, before layout is
+// guaranteed final). scrollHeight read against a not-yet-finalized
+// (often narrower) column width could compute a tiny/zero height, and
+// since nothing re-ran it afterward, an address box could stay
+// visually collapsed even though the value was genuinely in the DOM.
+// Now also re-runs on requestAnimationFrame (next paint, layout settled)
+// and on window 'load' (covers webfonts/images still shifting layout at
+// parse time) -- belt and braces, since this only recomputes a CSS
+// height and is cheap to call more than once.
+// ============================================================
+function _autoGrowTextarea(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+function _autoGrowAllAddressFields() {
+  document.querySelectorAll('.address-textarea').forEach(_autoGrowTextarea);
+}
+document.querySelectorAll('.address-textarea').forEach(function (el) {
+  el.addEventListener('input', function () { _autoGrowTextarea(el); });
+});
+_autoGrowAllAddressFields();
+requestAnimationFrame(_autoGrowAllAddressFields);
+window.addEventListener('load', _autoGrowAllAddressFields);
+
+// REAL FIX (2026-08-14): the three calls above only ever cover the case
+// where Extracted Data is already the visible/active tab at page load.
+// All 6 tabs are rendered into the page at once and shown/hidden purely
+// via a `.tab-pane.active` class toggle (see main.js switchTab() /
+// goToTabProgrammatic()) -- so if some OTHER tab was the active one when
+// this script ran, #extractedTab was `display:none` at that moment.
+// scrollHeight always reads as 0 for anything inside a display:none
+// subtree, so `_autoGrowAllAddressFields()` baked in `height:0px` on
+// every address box right then -- confirmed live via DevTools (inline
+// style="height: 0px;" on inv_buyer_address, text still genuinely
+// present inside the element, just rendered into a zero-height box).
+// Switching to the tab afterward never re-ran the calculation, so the
+// 0px stuck around even once the box became visible.
+//
+// Not wired through window._onTabSwitch -- gst_approval.html already
+// owns that single global hook with a plain (non-chaining) assignment,
+// so defining it again here would silently clobber GST Approval's own
+// polling init instead of composing with it. A MutationObserver on this
+// tab's own container sidesteps that entirely: it fires every time
+// #extractedTab's class list changes to include "active", regardless of
+// whether that happened via a click, goToTabProgrammatic(), or the
+// sessionStorage post-reload restore in main.js -- and by the time the
+// observer callback runs, the class (and so the display:block) is
+// already applied, so scrollHeight reads the real, final height.
+(function () {
+  var extractedTabPane = document.getElementById('extractedTab');
+  if (!extractedTabPane || typeof MutationObserver === 'undefined') return;
+  var _wasActive = extractedTabPane.classList.contains('active');
+  var observer = new MutationObserver(function () {
+    var isActive = extractedTabPane.classList.contains('active');
+    if (isActive && !_wasActive) {
+      _autoGrowAllAddressFields();
+      requestAnimationFrame(_autoGrowAllAddressFields);
+    }
+    _wasActive = isActive;
+  });
+  observer.observe(extractedTabPane, { attributes: true, attributeFilter: ['class'] });
+})();
+
+// ============================================================
+// Date fields: always DISPLAY/EDIT as dd/mm/yyyy. Storage/API format is
+// unchanged (ISO YYYY-MM-DD) -- only the on-screen text changes.
+// ============================================================
+function _isoToDisplayDate(iso) {
+  if (!iso) return '';
+  const m = String(iso).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? (m[3] + '/' + m[2] + '/' + m[1]) : iso;
+}
+function _displayDateToIso(disp) {
+  if (!disp) return '';
+  const m = String(disp).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? (m[3] + '-' + m[2] + '-' + m[1]) : disp;
+}
+document.querySelectorAll('.date-field').forEach(function (el) {
+  el.value = _isoToDisplayDate(el.value);
+});
+
+// ============================================================
+// No special characters, ever -- GST No, PO No, E-Way Bill No, and IRN
+// must never contain anything but letters and digits.
+// ============================================================
+function _stripSpecialChars(el) {
+  const before = el.value;
+  const cleaned = before.replace(/[^A-Za-z0-9]/g, '');
+  if (cleaned === before) return;
+  const pos = el.selectionStart || 0;
+  const removedBeforeCursor = before.slice(0, pos).length - before.slice(0, pos).replace(/[^A-Za-z0-9]/g, '').length;
+  el.value = cleaned;
+  const newPos = Math.max(0, pos - removedBeforeCursor);
+  try { el.setSelectionRange(newPos, newPos); } catch (e) { /* ignore on unsupported input types */ }
+}
+[
+  'inv_buyer_gstin', 'inv_seller_gstin', 'eway_transporter_gstin',
+  'inv_po_number', 'eway_ewaybill_number', 'inv_irn',
+].forEach(function (fieldId) {
+  const el = document.getElementById(fieldId);
+  if (el) {
+    _stripSpecialChars(el);
+    el.addEventListener('input', function () { _stripSpecialChars(el); });
+  }
+});
+
+// ============================================================
+// Save handlers -- unchanged from the old per-tab flow, just no longer
+// triggered by their own "Save & Next" buttons. saveAndProceed() below
+// calls whichever of these apply, then approves in one shot.
+// ============================================================
+function _showSaveStatus(elId, ok, msg) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.className = 'save-status ' + (ok ? 'success' : 'error');
+  el.textContent = msg;
+  setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+function _splitShipToState() {
+  const raw = (document.getElementById('inv_ship_to_state').value || '').trim();
+  const m = raw.match(/^(\S+)\s*-\s*(.+)$/);
+  return m ? { code: m[1], state: m[2] } : { code: '', state: raw };
+}
+
+// v26-follow-up: Bill To State merges Bill To Code the same way Ship To
+// State already does -- single "CODE - STATE" field, split back apart
+// on save (client request, 2026-08-13).
+function _splitBillToState() {
+  const raw = (document.getElementById('inv_bill_to_state').value || '').trim();
+  const m = raw.match(/^(\S+)\s*-\s*(.+)$/);
+  return m ? { code: m[1], state: m[2] } : { code: '', state: raw };
+}
+
+async function saveExtractedInvoice() {
+  const _shipTo = _splitShipToState();
+  const _billTo = _splitBillToState();
+  const payload = {
+    invoice_number: document.getElementById('inv_invoice_number').value,
+    invoice_date:   _displayDateToIso(document.getElementById('inv_invoice_date').value),
+    po_number:      document.getElementById('inv_po_number').value,
+    irn:            document.getElementById('inv_irn').value,
+    outbound_delivery_number: document.getElementById('inv_outbound_delivery_number').value,
+    buyer_name:     document.getElementById('inv_buyer_name').value,
+    buyer_gstin:    document.getElementById('inv_buyer_gstin').value,
+    buyer_address:  document.getElementById('inv_buyer_address').value,
+    seller_name:    document.getElementById('inv_seller_name').value,
+    seller_gstin:   document.getElementById('inv_seller_gstin').value,
+    company_pan:    document.getElementById('inv_company_pan').value,
+    seller_address: document.getElementById('inv_seller_address').value,
+    ship_to_name:   document.getElementById('inv_ship_to_name').value,
+    ship_to_address:document.getElementById('inv_ship_to_address').value,
+    ship_to_state:  _shipTo.state,
+    ship_to_code:   _shipTo.code,
+    bill_to_state:  _billTo.state,
+    bill_to_code:   _billTo.code,
+    // v26-follow-up: CGST/SGST/IGST rate+amount (6 fields) removed from
+    // the UI entirely and no longer saved from here -- Tax Info is now a
+    // permanently read-only display of whatever OCR/extraction set
+    // (client request, 2026-08-13).
+    total_taxable_amount: document.getElementById('inv_total_taxable_amount').value,
+    total_tax_amount: document.getElementById('inv_total_tax_amount').value,
+    grand_total:    document.getElementById('inv_grand_total').value,
+    amount_in_words:document.getElementById('inv_amount_in_words').value,
+    payment_terms:  document.getElementById('inv_payment_terms').value,
+    hsn_details:    _collectInvHsn(),
+  };
+  try {
+    const res = await fetch(`/api/save_extracted_invoice/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) { _showSaveStatus('invSaveStatus', true, '✓ Invoice saved'); return true; }
+    _showSaveStatus('invSaveStatus', false, '❌ Invoice: ' + (data.error || 'Failed'));
+    return false;
+  } catch (e) {
+    _showSaveStatus('invSaveStatus', false, '❌ Invoice: network error');
+    return false;
+  }
+}
+
+async function saveExtractedEway() {
+  const payload = {
+    ewaybill_number: document.getElementById('eway_ewaybill_number').value,
+    generated_date:  _displayDateToIso(document.getElementById('eway_generated_date').value),
+    validity_date:   _displayDateToIso(document.getElementById('eway_validity_date').value),
+    invoice_number:  document.getElementById('eway_invoice_number').value,
+    invoice_date:    _displayDateToIso(document.getElementById('eway_invoice_date').value),
+    dispatch_from:   document.getElementById('eway_dispatch_from').value,
+    dispatch_to:     document.getElementById('eway_dispatch_to').value,
+    vehicle_number:  document.getElementById('eway_vehicle_number').value,
+    transporter_name: document.getElementById('eway_transporter_name').value,
+    transporter_gstin: document.getElementById('eway_transporter_gstin').value,
+    transport_doc_no: document.getElementById('eway_transport_doc_no').value,
+    transport_doc_date: _displayDateToIso(document.getElementById('eway_transport_doc_date').value),
+  };
+  try {
+    const res = await fetch(`/api/save_extracted_eway/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) { _showSaveStatus('ewaySaveStatus', true, '✓ E-Way Bill saved'); return true; }
+    _showSaveStatus('ewaySaveStatus', false, '❌ E-Way Bill: ' + (data.error || 'Failed'));
+    return false;
+  } catch (e) {
+    _showSaveStatus('ewaySaveStatus', false, '❌ E-Way Bill: network error');
+    return false;
+  }
+}
+
+// v29 (2026-08-14, client request): quick-fill buttons that copy a value
+// from one already-extracted field into another instead of retyping --
+// E-Way Bill's Inv. No./Inv. Date from Invoice Data, LR's From/To
+// Location from Invoice's Bill To/Ship To State, LR's Vehicle No. from
+// E-Way Bill's. Silent overwrite by design (client confirmed) -- no
+// confirm dialog even if the target already has a value.
+function copyFieldValue(sourceId, targetId, sourceLabel) {
+  const src = document.getElementById(sourceId);
+  const tgt = document.getElementById(targetId);
+  if (!src || !tgt) return;
+  const val = src.value.trim();
+  if (!val) {
+    showToast('⚠ ' + (sourceLabel || 'Source field') + ' is empty — nothing to copy.', 'error');
+    return;
+  }
+  tgt.value = val;
+  tgt.dispatchEvent(new Event('input', { bubbles: true }));
+  tgt.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+async function saveExtractedLr() {
+  const payload = {
+    lr_number:       document.getElementById('lr_lr_number').value,
+    lr_date:         _displayDateToIso(document.getElementById('lr_lr_date').value),
+    consignor_name:  document.getElementById('lr_consignor_name').value,
+    consignee_name:  document.getElementById('lr_consignee_name').value,
+    vehicle_number:  document.getElementById('lr_vehicle_number').value,
+    delivery_address: document.getElementById('lr_delivery_address').value,
+    from_location:   document.getElementById('lr_from_location').value,
+    to_location:     document.getElementById('lr_to_location').value,
+    transporter_name: document.getElementById('lr_transporter_name').value,
+  };
+  try {
+    const res = await fetch(`/api/save_extracted_lr/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) { _showSaveStatus('lrSaveStatus', true, '✓ LR saved'); return true; }
+    _showSaveStatus('lrSaveStatus', false, '❌ LR: ' + (data.error || 'Failed'));
+    return false;
+  } catch (e) {
+    _showSaveStatus('lrSaveStatus', false, '❌ LR: network error');
+    return false;
+  }
+}
+
+// ============================================================
+// v25: Save and Proceed -- replaces the old sequential Invoice -> E-way
+// -> LR "Save & Next" flow plus the separate Approve button with one
+// action. Saves whichever of the three documents exist for this record
+// (DOC_ORDER), and only if every save succeeds, opens the same approve
+// confirmation modal/flow as before (_doApprove is unchanged). GST
+// Verification is no longer part of this chain -- it's a standalone,
+// on-demand tab now.
+// ============================================================
+async function saveAndProceed() {
+  if (NEED_DELIVERY_MODE) {
+    showToast('❌ Select a Goods Delivery Mode above before proceeding — LR document is missing.', 'error');
+    return;
+  }
+  if (NEED_EWB_EXEMPTION) {
+    showToast('❌ Select an E-Way Bill Exemption reason above before proceeding — E-Way Bill is missing.', 'error');
+    return;
+  }
+  const btn = document.getElementById('saveProceedBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  let ok = true;
+  if (ok && DOC_ORDER.includes('invoice'))  ok = await saveExtractedInvoice();
+  if (ok && DOC_ORDER.includes('ewaybill')) ok = await saveExtractedEway();
+  if (ok && DOC_ORDER.includes('lr'))       ok = await saveExtractedLr();
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Save and Proceed'; }
+
+  if (!ok) {
+    showToast('❌ Save failed — check the message near the button and try again.', 'error');
+    return;
+  }
+  // Everything is in the database now -- the browser-side draft is obsolete.
+  if (typeof window._xdMarkSaved === 'function') window._xdMarkSaved();
+  document.getElementById('approveModal').classList.add('show');
+}
+
+// ============================================================
+// Goods Information rows add/remove/collect (v7), plus (v25) the
+// "Showing X of Y" / "View more" clamp for the compact Material Info
+// card.
+// ============================================================
+function addGoodsRow() {
+  const tbody = document.getElementById('invGoodsBody');
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-orig-idx', '-1');
+  tr.innerHTML = `
+    <td class="goods-row-num" style="color:#888;font-size:11px;"></td>
+    <td><input type="text" data-field="material_code" placeholder="Material Code"></td>
+    <td><input type="text" data-field="hsn_sac" placeholder="HSN Code"></td>
+    <td><input type="text" data-field="description" placeholder="Goods Description"></td>
+    <td><input type="text" data-field="quantity" placeholder="Quantity"></td>
+    <td><input type="text" data-field="unit" placeholder="UOM"></td>
+    <td><input type="text" data-field="taxable_value" style="text-align:right;" placeholder="Value of Goods"></td>
+    <td><button class="btn-row-delete" onclick="deleteGoodsRow(this)">×</button></td>
+  `;
+  tbody.appendChild(tr);
+  _renumberGoodsRows();
+  _checkAllMaterialCodes();
+}
+
+function deleteGoodsRow(btn) {
+  btn.closest('tr').remove();
+  _renumberGoodsRows();
+}
+
+function _renumberGoodsRows() {
+  const rows = document.querySelectorAll('#invGoodsBody tr');
+  rows.forEach((row, i) => {
+    const numCell = row.querySelector('.goods-row-num');
+    if (numCell) numCell.textContent = i + 1;
+  });
+  const total = rows.length;
+  const shown = Math.min(total, 3);
+  const label = document.getElementById('materialInfoCountLabel');
+  const moreBtn = document.getElementById('materialInfoMoreBtn');
+  if (label) label.textContent = total ? `Showing ${shown} of ${total}` : 'No line items';
+  if (moreBtn) moreBtn.hidden = total <= 3;
+  if (moreBtn) moreBtn.textContent = `View ${total - 3} more line item${(total - 3) === 1 ? '' : 's'}`;
+}
+_renumberGoodsRows();
+
+function _collectInvHsn() {
+  const tbody = document.getElementById('invGoodsBody');
+  if (!tbody) return ORIGINAL_HSN;
+  const items = [];
+  tbody.querySelectorAll('tr').forEach(row => {
+    const inputs = row.querySelectorAll('input[data-field]');
+    if (inputs.length < 4) return;
+    const origIdx = parseInt(row.getAttribute('data-orig-idx'), 10);
+    const base = (origIdx >= 0 && ORIGINAL_HSN[origIdx]) ? ORIGINAL_HSN[origIdx] : {};
+    const rowData = {};
+    inputs.forEach(input => {
+      rowData[input.getAttribute('data-field')] = input.value;
+    });
+    items.push(Object.assign({}, base, rowData));
+  });
+  return items;
+}
+
+// v25: "View more line items" moves the LIVE table into the modal
+// (appendChild moves an existing node -- it keeps all input values and
+// listeners intact, nothing is cloned/recreated), and moves it straight
+// back to its original spot on close. #invGoodsBody stays the single
+// source of truth for _collectInvHsn() no matter which container
+// currently holds it.
+let _materialHomeParent = null;
+let _materialHomeNextSibling = null;
+function openMaterialInfoModal() {
+  const card = document.getElementById('materialInfoCard');
+  const slot = document.getElementById('materialInfoModalSlot');
+  if (!card || !slot) return;
+  _materialHomeParent = card.parentNode;
+  _materialHomeNextSibling = card.nextSibling;
+  slot.appendChild(card);
+  card.classList.add('xd-material-expanded');
+  document.getElementById('materialInfoModal').classList.add('show');
+}
+function closeMaterialInfoModal() {
+  const card = document.getElementById('materialInfoCard');
+  if (card && _materialHomeParent) {
+    if (_materialHomeNextSibling) _materialHomeParent.insertBefore(card, _materialHomeNextSibling);
+    else _materialHomeParent.appendChild(card);
+  }
+  if (card) card.classList.remove('xd-material-expanded');
+  document.getElementById('materialInfoModal').classList.remove('show');
+}
+
+// ============================================================
+// Material Code pattern check (Material Codes are always exactly 8
+// characters and start with one of the prefixes below). Visual only.
+// FIX (2026-08-18, client-confirmed prefix list): was ['18','20','21','23']
+// -- too narrow, was false-flagging genuine codes starting with 17/19/22/
+// 24/26 as invalid. Same list also updated in services/extract.py's OCR
+// prompt -- keep both in sync if this list changes again.
+// ============================================================
+const MATERIAL_CODE_PREFIXES = ['17', '18', '19', '20', '21', '22', '23', '24', '26'];
+
+function _checkMaterialCodeInput(input) {
+  // FIX (2026-08-19, client request): if OCR (or manual entry) produced
+  // more than 8 characters, truncate to the first 8 and red-highlight --
+  // same "hard length wins, truncate + explain" pattern already used for
+  // Invoice No. (_enforceInvoiceNumberMaxLength above), just applied to
+  // this field's fixed 8-character shape instead of a 16-char cap.
+  const original = input.value || '';
+  const trimmedOriginal = original.trim();
+  let truncated = false;
+  if (trimmedOriginal.length > 8) {
+    input.value = trimmedOriginal.slice(0, 8);
+    truncated = true;
+  }
+  const val = (input.value || '').trim().toUpperCase();
+  const badPrefix = !!val && !(val.length === 8 && MATERIAL_CODE_PREFIXES.includes(val.slice(0, 2)));
+  input.classList.toggle('field-expired', truncated);
+  input.classList.toggle('field-mismatch', badPrefix && !truncated);
+  if (truncated) {
+    input.title = `Material Code was ${trimmedOriginal.length} characters -- showing first 8 only. Verify against the original document.`;
+  } else if (badPrefix) {
+    input.title = 'Material Code is usually 8 characters, starting with 17/18/19/20/21/22/23/24/26 -- please verify.';
+  } else {
+    input.title = '';
+  }
+}
+
+function _checkAllMaterialCodes() {
+  document.querySelectorAll('#invGoodsBody input[data-field="material_code"]').forEach(_checkMaterialCodeInput);
+}
+
+(function () {
+  const tbody = document.getElementById('invGoodsBody');
+  if (tbody) {
+    tbody.addEventListener('input', function (e) {
+      if (e.target.matches('input[data-field="material_code"]')) {
+        _checkMaterialCodeInput(e.target);
+      }
+    });
+  }
+  _checkAllMaterialCodes();
+})();
+
+// ============================================================
+// v13: Partial-document scenario pickers (Goods Delivery Mode / E-Way
+// Bill Exemption Reasons). Unchanged from the old flow.
+// ============================================================
+(function () {
+  function wireOptionGroup(containerId, saveBtnId, multi) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.querySelectorAll('.scenario-option').forEach(function (label) {
+      label.addEventListener('click', function () {
+        const input = label.querySelector('input');
+        if (multi) {
+          input.checked = !input.checked;
+          label.classList.toggle('selected', input.checked);
+        } else {
+          container.querySelectorAll('.scenario-option').forEach(function (l) { l.classList.remove('selected'); });
+          input.checked = true;
+          label.classList.add('selected');
+        }
+        const anyChecked = !!container.querySelector('input:checked');
+        const btn = document.getElementById(saveBtnId);
+        if (btn) btn.disabled = !anyChecked;
+      });
+    });
+  }
+  wireOptionGroup('deliveryModeOptions', 'deliveryModeSaveBtn', false);
+  wireOptionGroup('ewbExemptionOptions', 'ewbExemptionSaveBtn', true);
+})();
+
+// ============================================================
+// v26: Category picker (Stores / Sales Return / Job Work) in the green
+// banner. Unlike the two pickers above, this is NOT write-once -- every
+// click saves immediately (no separate "Save" button, no page reload).
+// Gate In reads history.category as a PRESELECT default only, mapped via
+// CATEGORY_TO_GATEIN_CODE in app.py -- nothing here touches Gate In.
+// ============================================================
+(function () {
+  const options = document.getElementById('categoryOptions');
+  if (!options) return;
+  const statusEl = document.getElementById('categorySaveStatus');
+
+  options.querySelectorAll('input[name="extractedCategory"]').forEach(function (inp) {
+    inp.addEventListener('change', async function () {
+      options.querySelectorAll('.xd-cat-pill').forEach(function (pill) {
+        pill.classList.toggle('selected', pill.getAttribute('data-value') === inp.value);
+      });
+      if (statusEl) { statusEl.textContent = 'Saving…'; statusEl.className = 'save-status'; }
+      try {
+        const res = await fetch(`/api/save_category/${HISTORY_ID}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: inp.value })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (statusEl) {
+            statusEl.textContent = '✓ Saved';
+            statusEl.className = 'save-status success';
+            setTimeout(function () { statusEl.textContent = ''; }, 3000);
+          }
+        } else {
+          if (statusEl) { statusEl.textContent = '❌ ' + (data.error || 'Failed'); statusEl.className = 'save-status error'; }
+        }
+      } catch (e) {
+        if (statusEl) { statusEl.textContent = '❌ Network error'; statusEl.className = 'save-status error'; }
+      }
+    });
+  });
+})();
+
+function saveDeliveryMode() {
+  const checked = document.querySelector('#deliveryModeOptions input:checked');
+  if (!checked) return;
+  if (checked.value === 'courier') {
+    document.getElementById('courierModal').classList.add('show');
+    return;
+  }
+  _doSaveDeliveryMode(checked.value);
+}
+
+function closeCourierModal() {
+  document.getElementById('courierModal').classList.remove('show');
+}
+
+async function _doSaveDeliveryMode(mode) {
+  closeCourierModal();
+  const btn = document.getElementById('deliveryModeSaveBtn');
+  const status = document.getElementById('deliveryModeStatus');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/save_delivery_mode/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: mode })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✓ Delivery mode saved: ' + data.label, 'success');
+      // FIX (2026-08-14, client-reported): this used to be an unconditional
+      // window.location.reload() -- which wiped any in-progress edits the
+      // user had typed into OTHER Extracted Data fields (Invoice No.,
+      // addresses, etc.), since nothing on this page is auto-saved until
+      // "Save and Proceed". Swap the picker for its locked-text result in
+      // place instead, same as the server would render it, no reload.
+      // Courier is the one exception: if the LR Details table isn't in the
+      // DOM yet (a pure invoice-only record, LR section never rendered),
+      // choosing courier requires that whole section to appear, which
+      // isn't safe to reconstruct client-side -- reload only in that case.
+      if (mode === 'courier' && !document.getElementById('lr_lr_number')) {
+        window.location.reload();
+        return;
+      }
+      _applyDeliveryModeLocked(data.label);
+    } else {
+      if (status) { status.textContent = '❌ ' + (data.error || 'Save failed'); status.className = 'scenario-status err'; }
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    if (status) { status.textContent = '❌ Network error'; status.className = 'scenario-status err'; }
+    if (btn) btn.disabled = false;
+  }
+}
+
+// FIX (2026-08-14): used to swap #deliveryModeOptions' whole .scenario-block
+// for a "— locked" copy of the same text -- but that duplicated the box
+// _addTopBannerBox already adds up top. Now it just removes the picker
+// block entirely (and the whole panel if that was the only block left),
+// same as a fresh page load would (server no longer renders it once
+// history.goods_delivery_mode is set -- see the Jinja above).
+function _applyDeliveryModeLocked(label) {
+  _removeScenarioBlock('deliveryModeOptions');
+  _addTopBannerBox('✓ Goods Delivery Mode: ' + label);
+}
+
+// Same purpose as _addTopBannerBox's caller above, for the E-Way Bill
+// Exemption picker.
+function _applyEwbExemptionLocked(labels) {
+  _removeScenarioBlock('ewbExemptionOptions');
+  _addTopBannerBox('✓ E-Way Bill Exemption: ' + labels.join(', '));
+}
+
+// Removes the .scenario-block containing optionsElId, then removes the
+// whole #scenarioPanel too if that was the last block inside it.
+function _removeScenarioBlock(optionsElId) {
+  var optionsEl = document.getElementById(optionsElId);
+  var block = optionsEl ? optionsEl.closest('.scenario-block') : null;
+  if (!block) return;
+  var panel = block.closest('#scenarioPanel');
+  block.remove();
+  if (panel && !panel.querySelector('.scenario-block')) {
+    panel.remove();
+  }
+}
+
+// Appends a new box to the top status-banners row (Approved-by / Category
+// / Goods Delivery Mode / E-Way Bill Exemption) and re-applies the
+// equal-width column count, mirroring the server-side _box_count logic in
+// the Jinja template -- so a picker resolved without a reload still gets
+// its own box up top, sized the same "1:4 for all" way a fresh page load
+// would show it.
+function _addTopBannerBox(titleHtml) {
+  var row = document.querySelector('.xd-banners-row');
+  if (!row) return;
+  var box = document.createElement('div');
+  box.className = 'xd-lock-banner';
+  box.innerHTML = '<div class="xd-lock-title">' + titleHtml + '</div>';
+  row.appendChild(box);
+  row.style.gridTemplateColumns = 'repeat(' + row.children.length + ', 1fr)';
+}
+
+async function saveEwbExemption() {
+  const checked = Array.from(document.querySelectorAll('#ewbExemptionOptions input:checked')).map(function (i) { return i.value; });
+  if (!checked.length) return;
+  const btn = document.getElementById('ewbExemptionSaveBtn');
+  const status = document.getElementById('ewbExemptionStatus');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/save_ewb_exemption/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reasons: checked })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✓ Exemption reason(s) saved: ' + data.labels.join(', '), 'success');
+      // Same fix as _doSaveDeliveryMode above -- no reload, in-place swap
+      // instead, so unrelated unsaved edits on this page survive.
+      _applyEwbExemptionLocked(data.labels);
+    } else {
+      if (status) { status.textContent = '❌ ' + (data.error || 'Save failed'); status.className = 'scenario-status err'; }
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    if (status) { status.textContent = '❌ Network error'; status.className = 'scenario-status err'; }
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ============================================================
+// Approve / Hold / Re-run OCR
+// ============================================================
+function closeApproveModal() {
+  document.getElementById('approveModal').classList.remove('show');
+}
+
+async function _doApprove() {
+  closeApproveModal();
+  try {
+    const res = await fetch(`/api/approve/${HISTORY_ID}`, { method:'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✓ Record approved!', 'success');
+      var banner = document.querySelector('.approval-banner');
+      if (banner) {
+        banner.className = 'approval-banner approved';
+        banner.innerHTML = '<div>✓ <strong>Approved</strong></div>';
+      }
+      document.querySelectorAll('.xd-table input, .xd-table textarea').forEach(function(el) { el.disabled = true; });
+      var actionBar = document.querySelector('.xd-action-bar');
+      if (actionBar) actionBar.style.display = 'none';
+      // Chain into GST Approval automatically -- last step of the
+      // Invoice -> E-way -> LR review sequence. Does NOT continue on to
+      // Gate In; that stays a separate, manual step for Gate Security.
+      if (typeof goToTabProgrammatic === 'function') {
+        setTimeout(function () { goToTabProgrammatic('gstApproval'); }, 600);
+      }
+    } else {
+      showToast('❌ ' + (data.error || 'Failed to approve'), 'error');
+    }
+  } catch (e) {
+    showToast('❌ Network error', 'error');
+  }
+}
+
+function openHoldModal() {
+  document.getElementById('holdReason').value = '';
+  document.getElementById('holdModal').classList.add('show');
+}
+function closeHoldModal() {
+  document.getElementById('holdModal').classList.remove('show');
+}
+
+async function confirmHold() {
+  const reason = document.getElementById('holdReason').value.trim();
+  if (!reason) {
+    showToast('Please provide a reason.', 'warning');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/hold/${HISTORY_ID}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({reason: reason})
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✓ Record placed on hold', 'success');
+      closeHoldModal();
+      var banner = document.querySelector('.approval-banner');
+      if (banner) {
+        banner.className = 'approval-banner hold';
+        banner.innerHTML = '<div>⏸ <strong>On Hold</strong>: ' + reason + '</div>';
+      }
+    } else {
+      showToast('❌ ' + (data.error || 'Failed'), 'error');
+    }
+  } catch (e) {
+    showToast('❌ Network error', 'error');
+  }
+}
+
+function rerunOCR() {
+  showConfirm(
+    'Re-run OCR',
+    'Re-run OCR on the failed documents?',
+    async function () {
+      const btn = document.getElementById('rerunOcrBtn');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-running...'; }
+      try {
+        const res = await fetch(`/api/rerun_ocr/${HISTORY_ID}`, { method:'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showToast('✓ ' + data.message, 'success');
+          window.location.reload();
+        } else {
+          showToast('❌ ' + (data.error || 'OCR retry failed') + (data.retry_count ? ` (retry #${data.retry_count})` : ''), 'error');
+          if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-run OCR'; }
+        }
+      } catch (e) {
+        showToast('❌ Network error', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-run OCR'; }
+      }
+    },
+    'Yes, Re-run OCR'
+  );
+}
+
+// ============================================================
+// IRN length check (a genuine IRN is always exactly 64 characters).
+// ============================================================
+function _checkIrnLength() {
+  const el = document.getElementById('inv_irn');
+  const err = document.getElementById('err_inv_irn');
+  if (!el) return;
+  const val = el.value.trim();
+  const short = val.length > 0 && val.length < 64;
+  el.classList.toggle('field-expired', short);
+  if (err) {
+    err.textContent = short ? `IRN is ${val.length} characters -- a valid IRN is 64 characters.` : '';
+    err.classList.toggle('show', short);
+  }
+}
+(function () {
+  const el = document.getElementById('inv_irn');
+  if (el) {
+    el.addEventListener('input', _checkIrnLength);
+    _checkIrnLength();
+  }
+})();
+
+// PO Number is expected to be 10 digits.
+function _checkPoNumberLength() {
+  const el = document.getElementById('inv_po_number');
+  const err = document.getElementById('err_inv_po_number');
+  if (!el) return;
+  const val = el.value.trim();
+  const short = val.length > 0 && val.length < 10;
+  el.classList.toggle('field-expired', short);
+  if (err) {
+    err.textContent = short ? `PO number is ${val.length} digit(s) -- a valid PO number is usually 10 digits.` : '';
+    err.classList.toggle('show', short);
+  }
+}
+(function () {
+  const el = document.getElementById('inv_po_number');
+  if (el) {
+    el.addEventListener('input', _checkPoNumberLength);
+    _checkPoNumberLength();
+  }
+})();
+
+// ============================================================
+// Invoice No. is government-mandated to never exceed 16 characters.
+// ============================================================
+function _enforceInvoiceNumberMaxLength(fieldId, errId) {
+  const el = document.getElementById(fieldId);
+  const err = document.getElementById(errId);
+  if (!el) return;
+  const original = el.value;
+  if (original.length > 16) {
+    el.value = original.slice(0, 16);
+    el.classList.add('field-expired');
+    if (err) {
+      err.textContent = `Invoice No. was ${original.length} characters -- govt mandate is max 16, showing first 16 only. Verify against the original document.`;
+      err.classList.add('show');
+    }
+  } else {
+    el.classList.remove('field-expired');
+    if (err) {
+      err.textContent = '';
+      err.classList.remove('show');
+    }
+  }
+}
+[
+  ['inv_invoice_number', 'err_inv_invoice_number'],
+  ['eway_invoice_number', 'err_eway_invoice_number'],
+].forEach(function ([fieldId, errId]) {
+  const el = document.getElementById(fieldId);
+  if (el) {
+    el.addEventListener('input', function () { _enforceInvoiceNumberMaxLength(fieldId, errId); });
+    _enforceInvoiceNumberMaxLength(fieldId, errId);
+  }
+});
+
+// ============================================================
+// GSTIN format + checksum validation.
+// ============================================================
+const GSTIN_FORMAT_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+const GSTIN_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+function _gstinChecksumValid(gstin) {
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const code = GSTIN_CHARSET.indexOf(gstin[i]);
+    const factor = (i % 2 === 0) ? 1 : 2;
+    const product = code * factor;
+    sum += Math.floor(product / 36) + (product % 36);
+  }
+  const checksum = (36 - (sum % 36)) % 36;
+  return GSTIN_CHARSET[checksum] === gstin[14];
+}
+
+function _validateGstinField(fieldId, errId) {
+  const el = document.getElementById(fieldId);
+  const err = document.getElementById(errId);
+  if (!el) return;
+  const val = el.value.trim().toUpperCase();
+  let msg = '';
+  if (val) {
+    if (!GSTIN_FORMAT_RE.test(val)) {
+      msg = 'Does not match standard GSTIN format.';
+    } else if (!_gstinChecksumValid(val)) {
+      msg = 'GSTIN checksum character does not match -- possible typo.';
+    }
+  }
+  el.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+
+[
+  ['inv_buyer_gstin', 'err_inv_buyer_gstin'],
+  ['inv_seller_gstin', 'err_inv_seller_gstin'],
+  ['eway_transporter_gstin', 'err_eway_transporter_gstin'],
+].forEach(function ([fieldId, errId]) {
+  const el = document.getElementById(fieldId);
+  if (el) {
+    el.addEventListener('blur', function () { _validateGstinField(fieldId, errId); });
+    _validateGstinField(fieldId, errId);
+  }
+});
+
+// ============================================================
+// PAN vs GSTIN cross-check.
+// ============================================================
+function _validatePanAgainstGstin() {
+  const panEl = document.getElementById('inv_company_pan');
+  const gstinEl = document.getElementById('inv_seller_gstin');
+  const err = document.getElementById('err_inv_company_pan');
+  if (!panEl || !gstinEl) return;
+  const pan = panEl.value.trim().toUpperCase();
+  const gstin = gstinEl.value.trim().toUpperCase();
+  let msg = '';
+  if (pan && gstin.length === 15) {
+    const panInGstin = gstin.slice(2, 12);
+    if (pan !== panInGstin) {
+      msg = `PAN does not match the PAN embedded in Seller GSTIN (expected ${panInGstin}) -- possible typo.`;
+    }
+  }
+  panEl.classList.toggle('field-expired', !!msg);
+  if (err) {
+    err.textContent = msg;
+    err.classList.toggle('show', !!msg);
+  }
+}
+(function () {
+  const panEl = document.getElementById('inv_company_pan');
+  const gstinEl = document.getElementById('inv_seller_gstin');
+  if (panEl) panEl.addEventListener('blur', _validatePanAgainstGstin);
+  if (gstinEl) gstinEl.addEventListener('blur', _validatePanAgainstGstin);
+  _validatePanAgainstGstin();
+})();
+
+// ============================================================
+// Cross-tab mismatch highlighting -- "tab" is now just "section" (all
+// sections render on one page now), logic/pairs unchanged.
+// ============================================================
+function _normMismatchText(v) {
+  return (v || '').trim().toUpperCase();
+}
+function _normMismatchVehicle(v) {
+  return (v || '').trim().toUpperCase().replace(/[\s-]/g, '');
+}
+
+const MISMATCH_PAIRS = [
+  { a: 'inv_invoice_number',    b: 'eway_invoice_number',    label: 'Invoice Number',    norm: _normMismatchText },
+  { a: 'inv_invoice_date',      b: 'eway_invoice_date',      label: 'Invoice Date',      norm: _normMismatchText },
+  { a: 'inv_po_number',         b: 'eway_po_number',         label: 'PO Number',         norm: _normMismatchText },
+  { a: 'eway_vehicle_number',   b: 'lr_vehicle_number',      label: 'Vehicle Number',    norm: _normMismatchVehicle },
+  // FIX (2026-08-17, client request): LR No. is the same document as the
+  // E-Way Bill's Transport Doc No. -- highlight if they don't match.
+  { a: 'eway_transport_doc_no', b: 'lr_lr_number',           label: 'LR / Transport Doc No.', norm: _normMismatchText },
+];
+
+function _checkMismatchPair(pair) {
+  const elA = document.getElementById(pair.a);
+  const elB = document.getElementById(pair.b);
+  if (!elA || !elB) return;
+  const errA = document.getElementById('err_' + pair.a);
+  const errB = document.getElementById('err_' + pair.b);
+  const rawA = elA.value, rawB = elB.value;
+  const mismatch = !!rawA.trim() && !!rawB.trim() && pair.norm(rawA) !== pair.norm(rawB);
+  const msg = mismatch ? `${pair.label} differs from the value on the other section -- please verify.` : '';
+  [[elA, errA], [elB, errB]].forEach(function ([el, err]) {
+    el.classList.toggle('field-mismatch', mismatch);
+    if (err) {
+      err.textContent = msg;
+      err.classList.toggle('show', mismatch);
+      err.classList.toggle('mismatch', mismatch);
+    }
+  });
+}
+
+function _checkAllMismatches() {
+  MISMATCH_PAIRS.forEach(_checkMismatchPair);
+}
+
+(function () {
+  MISMATCH_PAIRS.forEach(function (pair) {
+    [pair.a, pair.b].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', _checkAllMismatches);
+    });
+  });
+  _checkAllMismatches();
+})();
+// ============================================================
+// ADDED (2026-10-08, client request): draft auto-save so typed-but-not-yet-
+// saved edits survive a page reload, a session timeout, a browser crash, or
+// the user opening a different record and coming back.
+//
+// Browser-only (localStorage) on purpose -- NOTHING is written to the
+// database until the user clicks Save and Proceed, so half-typed values can
+// never reach Gate In / MIGO / MIRO (which read this data) and an abandoned
+// draft can't pollute a real record. One draft per user + record, so it's
+// per browser/PC.
+//
+// How a draft stays safe:
+//   * It stores the value of every field as the SERVER rendered it
+//     ("base") next to what the user typed ("cur"). On the next load, a
+//     field is only restored if the server's value for it is still the same
+//     as when the draft started -- if the record changed underneath
+//     (Re-run OCR, someone else saved) the newer server value wins and that
+//     field's draft is dropped.
+//   * Drafts are ignored for approved/read-only records, expire after 7
+//     days, and are cleared the moment Save and Proceed succeeds.
+//   * Every localStorage call is try/catch'd (private windows / blocked
+//     storage just mean no draft, never an error).
+// ============================================================
+(function () {
+  if (typeof IS_APPROVED !== 'undefined' && IS_APPROVED) return;
+  if (!HISTORY_ID) return;
+
+  const XD_USER = {{ (username or '')|tojson }};
+  const PREFIX = 'mi_xd_draft_v1:';
+  const KEY = PREFIX + XD_USER + ':' + HISTORY_ID;
+  const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  let restoring = false;
+  let timer = null;
+
+  function lsGet(k)    { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) {} }
+  function lsDel(k)    { try { window.localStorage.removeItem(k); } catch (e) {} }
+
+  function fieldEls() {
+    return Array.from(document.querySelectorAll('input[id], textarea[id], select[id]'))
+      .filter(function (el) { return /^(inv|eway|lr)_/.test(el.id) && !el.disabled && !el.readOnly; });
+  }
+  function readFields() {
+    const o = {};
+    fieldEls().forEach(function (el) { o[el.id] = el.value; });
+    return o;
+  }
+  function readGoods() {
+    const rows = [];
+    const tbody = document.getElementById('invGoodsBody');
+    if (!tbody) return rows;
+    tbody.querySelectorAll('tr').forEach(function (tr) {
+      const r = { _o: tr.getAttribute('data-orig-idx') };
+      tr.querySelectorAll('input[data-field]').forEach(function (i) { r[i.getAttribute('data-field')] = i.value; });
+      rows.push(r);
+    });
+    return rows;
+  }
+
+  let BASE = readFields();
+  let BASE_GOODS = readGoods();
+
+  // Drop other drafts that have expired (cheap housekeeping).
+  try {
+    for (let i = window.localStorage.length - 1; i >= 0; i--) {
+      const k = window.localStorage.key(i);
+      if (k && k.indexOf(PREFIX) === 0) {
+        try {
+          const d = JSON.parse(window.localStorage.getItem(k));
+          if (!d || !d.t || Date.now() - d.t > MAX_AGE_MS) window.localStorage.removeItem(k);
+        } catch (e) { window.localStorage.removeItem(k); }
+      }
+    }
+  } catch (e) {}
+
+  function saveNow() {
+    if (restoring) return;
+    const cur = readFields();
+    const curGoods = readGoods();
+    if (JSON.stringify(cur) === JSON.stringify(BASE) && JSON.stringify(curGoods) === JSON.stringify(BASE_GOODS)) {
+      lsDel(KEY);
+      return;
+    }
+    lsSet(KEY, JSON.stringify({ v: 1, t: Date.now(), base: BASE, cur: cur, baseGoods: BASE_GOODS, curGoods: curGoods }));
+  }
+  function schedule() {
+    if (restoring) return;
+    clearTimeout(timer);
+    timer = setTimeout(saveNow, 700);
+  }
+
+  function fire(el) {
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function rebuildGoods(rows) {
+    const tbody = document.getElementById('invGoodsBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    rows.forEach(function (r) {
+      addGoodsRow();
+      const tr = tbody.lastElementChild;
+      tr.setAttribute('data-orig-idx', (r._o === null || r._o === undefined) ? '-1' : r._o);
+      tr.querySelectorAll('input[data-field]').forEach(function (i) {
+        const v = r[i.getAttribute('data-field')];
+        if (v !== undefined && v !== null) i.value = v;
+      });
+    });
+    _renumberGoodsRows();
+    _checkAllMaterialCodes();
+  }
+
+  function showBanner(ts, count) {
+    const card = document.querySelector('#extractedTab .content-card');
+    if (!card) return;
+    const when = new Date(ts).toLocaleString();
+    const bar = document.createElement('div');
+    bar.id = 'xdDraftBanner';
+    bar.style.cssText = 'background:#fff8e6;border:1px solid #f0d58c;color:#7a5b00;border-radius:8px;padding:10px 16px;margin-bottom:14px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:12px;';
+    bar.innerHTML = '<span>↩ Restored your unsaved changes from <strong>' + when +
+      '</strong>. They are <strong>not saved yet</strong> -- click <strong>Save and Proceed</strong> to save them.</span>';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Discard changes';
+    btn.style.cssText = 'background:white;border:1px solid #d9b44a;color:#7a5b00;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;';
+    btn.onclick = function () { lsDel(KEY); window.location.reload(); };
+    bar.appendChild(btn);
+    card.insertBefore(bar, card.children[1] || null);
+  }
+
+  function restore() {
+    const raw = lsGet(KEY);
+    if (!raw) return;
+    let d = null;
+    try { d = JSON.parse(raw); } catch (e) { d = null; }
+    if (!d || d.v !== 1 || !d.t || Date.now() - d.t > MAX_AGE_MS || !d.cur || !d.base) { lsDel(KEY); return; }
+
+    restoring = true;
+    let restored = 0;
+    try {
+      Object.keys(d.cur).forEach(function (id) {
+        if (!(id in d.base)) return;                       // field wasn't on the page when the draft started
+        const el = document.getElementById(id);
+        if (!el || el.disabled || el.readOnly) return;
+        if (el.value !== d.base[id]) return;               // server value changed since -> server wins
+        if (d.cur[id] === el.value) return;                // nothing to restore
+        el.value = d.cur[id];
+        fire(el);
+        restored++;
+      });
+      if (d.baseGoods && d.curGoods &&
+          JSON.stringify(readGoods()) === JSON.stringify(d.baseGoods) &&
+          JSON.stringify(d.curGoods) !== JSON.stringify(d.baseGoods)) {
+        rebuildGoods(d.curGoods);
+        restored++;
+      }
+    } catch (e) {
+      console.warn('Draft restore failed:', e);
+    }
+    restoring = false;
+
+    if (restored) { showBanner(d.t, restored); saveNow(); }
+    else { lsDel(KEY); }                                   // fully stale draft
+  }
+
+  // Called by saveAndProceed() once every document saved successfully: the
+  // database now holds these values, so the draft is no longer needed and
+  // the page's "as-saved" baseline moves up to what's on screen.
+  window._xdMarkSaved = function () {
+    clearTimeout(timer);
+    BASE = readFields();
+    BASE_GOODS = readGoods();
+    lsDel(KEY);
+    const b = document.getElementById('xdDraftBanner');
+    if (b) b.remove();
+  };
+
+  const pane = document.getElementById('extractedTab');
+  if (pane) {
+    pane.addEventListener('input', schedule, true);
+    pane.addEventListener('change', schedule, true);
+  }
+  // Row add/delete don't fire input events -- hook the two functions.
+  ['addGoodsRow', 'deleteGoodsRow'].forEach(function (name) {
+    const orig = window[name];
+    if (typeof orig !== 'function') return;
+    window[name] = function () {
+      const r = orig.apply(this, arguments);
+      schedule();
+      return r;
+    };
+  });
+  window.addEventListener('pagehide', saveNow);
+
+  restore();
+})();
+</script>

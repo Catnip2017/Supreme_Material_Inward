@@ -1,0 +1,600 @@
+{# ADDED (2026-09-23, client request): the step-status line that used to
+   be here now lives in tabs/_status_summary.html, included once at the
+   index.html level (above the tab nav) so it shows on every tab, not
+   just this one -- see that file's own header comment. #}
+{% if dms_document_link %}
+<div style="background:#ecfdf5;border:1px solid #b8f0d4;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#1a7a3c;display:flex;align-items:center;gap:10px;">
+  <span>✓ Consolidated document uploaded to DMS</span>
+  <a href="{{ dms_document_link }}" target="_blank" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;text-decoration:none;background:#1a7a3c;color:white;">🔗 Open in DMS</a>
+</div>
+{% elif history and history.gate_in and history.dms_status == 'uploaded' %}
+{# FIX: this record WAS uploaded (history.dms_status says so) -- the link
+   just hasn't landed in dms_document_links yet (see services/
+   dms_links_import.py's own note on unmatched rows). Previously this fell
+   into the same branch as "never uploaded" below and showed a Retry
+   Upload button, which the backend then correctly refused because it
+   really is already uploaded -- a contradictory "not uploaded, click
+   here" -> "already uploaded" experience. Re-uploading isn't the right
+   action for this state anyway (risks a Contentverse duplicate); syncing
+   the link is. #}
+<div style="background:#eef6ff;border:1px solid #b9d7fb;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px;color:#1e5ca8;display:flex;align-items:center;gap:10px;">
+  <span>✓ Uploaded to DMS — the document link hasn't synced into this app yet</span>
+  <button id="dmsSyncLinkBtn" onclick="syncDmsLink({{ history_id }})" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;border:none;cursor:pointer;background:#1e5ca8;color:white;">🔄 Sync Link</button>
+</div>
+<div id="dmsRetryStatus" style="display:none;font-size:12px;margin-bottom:16px;"></div>
+{% elif history and history.gate_in %}
+<div style="background:#fff8e6;border:1px solid #ffd889;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px;color:#8a6100;display:flex;align-items:center;gap:10px;">
+  <span>⏳ Consolidated document {% if history.dms_status == 'staged' %}staged but not yet confirmed uploaded to DMS{% else %}not yet uploaded to DMS{% endif %}</span>
+  <button id="dmsRetryBtn" onclick="retryDmsUpload({{ history_id }})" style="margin-left:auto;padding:6px 14px;border-radius:6px;font-size:12px;border:none;cursor:pointer;background:#8a6100;color:white;">🔁 Retry DMS Upload</button>
+</div>
+<div id="dmsRetryStatus" style="display:none;font-size:12px;margin-bottom:16px;"></div>
+{% endif %}
+
+<!-- FIX (2026-08-11): "add remaining/replace document" for records started
+     with only some documents uploaded (/process_all always creates a new
+     history_id, there was previously no way to add to an existing one).
+     Hidden once Extracted Data is approved -- see /api/upload_missing's own
+     docstring for why the block is on approval_status specifically. -->
+{% if history %}
+  {% if history.approval_status == 'approved' %}
+  <div style="background:#f5f5f5;border:1px solid #ddd;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#666;">
+    🔒 This record is approved — revert the approval from Admin Records to add or replace documents.
+  </div>
+  {% else %}
+  <div class="content-card" style="background: white; padding: 20px 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
+    <h4 style="color:#333; font-size:16px; margin-bottom:14px;">➕ Add / Replace Document</h4>
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <select id="addDocType" style="padding:8px 12px; border-radius:6px; border:1px solid #ccc; font-size:13px;">
+        <option value="invoice">Invoice</option>
+        <option value="ewaybill">E-Way Bill</option>
+        <option value="lr">Lorry Receipt (LR)</option>
+        <option value="others">Others</option>
+      </select>
+      <input type="file" id="addDocFile" accept=".pdf" style="font-size:13px;">
+      <button id="addDocBtn" onclick="uploadMissingDocument({{ history_id }})" style="padding:8px 18px; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; background:#1e5ca8; color:white;">⬆️ Upload</button>
+    </div>
+    <div id="addDocStatus" style="display:none; margin-top:10px; font-size:13px; font-weight:500;"></div>
+  </div>
+  {% endif %}
+{% endif %}
+
+<div class="content-card" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+  <h3 style="color: #333; margin-bottom: 20px;">📁 Original Documents</h3>
+  
+  {% if invoice_data or ewaybill_data or lr_data %}
+    <div class="documents-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-bottom: 30px;">
+      
+      <!-- Invoice Document Card -->
+      {% if invoice_data and invoice_data.get('filename') %}
+      <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+        <div class="doc-header" style="background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+          <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📄</span>
+          <h4 style="color: white; font-size: 18px; margin: 0;">Invoice</h4>
+        </div>
+        <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <img src="{{ url_for('get_document_thumbnail', doctype='invoice', filename=invoice_data.filename) }}" 
+               alt="Invoice Preview" 
+               style="max-width: 100%; max-height: 100%; object-fit: contain;"
+               onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+        </div>
+        <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+          <strong>File:</strong> {{ invoice_data.filename }}<br>
+          <strong>Invoice No:</strong> {{ invoice_data.get('invoice_number') or 'N/A' }}<br>
+          <strong>Date:</strong> {{ invoice_data.get('invoice_date') or 'N/A' }}
+        </div>
+        <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+          <a href="{{ url_for('view_document', doctype='invoice', filename=invoice_data.filename) }}" 
+             target="_blank" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            👁️ View
+          </a>
+          <a href="{{ url_for('download_document', doctype='invoice', filename=invoice_data.filename) }}" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            📥 Download
+          </a>
+          <button onclick="deleteDocument('invoice', '{{ invoice_data.filename }}', this.closest('.document-card'))" 
+                  style="flex: 1; padding: 8px 12px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; background: #ff4757; color: white;">
+            🗑️ Delete
+          </button>
+          <div class="inline-confirm">
+            Are you sure?
+            <button class="confirm-yes" onclick="confirmDelete('invoice', '{{ invoice_data.filename }}', this)">Yes, Delete</button>
+            <button class="confirm-no" onclick="cancelDelete(this)">Cancel</button>
+          </div>
+          <div class="doc-status-msg"></div>
+        </div>
+      </div>
+      {% endif %}
+      
+      <!-- E-Way Bill Document Card -->
+      {% if ewaybill_data and ewaybill_data.get('filename') %}
+      <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+        <div class="doc-header" style="background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+          <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">🚚</span>
+          <h4 style="color: white; font-size: 18px; margin: 0;">E-Way Bill</h4>
+        </div>
+        <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <img src="{{ url_for('get_document_thumbnail', doctype='ewaybill', filename=ewaybill_data.filename) }}" 
+               alt="E-Way Bill Preview"
+               style="max-width: 100%; max-height: 100%; object-fit: contain;"
+               onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+        </div>
+        <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+          <strong>File:</strong> {{ ewaybill_data.filename }}<br>
+          <strong>E-Way Bill No:</strong> {{ ewaybill_data.get('ewaybill_number') or 'N/A' }}<br>
+          <strong>Date:</strong> {{ ewaybill_data.get('generated_date') or 'N/A' }}
+        </div>
+        <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+          <a href="{{ url_for('view_document', doctype='ewaybill', filename=ewaybill_data.filename) }}" 
+             target="_blank" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            👁️ View
+          </a>
+          <a href="{{ url_for('download_document', doctype='ewaybill', filename=ewaybill_data.filename) }}" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            📥 Download
+          </a>
+          <button onclick="deleteDocument('ewaybill', '{{ ewaybill_data.filename }}', this.closest('.document-card'))" 
+                  style="flex: 1; padding: 8px 12px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; background: #ff4757; color: white;">
+            🗑️ Delete
+          </button>
+          <div class="inline-confirm">
+            Are you sure?
+            <button class="confirm-yes" onclick="confirmDelete('ewaybill', '{{ ewaybill_data.filename }}', this)">Yes, Delete</button>
+            <button class="confirm-no" onclick="cancelDelete(this)">Cancel</button>
+          </div>
+          <div class="doc-status-msg"></div>
+        </div>
+      </div>
+      {% endif %}
+      
+      <!-- LR Document Card -->
+      {% if lr_data and lr_data.get('filename') %}
+      <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+        <div class="doc-header" style="background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+          <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📦</span>
+          <h4 style="color: white; font-size: 18px; margin: 0;">Lorry Receipt</h4>
+        </div>
+        <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <img src="{{ url_for('get_document_thumbnail', doctype='lr', filename=lr_data.filename) }}" 
+               alt="LR Preview"
+               style="max-width: 100%; max-height: 100%; object-fit: contain;"
+               onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+        </div>
+        <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+          <strong>File:</strong> {{ lr_data.filename }}<br>
+          <strong>LR No:</strong> {{ lr_data.get('lr_number') or 'N/A' }}<br>
+          <strong>Date:</strong> {{ lr_data.get('lr_date') or 'N/A' }}
+        </div>
+        <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+          <a href="{{ url_for('view_document', doctype='lr', filename=lr_data.filename) }}" 
+             target="_blank" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            👁️ View
+          </a>
+          <a href="{{ url_for('download_document', doctype='lr', filename=lr_data.filename) }}" 
+             style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #1e5ca8; color: white; cursor: pointer;">
+            📥 Download
+          </a>
+          <button onclick="deleteDocument('lr', '{{ lr_data.filename }}', this.closest('.document-card'))" 
+                  style="flex: 1; padding: 8px 12px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; background: #ff4757; color: white;">
+            🗑️ Delete
+          </button>
+          <div class="inline-confirm">
+            Are you sure?
+            <button class="confirm-yes" onclick="confirmDelete('lr', '{{ lr_data.filename }}', this)">Yes, Delete</button>
+            <button class="confirm-no" onclick="cancelDelete(this)">Cancel</button>
+          </div>
+          <div class="doc-status-msg"></div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Extras / Others Document Cards -- FIX: these were extracted and
+           attached to the record (history_extras, via add_history_extra()
+           in folder_watcher.py) but this tab never rendered them at all --
+           only the small "Extras" banner on the Extracted Data tab showed
+           them. Any _OTH document or unrecognized-filename attachment was
+           therefore invisible here, which is exactly the kind of thing a
+           reviewer would describe as a document "not showing up" /
+           "disappeared" if they specifically came to this tab looking for
+           it. View/download only, matching the Extracted Data tab's
+           treatment of the same records -- no delete button, since these
+           aren't part of the Invoice/E-Way Bill/LR OCR pipeline. -->
+      {% if history_extras %}
+        {% for extra in history_extras %}
+        <div class="document-card" style="background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; border: 2px solid #e0e0e0;">
+          <div class="doc-header" style="background: linear-gradient(135deg, #6c5ce7 0%, #5641c9 100%); padding: 16px; display: flex; align-items: center; gap: 12px;">
+            <span class="doc-icon" style="font-size: 28px; background: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📎</span>
+            <h4 style="color: white; font-size: 18px; margin: 0;">{{ 'Other Document' if extra.doc_type == 'others' else 'Extra Document' }}</h4>
+          </div>
+          <div class="doc-preview" style="width: 100%; height: 250px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+            <img src="{{ url_for('get_document_thumbnail', doctype='extra', filename=extra.filename) }}"
+                 alt="Document Preview"
+                 style="max-width: 100%; max-height: 100%; object-fit: contain;"
+                 onerror="this.style.display='none'; this.parentElement.innerHTML='<p style=color:#999;>Preview not available</p>';">
+          </div>
+          <div class="doc-info" style="padding: 16px; background: #f8f9fb; font-size: 13px; line-height: 1.8; color: #555;">
+            <strong>File:</strong> {{ extra.original_filename or extra.filename }}
+          </div>
+          <div class="doc-actions" style="padding: 16px; display: flex; gap: 8px; justify-content: space-between;">
+            <a href="{{ url_for('view_document', doctype='extra', filename=extra.filename) }}"
+               target="_blank"
+               style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #6c5ce7; color: white; cursor: pointer;">
+              👁️ View
+            </a>
+            <a href="{{ url_for('download_document', doctype='extra', filename=extra.filename) }}"
+               style="flex: 1; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; text-align: center; background: #6c5ce7; color: white; cursor: pointer;">
+              📥 Download
+            </a>
+          </div>
+        </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+
+    <!-- Bulk Actions -->
+    <div class="bulk-actions" style="background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 30px;">
+      <h4 style="color: #333; font-size: 18px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #e0e0e0;">Bulk Actions</h4>
+      <div class="action-buttons" style="display: flex; gap: 16px; flex-wrap: wrap;">
+        <button onclick="downloadAllDocuments({{ history_id or 'null' }})"
+                style="padding: 12px 24px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%); color: white; box-shadow: 0 4px 12px rgba(30, 92, 168, 0.3);">
+          📥 Download All Documents
+        </button>
+        <button onclick="deleteAllDocuments({{ history_id or 'null' }}, this)"
+                style="padding: 12px 24px; border: 2px solid #ff4757; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: #fff5f5; color: #ff4757;">
+          🗑️ Delete All Documents
+        </button>
+      </div>
+      <div id="bulkDeleteStatus" style="margin-top:12px; font-size:13px; font-weight:500; display:none;"></div>
+    </div>
+    
+  {% else %}
+    <div class="empty-state" style="text-align: center; padding: 80px 20px; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+      <div class="empty-state-icon" style="font-size: 80px; margin-bottom: 24px; opacity: 0.5;">📂</div>
+      <h3 style="color: #333; font-size: 24px; margin-bottom: 12px;">No Documents Available</h3>
+      <p style="color: #999; font-size: 16px;">Upload documents from the sidebar to view them here</p>
+    </div>
+  {% endif %}
+</div>
+
+<style>
+.inline-confirm {
+  display:none; background:#fff5f5; border:1px solid #e74c3c;
+  border-radius:6px; padding:8px 12px; margin-top:6px;
+  font-size:13px; color:#c0392b;
+}
+.inline-confirm.show { display:block; }
+.inline-confirm button {
+  margin-left:8px; padding:4px 12px; border:none; border-radius:4px;
+  cursor:pointer; font-size:12px; font-weight:600;
+}
+.confirm-yes { background:#e74c3c; color:white; }
+.confirm-no  { background:#ecf0f1; color:#333; }
+.doc-status-msg {
+  margin-top:8px; padding:8px 12px; border-radius:6px;
+  font-size:13px; font-weight:500; display:none;
+}
+</style>
+
+<script>
+function deleteDocument(doctype, filename, cardEl) {
+  // Show inline confirmation instead of browser popup
+  const confirmDiv = cardEl.querySelector('.inline-confirm');
+  if (confirmDiv) {
+    confirmDiv.classList.toggle('show');
+  }
+}
+
+function confirmDelete(doctype, filename, btn) {
+  const card = btn.closest('.document-card');
+  const statusMsg = card.querySelector('.doc-status-msg');
+  
+  btn.textContent = '⏳';
+  btn.disabled = true;
+
+  fetch(`/delete_document/${doctype}/${filename}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        card.style.transition = 'opacity 0.3s';
+        card.style.opacity = '0';
+        setTimeout(() => card.remove(), 300);
+      } else {
+        if (statusMsg) {
+          statusMsg.style.display = 'block';
+          statusMsg.style.background = '#fff5f5';
+          statusMsg.style.color = '#e74c3c';
+          statusMsg.textContent = '❌ ' + (data.error || 'Delete failed');
+        }
+        btn.textContent = 'Yes, Delete';
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      if (statusMsg) {
+        statusMsg.style.display = 'block';
+        statusMsg.style.background = '#fff5f5';
+        statusMsg.style.color = '#e74c3c';
+        statusMsg.textContent = '❌ Network error. Please try again.';
+      }
+      btn.textContent = 'Yes, Delete';
+      btn.disabled = false;
+    });
+}
+
+function cancelDelete(btn) {
+  btn.closest('.inline-confirm').classList.remove('show');
+}
+
+function retryDmsUpload(historyId) {
+  const btn = document.getElementById('dmsRetryBtn');
+  const statusEl = document.getElementById('dmsRetryStatus');
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#555';
+    statusEl.textContent = 'Starting DMS upload retry...';
+  }
+  // CHANGED (2026-08-14): dms_upload no longer runs through rf_queue (see
+  // app.py's api_dms_upload_retry() and dms_upload_runner.py's
+  // trigger_dms_upload_for()) -- it's a fire-and-forget background thread
+  // now, no job_id/poll_url, so this is a plain fetch like syncDmsLink()
+  // below rather than submitAndPoll()/pollRFJob(). There's no "done" event
+  // to wait for here; the reload after a short delay just gives the batch
+  // a head start before showing this record's (hopefully now updated)
+  // dms_status -- if it's still not uploaded, the button reappears and can
+  // be clicked again.
+  fetch(`/api/dms_upload/retry/${historyId}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        if (statusEl) {
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✓ ' + (data.message || 'DMS upload retry started.') + ' Reloading...';
+        }
+        setTimeout(() => window.location.reload(), 4000);
+      } else {
+        if (btn) btn.disabled = false;
+        if (statusEl) {
+          statusEl.style.color = '#e17055';
+          statusEl.textContent = '❌ ' + (data.error || 'Failed to start DMS upload retry.');
+        }
+      }
+    })
+    .catch(err => {
+      if (btn) btn.disabled = false;
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ Network error: ' + err.message;
+      }
+    });
+}
+
+// Companion to retryDmsUpload() above, for the "already uploaded, link just
+// hasn't synced yet" state. This is a quick DB+Excel-file operation (see
+// /api/dms/sync_link and services/dms_links_import.py), not an RF robot
+// job, so it's a plain fetch -- no job_id/poll_url to hand to
+// submitAndPoll().
+function syncDmsLink(historyId) {
+  const btn = document.getElementById('dmsSyncLinkBtn');
+  const statusEl = document.getElementById('dmsRetryStatus');
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#555';
+    statusEl.textContent = 'Syncing document link...';
+  }
+  fetch(`/api/dms/sync_link/${historyId}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        if (statusEl) {
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✓ Link found. Reloading...';
+        }
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        if (btn) btn.disabled = false;
+        if (statusEl) {
+          statusEl.style.color = '#e17055';
+          // FIX: sync failing here means the link genuinely isn't in the
+          // Excel file yet -- not just that the DB import hadn't caught up
+          // (that's what this button just ran). Offer the actual next
+          // step (re-running just the Contentverse link-generation step
+          // for this one document) right in the same status line instead
+          // of leaving a dead end.
+          statusEl.innerHTML =
+            '❌ ' + _escHtmlDocs(data.error || 'Link sync failed') +
+            ' <button type="button" onclick="regenDmsLink(' + historyId + ')" ' +
+            'style="margin-left:8px;padding:3px 10px;border-radius:5px;font-size:11px;' +
+            'border:none;cursor:pointer;background:#1e5ca8;color:white;">🤖 Regenerate Link</button>';
+        }
+      }
+    })
+    .catch(err => {
+      if (btn) btn.disabled = false;
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ Network error: ' + err.message;
+      }
+    });
+}
+
+// Last resort after syncDmsLink() above has confirmed the link truly isn't
+// in the Excel file: re-runs dms_upload.robot's single-document link step
+// via the RF queue (see /api/dms/regen_link, services/dms_upload_runner.py's
+// run_dms_link_regen) -- an actual browser automation job, so this DOES
+// have a job_id/poll_url and uses the same submitAndPoll() as retryDmsUpload.
+function regenDmsLink(historyId) {
+  const statusEl = document.getElementById('dmsRetryStatus');
+  if (statusEl) {
+    statusEl.style.color = '#555';
+    statusEl.textContent = 'Regenerating link via Contentverse (this can take a minute)...';
+  }
+  submitAndPoll(`/api/dms/regen_link/${historyId}`, {}, null, {
+    onSuccess: () => {
+      if (statusEl) {
+        statusEl.style.color = '#00b894';
+        statusEl.textContent = '✓ Link regenerated. Reloading...';
+      }
+      setTimeout(() => window.location.reload(), 1500);
+    },
+    onFailure: (error) => {
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ ' + error;
+      }
+    },
+    onError: (error) => {
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ ' + error;
+      }
+    }
+  });
+}
+
+// Tiny local HTML-escape helper for the innerHTML build above -- this file
+// doesn't already have a shared _escHtml here (that's gate_in.html's own),
+// so a minimal one of its own rather than assuming a global exists.
+function _escHtmlDocs(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+// Companion to the "Add / Replace Document" panel above -- posts to
+// /api/upload_missing/<history_id>/<doctype> (explicit history_id, no
+// session-state guessing). Uses the same reloadToFreshData() pattern as
+// gate_in.html/migo_105.html/miro.html (sessionStorage + reload, reopens
+// the Documents tab after) rather than a bare window.location.reload(),
+// consistent with the rest of this file's post-action refreshes
+// (retryDmsUpload/syncDmsLink/regenDmsLink above all do the same).
+function uploadMissingDocument(historyId) {
+  const typeSel  = document.getElementById('addDocType');
+  const fileInp  = document.getElementById('addDocFile');
+  const btn      = document.getElementById('addDocBtn');
+  const statusEl = document.getElementById('addDocStatus');
+  if (!typeSel || !fileInp || !btn) return;
+  const doctype = typeSel.value;
+  const file = fileInp.files[0];
+
+  if (!file) {
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.style.color = '#e17055';
+      statusEl.textContent = 'Choose a file first.';
+    }
+    return;
+  }
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳ Uploading...';
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#555';
+    statusEl.textContent = doctype === 'others'
+      ? 'Attaching document...'
+      : 'Uploading and running OCR — this may take 30-60 seconds...';
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  fetch(`/api/upload_missing/${historyId}/${doctype}`, { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        if (statusEl) {
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✓ ' + (data.message || 'Uploaded') + ' — refreshing...';
+        }
+        reloadToFreshData('documents', 1200);
+      } else {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        if (statusEl) {
+          statusEl.style.color = '#e17055';
+          statusEl.textContent = '❌ ' + (data.error || 'Upload failed');
+        }
+      }
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.textContent = originalText;
+      if (statusEl) {
+        statusEl.style.color = '#e17055';
+        statusEl.textContent = '❌ Network error: ' + err.message;
+      }
+    });
+}
+
+function downloadAllDocuments(historyId) {
+  if (!historyId) {
+    alert('No record loaded — open a record first.');
+    return;
+  }
+  fetch(`/download_all_documents/${historyId}`)
+    .then(response => {
+      if (!response.ok) throw new Error('Download failed');
+      return response.blob();
+    })
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `documents-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    })
+    .catch(err => console.error('Download error:', err));
+}
+
+function deleteAllDocuments(historyId, btn) {
+  if (!historyId) {
+    alert('No record loaded — open a record first.');
+    return;
+  }
+  if (!confirm('Delete all documents for this record? This cannot be undone.')) {
+    return;
+  }
+  const statusEl = document.getElementById('bulkDeleteStatus');
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳ Deleting...';
+
+  fetch(`/delete_all_documents/${historyId}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        document.querySelectorAll('.document-card').forEach(card => card.remove());
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          statusEl.style.color = '#00b894';
+          statusEl.textContent = '✅ All documents deleted.';
+        }
+      } else {
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          statusEl.style.color = '#e74c3c';
+          statusEl.textContent = '❌ ' + (data.error || 'Delete failed');
+        }
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    })
+    .catch(() => {
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = '#e74c3c';
+        statusEl.textContent = '❌ Network error. Please try again.';
+      }
+      btn.disabled = false;
+      btn.textContent = originalText;
+    });
+}
+</script>

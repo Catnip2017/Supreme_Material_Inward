@@ -1,0 +1,115 @@
+# ============================================================
+# MIMS (Material Inward) .gitignore
+# Rule of thumb: the repo holds CODE + CONFIG TEMPLATES + SQL MIGRATIONS only.
+# Secrets, uploaded business documents, logs, bot output and machine-generated
+# files stay out. (.sql files are NOT ignored on purpose -- the schema
+# migrations are part of the deploy.)
+# ============================================================
+
+# ---- Secrets / environment -- NEVER commit ------------------
+.env
+.env.*
+*.env
+!.env.template
+cookies.txt
+*.pem
+*.key
+*.pfx
+*.p12
+
+# ---- Python ---------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+venv/
+.venv/
+myenv/
+env/
+node_modules/
+
+# ---- Uploaded documents -- real vendor/business data -----------
+# (folders are created by the app on first run; .gitkeep keeps the shell)
+/uploads/*
+!/uploads/.gitkeep
+*.pdf
+/zgrn_print/
+
+# ---- Logs ------------------------------------------------------
+logs/*
+!logs/.gitkeep
+*.log
+
+# ---- Robot Framework / SAP bot output ---------------------------
+robot_scripts/output/
+robot_scripts/log.html
+robot_scripts/output.xml
+robot_scripts/report.html
+/log.html
+/output.xml
+/report.html
+# per-record bot output folders dropped in the app root (h<id>_<time>, dms_upload_<stamp>)
+/h[0-9]*_[0-9]*/
+/dms_upload_*/
+dms_staging/
+robot.lock
+
+# ---- Stale / accidental copies ----------------------------------
+# static/database and static/config are old duplicates of /database and
+# /config (the real ones are the top-level folders) -- do not track them.
+/static/database/
+/static/config/
+# folders created by a shell brace-expansion typo, e.g. "{css,js"
+{*/
+# zips / archives of the project itself
+*.zip
+*.7z
+*.rar
+# Word/Excel lock + temp files, root-level working documents
+~$*
+/*.docx
+
+# ---- Database dumps (schema .sql files are kept) ------------------
+*.dump
+*.backup
+*.sqlite3
+
+# ---- Flask --------------------------------------------------------
+flask_session/
+instance/
+
+# ---- Editors / tools ----------------------------------------------
+.vscode/
+.idea/
+.cursor/
+.claude/
+.history/
+*.swp
+*.swo
+
+# ---- Backups / temp -----------------------------------------------
+*.bak
+*.orig
+*.rej
+*.tmp
+
+# ---- OS -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+robot_scripts/*_test.robot
+robot_scripts/*_TEST_*.robot
+robot_scripts/test.robot
+robot_scripts/_yesterday_*.robot
+robot_scripts/*_draft.robot
+robot_scripts/migo_103_dynamic_columns.robot
+/test_po_fetch.bat

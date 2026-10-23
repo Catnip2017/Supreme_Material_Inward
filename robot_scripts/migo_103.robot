@@ -1,0 +1,1042 @@
+*** Settings ***
+Documentation     MIGO 103 SAP Automation — GR into Blocked Stock
+Library           SapGuiLibrary
+Library           Process
+Library           OperatingSystem
+Library           String
+Library           DateTime
+Library           Collections
+Library           sap_helpers.py
+Library           ${CURDIR}/sap_bot_coordination.py
+ 
+*** Variables ***
+${PO_NUMBER}        ${EMPTY}
+${DOC_DATE}         ${EMPTY}
+${POST_DATE}        ${EMPTY}
+${DELIVERY_NOTE}    ${EMPTY}
+${BILL_OF_LADING}   ${EMPTY}
+${GR_SLIP_NO}       ${EMPTY}
+${HEADER_TEXT}      ${EMPTY}
+${REMARKS}          ${EMPTY}
+${ITEMS_JSON}       []
+# WARNING (2026-08-25): ${ITEMS_JSON} above is NOT used anywhere in this
+# script -- it's a leftover declaration. Confirmed real-world confusion from
+# this: a manual test run set ${ITEMS_JSON} to a real payload but left
+# ${ITEMS_JSON_B64} at its "[]" default below, so the run silently processed
+# ZERO items ("Total matched pairs to fill: 0") even though real item data
+# was passed in. The ONLY variable this script actually reads is
+# ${ITEMS_JSON_B64} -- the same JSON, base64-encoded (this is what
+# rf_runner.py sends from the real app). To test manually: base64-encode
+# your JSON list and set ITEMS_JSON_B64 to that string, e.g. for
+# [{"item_no": "20", "qty_actual": "1", "qty_expected": "1"}] the correct
+# value is W3siaXRlbV9ubyI6ICIyMCIsICJxdHlfYWN0dWFsIjogIjEiLCAicXR5X2V4cGVjdGVkIjogIjEifV0=
+${ITEMS_JSON_B64}    W10=
+# tree sidebar can pop up on this same MIGO screen -- these two paths let
+# Dismiss Overview Tree Sidebar close it if present. ${session} is the raw
+# SAP GUI Scripting session object, needed because a GuiShell tree control's
+# .pressButton() method isn't exposed by SapGuiLibrary's own keywords.
+${PATH_TREE_CLOSE_BTN}    wnd[0]/shellcont/shell/shellcont[1]/shell[0]
+${session}          ${NONE}
+
+# --- MIGO item overview grid (ADDED 2026-08-21 -- EBELP-based matching) ----
+# Used to read the live grid and match each incoming item by PO Item Number
+# (EBELP) instead of by array position -- see Fill MIGO 103 And Post's Step 4
+# comment for the full reasoning (this replaced the root cause of the wrong-
+# material-code GRIN issue).
+${GOITEM_TABLE}    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMLIST:SAPLMIGO:0200/tblSAPLMIGOTV_GOITEM
+${COL_GOITEM_MATNR}     59
+${COL_GOITEM_ERFMG}     4
+${COL_GOITEM_EBELP}     39
+# ADDED (2026-09-21): fallback for MAKTX, used only if Discover MIGO Grid
+# Columns below can't find it by name. EBELP has no fallback -- it fails
+# loudly instead, since it's the item-matching key, not just informational.
+${COL_GOITEM_MAKTX}     1
+
+# --- Multi-bot coordination (ADDED 2026-08-21, MIGRATED 2026-09-03) --------
+# Login/close now go through sap_bot_coordination.py -- this file no
+# longer keeps its own separate refcount file path constants.
+
+
+*** Test Cases ***
+Execute MIGO 103
+    [Setup]    Initialize SAP And Login
+    ${result_raw}=    Fill MIGO 103 And Post
+    # FIX (2026-08-24): CONFIRMED PRODUCTION BUG. Fill MIGO 103 And Post's
+    # RETURN builds its value as literal text -- {"status": "...", ...} with
+    # ${} substitutions inside -- which in Robot Framework is just a STRING,
+    # not a real dictionary (only &{...}/@{...} or ${{ }} produce real
+    # objects). The line below used to do ${result}[status] directly on that
+    # string. Robot Framework's own extended variable syntax does a real
+    # Python __getitem__ on whatever the variable holds -- on a plain string
+    # that raises "String used with invalid index 'status'" and ABORTS this
+    # test case right there, EVERY time, unconditionally -- regardless of
+    # whether Post actually succeeded in SAP. Reproduced and confirmed with
+    # a standalone Robot Framework run before applying this fix.
+    #
+    # Real-world impact (confirmed from a live run, 2026-08-24): SAP had
+    # ALREADY posted (status bar showed "Material document 5000077541
+    # posted") when this crash hit, right after Post was clicked -- but
+    # because the crash happened before RESULT:MATERIAL_DOC_NUMBER could
+    # ever be logged, rf_runner.py saw no material doc number and reported
+    # "MIGO 103 not done ... No SAP document was created. Try again." even
+    # though SAP HAD created one. Retrying on that message risks a genuine
+    # DUPLICATE goods receipt in SAP. This bug has been live since the
+    # 2026-08-21 EBELP-matching rewrite of this test case, so ANY MIGO 103
+    # attempt since then that reported this exact "not done" message should
+    # be checked directly in SAP (MB03) for a material document that may
+    # have posted anyway before assuming nothing happened.
+    #
+    # Fix: parse the JSON text into a real dict first, so extended variable
+    # syntax has an actual dict to index into.
+    ${result}=    Evaluate    __import__('json').loads($result_raw)
+    IF    '${result}[status]' == 'COMPLETED'
+        ${mat_doc}=    Set Variable    ${result}[matdoc]
+    ELSE IF    '${result}[status]' == 'PO_NOT_RELEASED'
+        # ADDED (2026-09-04): kept distinct from the generic
+        # MANUAL_CHECK_REQUIRED below on purpose -- that one's own
+        # message in rf_runner.py says "MIGO 103 was posted (Post was
+        # clicked) but no material document number could be read...
+        # retrying risks creating a duplicate GR", which would be a
+        # FALSE claim here: this case is caught at PO entry, before
+        # Post is ever clicked, so nothing was posted and there is no
+        # duplicate-GR risk to warn about. See Fill MIGO 103 And Post's
+        # early status-bar check right after the PO number is entered.
+        ${mat_doc}=    Set Variable    PO_NOT_RELEASED
+    ELSE
+        ${mat_doc}=    Set Variable    MANUAL_CHECK_REQUIRED
+    END
+    Log To Console    RESULT:MATERIAL_DOC_NUMBER:${mat_doc}
+
+    # ADDED (2026-08-25): Fill MIGO 103 And Post now captures SAP's own popup
+    # message (e.g. "Deficit of PU Ordered quantity...") when Post produces a
+    # validation dialog instead of a clean status-bar confirmation -- see that
+    # keyword's Post step. Without this, that captured text only ever reached
+    # the raw console log; rf_runner.py's execute_migo_103_sap() already knows
+    # how to read a RESULT:SAP_STATUS_MSG marker and append it to whatever
+    # failure message the user sees, but nothing was ever emitting that
+    # marker with this richer content. .get() with a fallback chain handles
+    # both result shapes safely -- COMPLETED never has a "message" key at
+    # all, only MANUAL_CHECK_REQUIRED does; both have "popup_message".
+    ${result_message}=    Evaluate    $result.get('message', $result.get('popup_message', ''))
+    Log To Console    RESULT:SAP_STATUS_MSG:${result_message}
+
+    Sleep    10s
+    [Teardown]    Close SAP Session
+ 
+*** Keywords ***
+Initialize SAP And Login
+    # Evaluate    __import__('dotenv').load_dotenv()
+    Evaluate    __import__('dotenv').load_dotenv(__import__('os').getenv('DOTENV_PATH', '.env'), override=True)
+    ${CLIENT}=      Evaluate    __import__('os').getenv('SAP_CLIENT')
+    ${CONN_NAME}=   Evaluate    __import__('os').getenv('SAP_CONNECTION_NAME')
+    ${LOGON_PATH}=  Evaluate    __import__('os').getenv('SAP_LOGON_PATH')
+ 
+    # v16: per-user SAP credential pass-through (LDAP users only) -- see
+    # gate_in.robot for the full explanation. SAP_USER_OVERRIDE/
+    # SAP_PASS_OVERRIDE come from rf_runner.py's subprocess environment,
+    # never from this .env file (load_dotenv above uses override=True
+    # for SAP_CLIENT/SAP_CONNECTION_NAME/etc, but these two names are
+    # never defined in .env at all, so they're unaffected either way).
+    ${USER_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_USER_OVERRIDE', '')
+    ${PASS_OVERRIDE}=    Evaluate    __import__('os').getenv('SAP_PASS_OVERRIDE', '')
+    IF    $USER_OVERRIDE != '' and $PASS_OVERRIDE != ''
+        ${USERNAME}=    Set Variable    ${USER_OVERRIDE}
+        ${PASSWORD}=    Set Variable    ${PASS_OVERRIDE}
+        Log To Console    SAP LOGIN: using per-user credential for ${USERNAME}
+    ELSE
+        ${USERNAME}=    Evaluate    __import__('os').getenv('SAP_USERNAME')
+        ${PASSWORD}=    Evaluate    __import__('os').getenv('SAP_PASSWORD')
+        Log To Console    SAP LOGIN: using shared .env credential (${USERNAME})
+    END
+ 
+    ${session}=    Coordinated SAP Login    ${LOGON_PATH}    ${CONN_NAME}    ${CLIENT}    ${USERNAME}    ${PASSWORD}
+    Set Suite Variable    ${session}
+
+
+Get Firstline Path
+    # The Action/RefDoc combo box subscreen can render as either :0003 or
+    # :0007 depending on MIGO's current internal state (seen in GUI Script
+    # recording: A01-A08 -> SAPLMIGO:0003, A09/A10 -> SAPLMIGO:0007). A
+    # hardcoded path silently fails to find the element whenever the
+    # screen happens to be in the other state. Probe both, use whichever
+    # actually exists right now.
+    ${path_0003}=    Set Variable    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_FIRSTLINE:SAPLMIGO:0011
+    ${path_0007}=    Set Variable    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0007/subSUB_FIRSTLINE:SAPLMIGO:0011
+ 
+    ${found_0003}=    Run Keyword And Return Status    Element Should Be Present    ${path_0003}
+    IF    ${found_0003}
+        RETURN    ${path_0003}
+    END
+ 
+    ${found_0007}=    Run Keyword And Return Status    Element Should Be Present    ${path_0007}
+    IF    ${found_0007}
+        RETURN    ${path_0007}
+    END
+ 
+    Fail    Neither SAPLMIGO:0003 nor SAPLMIGO:0007 firstline subscreen found -- MIGO screen state unrecognized.
+ 
+Ensure Header And Detail Open
+    # Header Data and Item Detail sections each toggle open/closed, and the
+    # screen number shifts depending on the OTHER section's current state.
+    # Only the "open" button name is searched for -- btnOK_HEADER (header)
+    # and btnBUTTON_DETAIL (detail). If found, click it once. If not found,
+    # the section is already open, so do nothing and move on. The "close"
+    # button names (btnBUTTON_HEADER_TOGGLE, btnBUTTON_ITEMDETAIL) are
+    # deliberately never searched for -- we only ever open, never close.
+ 
+    # --- Header: open button = btnOK_HEADER ---
+    ${header_open_path}=    Set Variable    ${EMPTY}
+    FOR    ${scr}    IN    0002    0003    0004    0005
+        ${candidate}=    Set Variable
+        ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:${scr}/subSUB_HEADER:SAPLMIGO:0102/btnOK_HEADER
+        ${found}=    Run Keyword And Return Status    Element Should Be Present    ${candidate}
+        IF    ${found}
+            ${header_open_path}=    Set Variable    ${candidate}
+            BREAK
+        END
+    END
+ 
+    IF    '${header_open_path}' != '${EMPTY}'
+        Run Keyword And Ignore Error
+        ...    Evaluate    $session.findById('${header_open_path}').press()
+        Sleep    1s
+        Log To Console    Header data was closed -- opened it (${header_open_path}).
+    ELSE
+        Log To Console    Header data already open -- leaving as is.
+    END
+ 
+    # --- Item Detail: open button = btnBUTTON_DETAIL ---
+    ${detail_open_path}=    Set Variable    ${EMPTY}
+    FOR    ${scr}    IN    0002    0003    0004    0005
+        ${candidate}=    Set Variable
+        ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:${scr}/subSUB_ITEMDETAIL:SAPLMIGO:0302/btnBUTTON_DETAIL
+        ${found}=    Run Keyword And Return Status    Element Should Be Present    ${candidate}
+        IF    ${found}
+            ${detail_open_path}=    Set Variable    ${candidate}
+            BREAK
+        END
+    END
+ 
+    IF    '${detail_open_path}' != '${EMPTY}'
+        Run Keyword And Ignore Error
+        ...    Evaluate    $session.findById('${detail_open_path}').press()
+        Sleep    1s
+        Log To Console    Item detail was closed -- opened it (${detail_open_path}).
+    ELSE
+        Log To Console    Item detail already open -- leaving as is.
+    END
+
+# Connect To Sap Session / Acquire Refcount Lock / Release Refcount Lock /
+# Register Bot Start / Register Bot End -- REMOVED (2026-09-03). This bot
+# used to carry its own standalone copy of the multi-bot coordination
+# logic (including the same destructive OPT1 multi-logon handling fixed
+# above in Initialize SAP And Login). Login/close now go entirely through
+# sap_bot_coordination.py, shared by every bot in this codebase.
+
+
+Get Grid Column Names
+    [Documentation]    ADDED (2026-09-21). Reads the Name of every column in
+    ...    the live MIGO item grid, upper-cased, in index order. A column
+    ...    whose name can't be read is stored as an empty string so list
+    ...    positions always equal column indexes.
+    ${col_count}=    Evaluate    $session.findById('${GOITEM_TABLE}').Columns.Count
+    Log To Console    MIGO grid has ${col_count} columns -- scanning names...
+    @{names}=    Create List
+    FOR    ${idx}    IN RANGE    ${col_count}
+        ${res}=    Run Keyword And Ignore Error
+        ...    Evaluate    $session.findById('${GOITEM_TABLE}').Columns.ElementAt(${idx}).Name
+        IF    '${res}[0]' == 'PASS'
+            ${n}=    Convert To Upper Case    ${res}[1]
+        ELSE
+            ${n}=    Set Variable    ${EMPTY}
+        END
+        Append To List    ${names}    ${n}
+    END
+    RETURN    ${names}
+
+
+Find Column For Field
+    [Documentation]    ADDED (2026-09-21). Returns the index of the column
+    ...    that represents ${field} (e.g. EBELP), or -1 if none matches.
+    ...    Three passes, most specific first, so a similarly named column
+    ...    can never win over the right one:
+    ...      1. exact name          GOITEM-<FIELD>
+    ...      2. name ends with      -<FIELD>
+    ...      3. name contains       <FIELD>
+    [Arguments]    ${names}    ${field}
+    ${count}=    Get Length    ${names}
+
+    FOR    ${idx}    IN RANGE    ${count}
+        IF    '${names}[${idx}]' == 'GOITEM-${field}'    RETURN    ${idx}
+    END
+
+    FOR    ${idx}    IN RANGE    ${count}
+        ${hit}=    Evaluate    $names[${idx}].endswith('-${field}')
+        IF    ${hit}    RETURN    ${idx}
+    END
+
+    FOR    ${idx}    IN RANGE    ${count}
+        ${hit}=    Evaluate    '${field}' in $names[${idx}]
+        IF    ${hit}    RETURN    ${idx}
+    END
+
+    RETURN    ${-1}
+
+
+Discover MIGO Grid Columns
+    [Documentation]    ADDED (2026-09-21). Replaces the hardcoded
+    ...    ${COL_GOITEM_EBELP}/${COL_GOITEM_MATNR}/${COL_GOITEM_ERFMG}/
+    ...    ${COL_GOITEM_MAKTX} column indexes with a runtime scan of the
+    ...    live grid's own column names, so a SAP-side layout change (a
+    ...    column added/removed/reordered) can't silently point this
+    ...    script at the wrong column -- the same class of bug already
+    ...    seen with EBELP moving between index 39 and 40 across systems.
+    ...
+    ...    Returns a dictionary, e.g. {EBELP: 40, MATNR: 59, ERFMG: 4,
+    ...    MAKTX: 1}.
+    ...
+    ...    EBELP is the item-matching key with no safe fallback -- fails
+    ...    loudly (printing every column name) if it can't be found by
+    ...    name. MATNR/ERFMG/MAKTX are only used for logging and the
+    ...    material sanity-check, so each falls back to its
+    ...    ${COL_GOITEM_*} default with a WARNING if name discovery
+    ...    doesn't find it.
+    @{names}=    Get Grid Column Names
+    &{cols}=     Create Dictionary
+
+    FOR    ${field}    IN    EBELP    MATNR    ERFMG    MAKTX
+        ${idx}=    Find Column For Field    ${names}    ${field}
+        Set To Dictionary    ${cols}    ${field}=${idx}
+        IF    ${idx} >= 0
+            Log To Console    Found ${field} column: name="${names}[${idx}]" at index ${idx}
+        END
+    END
+
+    IF    ${cols}[EBELP] < 0
+        Log To Console    ERROR: EBELP column not found. All column names:
+        FOR    ${idx}    IN RANGE    ${{len($names)}}
+            Log To Console    ${SPACE}${SPACE}col ${idx}: ${names}[${idx}]
+        END
+        Fail    EBELP column not found in MIGO item grid -- see console for all column names.
+    END
+
+    IF    ${cols}[MATNR] < 0
+        Log To Console    WARNING: MATNR column not found by name -- using fallback index ${COL_GOITEM_MATNR}.
+        Set To Dictionary    ${cols}    MATNR=${COL_GOITEM_MATNR}
+    END
+    IF    ${cols}[ERFMG] < 0
+        Log To Console    WARNING: ERFMG column not found by name -- using fallback index ${COL_GOITEM_ERFMG}.
+        Set To Dictionary    ${cols}    ERFMG=${COL_GOITEM_ERFMG}
+    END
+    IF    ${cols}[MAKTX] < 0
+        Log To Console    WARNING: MAKTX column not found by name -- using fallback index ${COL_GOITEM_MAKTX}.
+        Set To Dictionary    ${cols}    MAKTX=${COL_GOITEM_MAKTX}
+    END
+
+    RETURN    ${cols}
+
+
+Read Grid Cell
+    [Documentation]    ADDED (2026-09-21). Reads one cell of the MIGO item
+    ...    grid. Tries the ctxt (input-with-F4-help) field type first, then
+    ...    txt, since the same field can be either type depending on
+    ...    layout -- ERFMG is currently txt-only in this system, this just
+    ...    keeps that working while covering a system where it isn't.
+    ...    Returns an empty string if neither can be read.
+    ...    NOTE: "\[" is escaped on purpose -- without it Robot would treat
+    ...    ${field}[...] as item access on the variable.
+    [Arguments]    ${field}    ${col}    ${row}
+    ${path_c}=    Set Variable    ${GOITEM_TABLE}/ctxtGOITEM-${field}\[${col},${row}]
+    ${res_c}=     Run Keyword And Ignore Error    Get Value    ${path_c}
+    IF    '${res_c}[0]' == 'PASS'    RETURN    ${res_c}[1]
+
+    ${path_t}=    Set Variable    ${GOITEM_TABLE}/txtGOITEM-${field}\[${col},${row}]
+    ${res_t}=     Run Keyword And Ignore Error    Get Value    ${path_t}
+    IF    '${res_t}[0]' == 'PASS'    RETURN    ${res_t}[1]
+
+    RETURN    ${EMPTY}
+
+
+Extract MIGO Item Table
+    [Documentation]    Reads the live item overview grid row by row: Line
+    ...    number (ZEILE, used for DETAIL_ZEILE navigation), PO Item Number
+    ...    (EBELP, used for matching), Material, Short Text, Qty. Returns
+    ...    the raw list of dicts so Step 4 can search it directly. This is
+    ...    what replaced position-based matching (${line_num}=${i}+1) --
+    ...    SAP's grid silently drops PO lines that are already fully
+    ...    received, so array position in our payload never reliably lined
+    ...    up with the actual grid row; EBELP is SAP's own unique line
+    ...    identifier and is read directly from this same grid.
+    ...
+    ...    UPDATED (2026-09-21): column indexes (EBELP, MATNR, ERFMG, MAKTX)
+    ...    are now discovered once per run via Discover MIGO Grid Columns
+    ...    instead of using the hardcoded ${COL_GOITEM_*} constants directly
+    ...    -- see that keyword's documentation for why.
+    &{cols}=    Discover MIGO Grid Columns
+    ${ebelp_col}=    Set Variable    ${cols}[EBELP]
+    ${matnr_col}=    Set Variable    ${cols}[MATNR]
+    ${erfmg_col}=    Set Variable    ${cols}[ERFMG]
+    ${maktx_col}=    Set Variable    ${cols}[MAKTX]
+    Log To Console    Column indexes -- EBELP=${ebelp_col} MATNR=${matnr_col} ERFMG=${erfmg_col} MAKTX=${maktx_col}
+
+    @{item_rows}=    Create List
+    @{seen_line_nos}=    Create List
+    ${row_idx}=    Set Variable    0
+    ${scroll_pos}=    Set Variable    0
+    ${visible_rows}=    Evaluate    $session.findById('${GOITEM_TABLE}').VisibleRowCount
+
+    WHILE    True
+        ${row_in_view}=    Evaluate    ${row_idx} - ${scroll_pos}
+        IF    ${row_in_view} >= ${visible_rows}
+            ${scroll_pos}=    Set Variable    ${row_idx}
+            Run Keyword And Ignore Error
+            ...    Evaluate    setattr($session.findById('${GOITEM_TABLE}').verticalScrollbar, 'position', ${scroll_pos})
+            Sleep    0.5s
+
+            ${actual_pos_res}=    Run Keyword And Ignore Error
+            ...    Evaluate    $session.findById('${GOITEM_TABLE}').verticalScrollbar.position
+            ${scroll_confirmed}=    Run Keyword And Return Status
+            ...    Should Be Equal As Integers    ${actual_pos_res}[1]    ${scroll_pos}
+            IF    not ${scroll_confirmed}
+                Log To Console    WARNING: MIGO item grid scroll to ${scroll_pos} did not land (grid reports position ${actual_pos_res}[1]) -- retrying once.
+                Run Keyword And Ignore Error
+                ...    Evaluate    setattr($session.findById('${GOITEM_TABLE}').verticalScrollbar, 'position', ${scroll_pos})
+                Sleep    0.8s
+                ${actual_pos_res2}=    Run Keyword And Ignore Error
+                ...    Evaluate    $session.findById('${GOITEM_TABLE}').verticalScrollbar.position
+                ${scroll_confirmed2}=    Run Keyword And Return Status
+                ...    Should Be Equal As Integers    ${actual_pos_res2}[1]    ${scroll_pos}
+                IF    not ${scroll_confirmed2}
+                    Log To Console    WARNING: MIGO item grid scroll to ${scroll_pos} STILL not confirmed after retry (grid reports position ${actual_pos_res2}[1]) -- proceeding, but rows read from here on may be misaligned/duplicated.
+                END
+            END
+        END
+        ${grid_row}=    Evaluate    ${row_idx} - ${scroll_pos}
+
+        ${zeile_path}=    Set Variable    ${GOITEM_TABLE}/btnGOITEM-ZEILE[0,${grid_row}]
+        ${line_res}=    Run Keyword And Ignore Error    Get Value    ${zeile_path}
+        IF    '${line_res}[0]' == 'FAIL'
+            BREAK
+        END
+        ${line_no}=    Clean Value    ${line_res}[1]
+        ${line_no_stripped}=    Replace String    ${line_no}    _    ${EMPTY}
+        ${line_no_stripped}=    Replace String    ${line_no_stripped}    .    ${EMPTY}
+        ${line_no_stripped}=    Strip String    ${line_no_stripped}
+        IF    '${line_no_stripped}' == '${EMPTY}'
+            BREAK
+        END
+
+        ${short_text}=    Read Grid Cell    MAKTX    ${maktx_col}    ${grid_row}
+        ${material}=      Read Grid Cell    MATNR    ${matnr_col}    ${grid_row}
+        ${qty}=           Read Grid Cell    ERFMG    ${erfmg_col}    ${grid_row}
+        ${ebelp}=         Read Grid Cell    EBELP    ${ebelp_col}    ${grid_row}
+
+        # DEFENSIVE GUARD (2026-08-25): line_no is the grid's own row
+        # identity and should never repeat within one PO's item overview.
+        # If it does -- which should only happen when a scroll silently
+        # failed and the loop re-read a row it already captured (see the
+        # scroll-verification fix above) -- skip appending the duplicate
+        # instead of feeding the same SAP line into item_rows twice. Safety
+        # net on top of the scroll fix, not a replacement for it.
+        ${already_seen}=    Run Keyword And Return Status
+        ...    List Should Contain Value    ${seen_line_nos}    ${line_no}
+        IF    ${already_seen}
+            Log To Console    WARNING: MIGO grid line ${line_no} already captured earlier in this extraction -- skipping duplicate row ${row_idx} (likely caused by a scroll that didn't land). Not appending.
+        ELSE
+            Append To List    ${seen_line_nos}    ${line_no}
+            &{row_data}=    Create Dictionary
+            ...    line_no=${line_no}
+            ...    ebelp=${ebelp}
+            ...    material=${material}
+            ...    short_text=${short_text}
+            ...    qty=${qty}
+            Append To List    ${item_rows}    ${row_data}
+            Log To Console    MIGO ITEM ROW ${row_idx}: line=${line_no} ebelp=${ebelp} material=${material} short_text="${short_text}" qty=${qty}
+        END
+
+        ${row_idx}=    Evaluate    ${row_idx} + 1
+        IF    ${row_idx} >= 100    BREAK
+    END
+
+    ${total_rows}=    Get Length    ${item_rows}
+    Log To Console    Extracted ${total_rows} live item row(s) from MIGO overview table
+    RETURN    ${item_rows}
+
+
+Dismiss Overview Tree Sidebar
+    # INTEGRATION: found by the migo103_link/migo105_link bots -- MIGO can
+    # pop up a document-overview tree sidebar on this same screen. Defensive
+    # by construction (both checks are Element Should Be Present guards, so
+    # this is a no-op on any run where the sidebar never appears).
+    ${hide_overview_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    wnd[0]/tbar[1]/btn[21]
+    IF    ${hide_overview_status}
+        Evaluate    $session.findById('wnd[0]').maximize()
+        Evaluate    $session.findById('wnd[0]/tbar[1]/btn[21]').press()
+        Sleep    2s
+    END
+ 
+    ${tree_close_status}=    Run Keyword And Return Status    SapGuiLibrary.Element Should Be Present    ${PATH_TREE_CLOSE_BTN}
+    IF    ${tree_close_status}
+        Evaluate    $session.findById('${PATH_TREE_CLOSE_BTN}').pressButton('OK_CLOSE')
+        Sleep    2s
+    END
+ 
+ 
+Fill MIGO 103 And Post
+    # --- Data Cleaning ---
+    ${po_clean}=      Clean Value    ${PO_NUMBER}
+    ${dn_clean}=      Clean Value    ${DELIVERY_NOTE}
+    ${bol_clean}=     Clean Value    ${BILL_OF_LADING}
+    ${slip_clean}=    Clean Value    ${GR_SLIP_NO}
+    ${hdr_clean}=     Clean Value    ${HEADER_TEXT}
+    ${rem_clean}=     Clean Value    ${REMARKS}
+ 
+    # Diagnostic: log every header variable as received + after cleaning,
+    # for its designated SAP field, before any of it is typed into SAP.
+    Log To Console    HEADER VALUES -- PO_NUMBER="${PO_NUMBER}"->"${po_clean}" (ctxtGODYNPRO-PO_NUMBER) | DELIVERY_NOTE="${DELIVERY_NOTE}"->"${dn_clean}" (txtGOHEAD-LFSNR) | BILL_OF_LADING="${BILL_OF_LADING}"->"${bol_clean}" (txtGOHEAD-FRBNR) | GR_SLIP_NO="${GR_SLIP_NO}"->"${slip_clean}" (txtGOHEAD-XABLN) | HEADER_TEXT="${HEADER_TEXT}"->"${hdr_clean}" (txtGOHEAD-BKTXT) | REMARKS="${REMARKS}"->"${rem_clean}" (txtGOITEM-SGTXT, applied per line below)
+ 
+    # --- Parse ITEMS_JSON ---
+    # FIX: this used to decode ITEMS_JSON_B64 into ${items_json} and then
+    # immediately discard it, instead parsing the unrelated ${ITEMS_JSON}
+    # variable -- which defaults to "[]" in *** Variables *** and is never
+    # actually set by rf_runner.py (only ITEMS_JSON_B64 is passed in from
+    # the app). That meant ${items} was always empty and ${total} was
+    # always 0, so this whole line-item loop silently never ran on any
+    # real run -- Material/Qty were never being filled at all, regardless
+    # of what the app sent. Now parsing the actual decoded payload.
+    ${items}=    Evaluate    __import__('json').loads(__import__('base64').b64decode('${ITEMS_JSON_B64}').decode())
+    ${total}=    Get Length    ${items}
+    Log To Console    Total matched pairs to fill: ${total}
+ 
+    # --- Step 1: Navigate to MIGO ---
+    Run Transaction    MIGO
+    Sleep    3s
+    Dismiss Any Popup
+    Dismiss Overview Tree Sidebar
+    Ensure Header And Detail Open      
+ 
+    # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
+    # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
+    #${firstline}=    Get Firstline Path
+ 
+    # Force action to Goods Receipt (A01). Using .key directly instead of
+    # Select From List By Label -- label match depends on SAP logon
+    # language ("Goods Receipt"); key "A01" is stable regardless of
+    # language, and matches the GUI Script recording.
+    #Evaluate    setattr($session.findById('${firstline}/cmbGODYNPRO-ACTION'), 'key', 'A01')
+    #Evaluate    $session.findById('${firstline}/cmbGODYNPRO-ACTION').setFocus()
+    #Sleep     5s
+ 
+    # Re-resolve firstline path -- setting ACTION can itself switch the
+    # subscreen between :0003/:0007, so REFDOC's container may differ
+    # from what ACTION was just found under.
+    # --- Step 2: Force Goods Receipt + Purchase Order, then set movement type and PO ---
+    ${firstline}=    Get Firstline Path
+ 
+    # Force action to Goods Receipt (A01). setattr() used instead of a
+    # direct `.key = 'A01'` assignment because Robot's Evaluate keyword
+    # runs expressions through Python eval(), which cannot execute
+    # assignment statements (SyntaxError: invalid syntax) -- setattr()
+    # is a function call, so it's a valid expression instead.
+    Evaluate    setattr($session.findById('${firstline}/cmbGODYNPRO-ACTION'), 'key', 'A01')
+    #Evaluate    $session.findById('${firstline}/cmbGODYNPRO-ACTION').setFocus()
+    Sleep    0.5s
+ 
+    ${firstline}=    Get Firstline Path
+ 
+    # Force reference to Purchase Order (R01)
+    Evaluate    setattr($session.findById('${firstline}/cmbGODYNPRO-REFDOC'), 'key', 'R01')
+    Evaluate    $session.findById('${firstline}/cmbGODYNPRO-REFDOC').setFocus()
+    Sleep    0.5s
+ 
+    ${firstline}=    Get Firstline Path
+ 
+    # Movement type 103
+    Set Focus     ${firstline}/ctxtGODEFAULT_TV-BWART
+    Safe Input Text    ${firstline}/ctxtGODEFAULT_TV-BWART    103
+ 
+    # PO number
+    Set Focus     ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER
+    Safe Input Text    ${firstline}/subSUB_FIRSTLINE_REFDOC:SAPLMIGO:2000/ctxtGODYNPRO-PO_NUMBER    ${po_clean}
+ 
+    Send VKey    0
+    Sleep    3s
+    Dismiss Any Popup
+
+    # ADDED (2026-09-04): SAP can reject the PO right here, the instant
+    # it's entered -- e.g. "Purchasing document 4100035963 not yet
+    # released" when the PO is still pending approval and can't be
+    # posted against yet. Confirmed via a real run (output_23.xml): this
+    # exact message was on the status bar at exactly this point, but
+    # nothing read it -- the script pressed on regardless into a screen
+    # that doesn't actually work for a blocked PO, producing a long
+    # chain of "Cannot find Element" failures on fields/buttons that
+    # don't exist in this state, and finally landing on "Function code
+    # cannot be selected" as the LAST status bar text read at Step 6 --
+    # which is the confusing, misleading message that ended up on the
+    # frontend instead of the real, useful one. Checking here, the
+    # moment the PO is entered, means the user sees SAP's own actual
+    # reason instead of a downstream symptom of it.
+    ${po_entry_msg}=    Get Value    wnd[0]/sbar
+    Log To Console    Status bar right after PO entry: "${po_entry_msg}"
+    ${po_blocked}=    Evaluate    'not released' in $po_entry_msg.lower() or 'not yet released' in $po_entry_msg.lower()
+    IF    ${po_blocked}
+        Log To Console    PO ${po_clean} is not released in SAP -- stopping here instead of continuing into a screen that won't work.
+        ${blocked_result}=    Evaluate
+        ...    __import__('json').dumps({'status': 'PO_NOT_RELEASED', 'message': $po_entry_msg, 'popup_message': '', 'item_results': []})
+        RETURN    ${blocked_result}
+    END
+
+    # --- Read the LIVE grid before typing anything (ADDED 2026-08-21) ---
+    # This is what Step 4 below matches each incoming item against by
+    # EBELP (PO Item Number), instead of guessing a grid row from array
+    # position.
+    @{item_rows}=    Extract MIGO Item Table
+
+    # --- Step 3: Header Fields ---
+    ${hdr_base}=    Set Variable
+    ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_HEADER:SAPLMIGO:0101/subSUB_HEADER:SAPLMIGO:0100/tabsTS_GOHEAD/tabpOK_GOHEAD_GENERAL/ssubSUB_TS_GOHEAD_GENERAL:SAPLMIGO:0110
+ 
+    Set Focus     ${hdr_base}/ctxtGOHEAD-BLDAT
+    Safe Input Text    ${hdr_base}/ctxtGOHEAD-BLDAT    ${DOC_DATE}
+ 
+    Set Focus     ${hdr_base}/ctxtGOHEAD-BUDAT
+    Safe Input Text    ${hdr_base}/ctxtGOHEAD-BUDAT    ${POST_DATE}
+ 
+ 
+   
+ 
+    # FIX: interleaving Dismiss Any Popup between each field now, not just
+    # around the whole block. On a PO with multiple line items, entering
+    # Delivery Note (LFSNR) can silently trigger a split/allocation popup
+    # that sits on top of wnd[0] -- if left uncleared, the very next
+    # Input Text (FRBNR) hits a blocked/stale reference and fails, and a
+    # bare retry doesn't help because the popup is still there. Confirmed
+    # in production: FRBNR failed twice in a row, back-to-back, on a PO
+    # with multiple lines.
+    Safe Input Text    ${hdr_base}/txtGOHEAD-LFSNR     ${dn_clean}
+    Dismiss Any Popup
+    Safe Input Text    ${hdr_base}/txtGOHEAD-FRBNR     ${bol_clean}
+    Dismiss Any Popup
+    Safe Input Text    ${hdr_base}/txtGOHEAD-XABLN     ${slip_clean}
+    Dismiss Any Popup
+    Safe Input Text    ${hdr_base}/txtGOHEAD-BKTXT     ${hdr_clean}
+ 
+    Send VKey    0
+    Sleep    2s
+    Dismiss Any Popup
+ 
+    # --- Step 4: Line Items — matched by PO Item Number (EBELP), not array
+    # position. FIX (2026-08-21): this used to navigate by
+    # ${line_num}=${i}+1 -- treating the Nth item WE sent as the Nth row IN
+    # SAP's grid. That silently broke whenever SAP's grid didn't mirror our
+    # array 1:1, which happens routinely: SAP drops PO lines that are
+    # already fully received from the MIGO grid, so a PO with 13 lines can
+    # show only 10 in MIGO, and the row at a given position is not
+    # necessarily the same PO line our array's same position refers to.
+    # That mismatch is the confirmed root cause of the wrong-material-code
+    # GRIN issue (PO 4100035144 and others). Now: each incoming item
+    # carries its own real PO Item Number (EBELP, e.g. "10"/"30"/"40"),
+    # read directly off the PO by po_fetch.robot and carried through the
+    # UI's matching step untouched. We read the live grid once (Extract
+    # MIGO Item Table, above) and look up each item's row by EBELP -- a
+    # direct, unambiguous match, independent of ordering or gaps. A missing
+    # item_no (already received / not in this grid) no longer fails the
+    # whole run -- it's skipped and recorded, so every item's outcome ends
+    # up in ${item_results} for the UI/DB to see.
+    Set Suite Variable    ${det_base}
+    ...    wnd[0]/usr/ssubSUB_MAIN_CARRIER:SAPLMIGO:0003/subSUB_ITEMDETAIL:SAPLMIGO:0301/subSUB_DETAIL:SAPLMIGO:0300
+
+    @{used_item_nos}=    Create List
+    @{item_results}=    Create List
+
+    FOR    ${i}    IN RANGE    ${total}
+        ${item}=          Get From List    ${items}    ${i}
+        ${qty_actual}=    Clean Value    ${item}[qty_actual]
+        ${qty_dn}=        Clean Value    ${item}[qty_expected]
+        ${target_item_no}=    Clean Value    ${item}[item_no]
+
+        IF    $target_item_no in $used_item_nos
+            Log To Console    PO item ${target_item_no} already processed earlier in this list -- skipping duplicate.
+            &{result}=    Create Dictionary    item_no=${target_item_no}    status=duplicate item_no, skipped
+            Append To List    ${item_results}    ${result}
+            CONTINUE
+        END
+
+        # --- Find the live SAP grid row whose EBELP matches this item ---
+        ${matched_row}=    Set Variable    ${NONE}
+        FOR    ${row}    IN    @{item_rows}
+            ${row_ebelp}=    Clean Value    ${row}[ebelp]
+            IF    '${row_ebelp}' == '${target_item_no}'
+                ${matched_row}=    Set Variable    ${row}
+                BREAK
+            END
+        END
+
+        IF    $matched_row == $NONE
+            Log To Console    PO item ${target_item_no} not found in the live SAP grid -- skipping (may already be fully received and dropped from the grid).
+            &{result}=    Create Dictionary    item_no=${target_item_no}    status=item not found
+            Append To List    ${item_results}    ${result}
+            CONTINUE
+        END
+
+        Append To List    ${used_item_nos}    ${target_item_no}
+        ${line_num}=    Set Variable    ${matched_row}[line_no]
+        Log To Console    PO item ${target_item_no} -> matched SAP grid line ${line_num} (EBELP=${matched_row}[ebelp], material=${matched_row}[material])
+
+        # Navigate to correct line
+        Safe Input Text    ${det_base}/txtGODYNPRO-DETAIL_ZEILE    ${line_num}
+        Click Element   ${det_base}/btnOK_LOCATE
+        Sleep    1s
+        Dismiss Any Popup
+
+        # --- Sanity check: compares the detail screen's own MATNR against
+        # what the OVERVIEW GRID already showed for this same EBELP match --
+        # confirms SAP actually navigated to the same item.
+        #
+        # FIX (2026-08-25): this check existed but was TOOTHLESS -- a
+        # mismatch only ever got a Log To Console WARNING, buried in the RF
+        # log that nobody looks at unless something's already gone visibly
+        # wrong. The item still went on to get quantities filled and posted,
+        # and item_results below still said "found and edited successfully"
+        # regardless -- so if this genuinely ever fires (SAP navigation
+        # landing on the wrong line), the user would see nothing wrong in
+        # the app at all, and only discover it by manually checking SAP.
+        # Now sets ${matnr_mismatch}, read below when building this item's
+        # entry in item_results, so a real mismatch is visible in the UI/DB
+        # instead of a silent success. Comparison strips leading zeros on
+        # both sides first (Evaluate, not string equality) -- SAP shows
+        # material numbers zero-padded in some screens/fields and not
+        # others, so a naive string compare would false-alarm on every
+        # single item even when the material genuinely matches.
+        ${matnr_status}    ${matnr_check}=    Run Keyword And Ignore Error
+        ...    Get Value
+        ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_MATERIAL/ssubSUB_TS_GOITEM_MATERIAL:SAPLMIGO:0301/ctxtGOITEM-MATNR
+        ${matnr_mismatch}=    Set Variable    ${False}
+        IF    '${matnr_status}' == 'PASS'
+            Log To Console    Line ${line_num} READBACK: MATNR="${matnr_check}" (grid showed "${matched_row}[material]")
+            ${matnr_check_norm}=    Evaluate    '${matnr_check}'.strip().lstrip('0') or '0'
+            ${matnr_grid_norm}=    Evaluate    '${matched_row}[material]'.strip().lstrip('0') or '0'
+            IF    '${matnr_check_norm}' != '${matnr_grid_norm}'
+                Log To Console    WARNING: navigated to line ${line_num} but detail-screen MATNR doesn't match the overview grid's MATNR for this item -- flagging in item_results.
+                ${matnr_mismatch}=    Set Variable    ${True}
+            END
+        ELSE
+            Log To Console    Line ${line_num} READBACK: MATNR field ID not confirmed for this screen -- could not read back (${matnr_check})
+        END
+
+        # Quantity tab
+        Click Element
+        ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_QUANTITIES
+        Sleep    1s
+ 
+        ${qty_base}=    Set Variable
+        ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_QUANTITIES/ssubSUB_TS_GOITEM_QUANTITIES:SAPLMIGO:0315
+ 
+        Set Focus     ${qty_base}/txtGOITEM-ERFMG
+        Safe Input Text    ${qty_base}/txtGOITEM-ERFMG    ${qty_actual}
+ 
+        Set Focus     ${qty_base}/txtGOITEM-LSMNG
+        Safe Input Text    ${qty_base}/txtGOITEM-LSMNG    ${qty_dn}
+ 
+        Send VKey    0
+        Sleep    1s
+        Dismiss Any Popup
+ 
+        # --- Diagnostic read-back: confirm SAP actually kept what we typed
+        # before we ever reach the (previously broken) Post step. If these
+        # come back blank/zero, the line itself never loaded from the PO
+        # (navigation/PO-reference problem). If they come back correct, the
+        # values ARE in the screen and the earlier "material not fetched"
+        # symptom was actually just the missing/wrong Post click discarding
+        # everything when the session closed without saving.
+        ${erfmg_check}=    Get Value    ${qty_base}/txtGOITEM-ERFMG
+        ${lsmng_check}=    Get Value    ${qty_base}/txtGOITEM-LSMNG
+        Log To Console    Line ${line_num} READBACK: ERFMG(actual qty)="${erfmg_check}" LSMNG(DN qty)="${lsmng_check}"
+
+        # Where tab — fill remarks/text. SGTXT is filled from ${rem_clean}
+        # -- the single header-level REMARKS value -- for EVERY line item.
+        # Unchanged behavior, noted here for visibility.
+        Click Element
+        ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT.
+        Sleep    1s
+ 
+        Set Focus
+        ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT./ssubSUB_TS_GOITEM_DESTINATION:SAPLMIGO:0325/txtGOITEM-SGTXT
+        Safe Input Text
+        ...    ${det_base}/tabsTS_GOITEM/tabpOK_GOITEM_DESTINAT./ssubSUB_TS_GOITEM_DESTINATION:SAPLMIGO:0325/txtGOITEM-SGTXT
+        ...    ${rem_clean}
+ 
+        Send VKey    0
+        Sleep    1s
+        Dismiss Any Popup
+ 
+        # Item OK — always last
+     
+        #Evaluate    $session.findById('${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE').setFocus()
+        #Evaluate    $session.findById('${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE').selected = True
+        #Sleep    0.5s
+ 
+        Select Checkbox
+        ...    ${det_base}/subSUB_DETAIL_TAKE:SAPLMIGO:0304/chkGODYNPRO-DETAIL_TAKE
+        Sleep    0.5s
+
+        IF    ${matnr_mismatch}
+            &{result}=    Create Dictionary
+            ...    item_no=${target_item_no}
+            ...    status=POSTED BUT MATERIAL READBACK DID NOT MATCH THE MATCHED PO LINE -- VERIFY THIS LINE IN SAP
+        ELSE
+            &{result}=    Create Dictionary    item_no=${target_item_no}    status=found and edited successfully
+        END
+        Append To List    ${item_results}    ${result}
+    END
+
+    # --- Per-item results summary: readable log + JSON. Logged BEFORE Post
+    # is even clicked, so it's always available regardless of the posting
+    # outcome (including MANUAL_CHECK_REQUIRED) -- this is what the UI/DB
+    # will use to show which items actually got matched vs. skipped.
+    Log To Console    ${EMPTY}
+    Log To Console    ============ ITEM RESULTS SUMMARY ============
+    FOR    ${r}    IN    @{item_results}
+        Log To Console    Item ${r}[item_no]: ${r}[status]
+    END
+    ${item_results_json}=    Evaluate    __import__('json').dumps($item_results)
+    Log To Console    RESULT:ITEM_RESULTS:${item_results_json}
+
+    # --- Step 5: Post ---
+    # FIX: this used to click btnMIGO_OK_GO -- the PO-check/execute button
+    # from Step 2, not a Save/Post action. Confirmed via SAP GUI Script
+    # Recording that the real Post button is wnd[0]/tbar[1]/btn[23]. That's
+    # why every prior run returned MANUAL_CHECK_REQUIRED with an empty
+    # status bar -- nothing was ever actually being saved to SAP.
+    Click Element    wnd[0]/tbar[1]/btn[23]
+    Sleep    3s
+
+    # ADDED (2026-08-25): SAP often shows a validation popup here instead of
+    # (or on top of) a status-bar message -- e.g. "Deficit of PU Ordered
+    # quantity 24 KG : 22000230 1030 | Please Enter Gate-In no in 'Header
+    # Text' field.." Previously this was silently clicked away by a generic
+    # Dismiss Any Popup with no record of what it said, so a
+    # MANUAL_CHECK_REQUIRED result gave no clue why. Capture And Dismiss
+    # Popup Message reads it first (handles both the standard message-line
+    # popup and SAP's table-style "Display logs" popup), then dismisses it.
+    ${post_popup_message}=    Capture And Dismiss Popup Message
+    Log To Console    POST POPUP MESSAGE: "${post_popup_message}"
+
+    # ADDED (2026-08-29): the capture above can only ever see popups that
+    # are part of SAP's own GUI Scripting object tree -- it cannot see a
+    # native Windows message box for a server-side session kill (e.g.
+    # "ABAP session closed by system"), because SAP's own COM session
+    # object is already dead by the time one of those appears. Confirmed
+    # real case: history_id=511 came back with no popup AND a completely
+    # blank status bar, which turned out to be exactly this -- see
+    # sap_helpers.py's check_abap_session_killed docstring for the full
+    # explanation. Only runs when the normal capture found nothing, so
+    # this cannot change behavior on any run that already worked, and it
+    # is fully swallowed on any internal failure (never raises), so it
+    # cannot break this script even if something about it misbehaves.
+    IF    '${post_popup_message}' == '${EMPTY}'
+        ${abap_status}    ${abap_msg}=    Run Keyword And Ignore Error    check_abap_session_killed
+        IF    '${abap_status}' == 'PASS' and '${abap_msg}' != '${EMPTY}'
+            ${post_popup_message}=    Set Variable    ${abap_msg}
+            Log To Console    POST POPUP MESSAGE (native SAP system dialog, not a validation popup): "${post_popup_message}"
+        END
+    END
+
+    # --- Step 6: Read Material Doc Number ---
+    ${status_msg}=    Read Status Bar With Retry    expected_pattern=\\d{8,}
+    Log To Console    Final Status Message: "${status_msg}"
+
+    # EXPLICIT priority: if a popup fired, that's the message that matters --
+    # it's SAP's own validation/error dialog, and the status bar underneath
+    # it is often stale or blank (confirmed: a run with a real popup showed
+    # 5 straight empty status-bar reads). Only when NO popup appeared do we
+    # fall back to whatever the status bar itself said.
+    ${popup_not_empty}=    Run Keyword And Return Status    Should Not Be Empty    ${post_popup_message}
+    IF    ${popup_not_empty}
+        ${final_message}=    Set Variable    ${post_popup_message}
+        Log To Console    Using POPUP message as the final result message.
+    ELSE
+        ${final_message}=    Set Variable    ${status_msg}
+        Log To Console    No popup appeared -- using STATUS BAR message as the final result message.
+    END
+
+    @{matches}=    Get Regexp Matches    ${status_msg}    \\d{8,12}
+
+    # Built via json.dumps on a real dict -- safe regardless of quotes or
+    # other special characters in either message (same JSON-escaping fix
+    # already applied elsewhere in this file/session).
+    IF    len($matches) == 0
+        ${final_result}=    Evaluate
+        ...    __import__('json').dumps({'status': 'MANUAL_CHECK_REQUIRED', 'message': $final_message, 'popup_message': $post_popup_message, 'item_results': $item_results})
+        RETURN    ${final_result}
+    END
+    ${final_result}=    Evaluate
+    ...    __import__('json').dumps({'status': 'COMPLETED', 'matdoc': $matches[0], 'popup_message': $post_popup_message, 'item_results': $item_results})
+    RETURN    ${final_result}
+ 
+ 
+Read Status Bar With Retry
+    [Arguments]    ${expected_pattern}=\\d{8,}
+    ${msg}=    Set Variable    ${EMPTY}
+    FOR    ${attempt}    IN RANGE    1    6
+        ${msg}=    Get Value    wnd[0]/sbar
+        Log To Console    Status bar attempt ${attempt}: "${msg}"
+        ${matched}=    Run Keyword And Return Status
+        ...    Should Match Regexp    ${msg}    ${expected_pattern}
+        IF    ${matched}    RETURN    ${msg}
+        Sleep    1s
+    END
+    Log To Console    Status bar timed out. Last: "${msg}"
+    RETURN    ${msg}
+ 
+ 
+Safe Input Text
+    # Retries once on failure -- covers the "Property text can not be set"
+    # AttributeError (a stale/dead COM element reference). Two known causes
+    # seen in production: (1) SAP GUI still mid-repaint/settling when the
+    # reference was grabbed -- a plain wait fixes it; (2) a popup (e.g. a
+    # split/allocation dialog on a multi-line PO) silently opened on top of
+    # wnd[0] and is blocking it -- a plain wait does NOT fix this, the
+    # popup has to actually be dismissed first. First retry attempt tried
+    # only (1) and still failed twice in a row on the same field when the
+    # real cause was (2), so now dismissing any popup before retrying too.
+    [Arguments]    ${locator}    ${value}
+    ${status}=    Run Keyword And Return Status    Input Text    ${locator}    ${value}
+    IF    not ${status}
+        Log    Input Text failed on first attempt for ${locator} -- likely a stale SAP GUI element reference or an uncleared popup. Dismissing any popup and retrying after a short pause.    level=WARN
+        Dismiss Any Popup
+        Sleep    1s
+        ${status2}=    Run Keyword And Return Status    Input Text    ${locator}    ${value}
+        IF    not ${status2}
+            Log    Input Text failed on second attempt for ${locator} too. Retrying once more after another popup check and longer pause.    level=WARN
+            Dismiss Any Popup
+            Sleep    2s
+            Input Text    ${locator}    ${value}
+        END
+    END
+ 
+ 
+Clean Value
+    # NOTE: previously ended with Split String + ${parts}[0], returning only
+    # the first word -- e.g. "Storage bin A12" became just "Storage". Fixed
+    # to match the same corrected pattern used in gate_in.robot's Clean
+    # Value/Clean Material: strip whitespace and currency symbols, but keep
+    # the full multi-word value intact.
+    [Arguments]    ${raw_value}
+    ${val}=        Convert To String    ${raw_value}
+    ${cleaned}=    Strip String    ${val}
+    ${cleaned}=    Replace String    ${cleaned}    ₹    ${EMPTY}
+    ${cleaned}=    Replace String    ${cleaned}    $    ${EMPTY}
+    ${cleaned}=    Replace String    ${cleaned}    €    ${EMPTY}
+    ${cleaned}=    Replace String    ${cleaned}    £    ${EMPTY}
+    ${cleaned}=    Replace String    ${cleaned}    ,    ${EMPTY}
+    ${cleaned}=    Strip String    ${cleaned}
+    RETURN         ${cleaned}
+ 
+ 
+Dismiss Any Popup
+    ${popup1}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
+    IF    ${popup1}
+        Run Keyword And Ignore Error    Click Element    wnd[1]/tbar[0]/btn[0]
+        Sleep    1s
+    END
+    ${popup2}=    Run Keyword And Return Status    Element Should Be Present    wnd[2]
+    IF    ${popup2}
+        Run Keyword And Ignore Error    Click Element    wnd[2]/tbar[0]/btn[0]
+        Sleep    1s
+    END
+
+
+Dump Element Texts
+    [Documentation]    Recursively collects any non-empty .Text values from
+    ...    the given live SAP GUI element (a COM object reference, not a
+    ...    path string) and its children, up to 4 levels deep. Generic
+    ...    fallback for popups whose exact structure (table vs. plain
+    ...    fields) isn't confirmed via a GUI Scripting recording.
+    [Arguments]    ${element}    ${depth}=${0}
+    @{collected}=    Create List
+    IF    ${depth} > 4
+        RETURN    ${collected}
+    END
+
+    ${text_res}=    Run Keyword And Ignore Error    Evaluate    $element.Text
+    IF    '${text_res}[0]' == 'PASS'
+        ${text}=    Clean Value    ${text_res}[1]
+        ${text_not_empty}=    Run Keyword And Return Status    Should Not Be Empty    ${text}
+        IF    ${text_not_empty}
+            Append To List    ${collected}    ${text}
+        END
+    END
+
+    ${count_res}=    Run Keyword And Ignore Error    Evaluate    $element.Children.Count
+    IF    '${count_res}[0]' == 'PASS'
+        ${child_count}=    Convert To Integer    ${count_res}[1]
+        FOR    ${i}    IN RANGE    ${child_count}
+            ${child}=    Evaluate    $element.Children.ElementAt(${i})
+            @{child_texts}=    Dump Element Texts    ${child}    ${depth + 1}
+            FOR    ${t}    IN    @{child_texts}
+                Append To List    ${collected}    ${t}
+            END
+        END
+    END
+
+    RETURN    ${collected}
+
+
+Capture And Dismiss Popup Message
+    [Documentation]    ADDED (2026-08-25). If a popup (wnd[1]) is present,
+    ...    reads its message text before dismissing it. Tries the standard
+    ...    single/multi-line popup fields (txtSPOP-TEXT_LINE1..4) first.
+    ...    Some popups instead open a table-based "Display logs" popup
+    ...    (Typ/Item/Message text columns, e.g. "Please Enter Gate-In no
+    ...    in 'Header Text' field.." seen on this MIGO 103 screen), which
+    ...    doesn't use those fields at all -- for that case, falls back to
+    ...    Dump Element Texts on the whole popup, filtered to drop short
+    ...    UI chrome (column headers, icon captions) and keep the actual
+    ...    message content.
+    ${popup_present}=    Run Keyword And Return Status    Element Should Be Present    wnd[1]
+    ${message}=    Set Variable    ${EMPTY}
+    IF    ${popup_present}
+        FOR    ${line}    IN    1    2    3    4
+            ${res}=    Run Keyword And Ignore Error
+            ...    Evaluate    $session.findById('wnd[1]/usr/txtSPOP-TEXT_LINE${line}').Text
+            IF    '${res}[0]' == 'PASS'
+                ${line_text}=    Clean Value    ${res}[1]
+                ${line_not_empty}=    Run Keyword And Return Status    Should Not Be Empty    ${line_text}
+                IF    ${line_not_empty}
+                    ${message}=    Catenate    SEPARATOR=${SPACE}    ${message}    ${line_text}
+                    ${message}=    Strip String    ${message}
+                END
+            END
+        END
+
+        ${message_is_empty}=    Run Keyword And Return Status    Should Be Empty    ${message}
+        IF    ${message_is_empty}
+            ${popup_root}=    Run Keyword And Ignore Error
+            ...    Evaluate    $session.findById('wnd[1]')
+            IF    '${popup_root}[0]' == 'PASS'
+                @{all_texts}=    Dump Element Texts    ${popup_root}[1]
+                Log To Console    Popup table-dump candidates: @{all_texts}
+                @{meaningful}=    Create List
+                FOR    ${t}    IN    @{all_texts}
+                    ${tlen}=    Get Length    ${t}
+                    IF    ${tlen} >= 12
+                        Append To List    ${meaningful}    ${t}
+                    END
+                END
+                # CHANGED (2026-10-22): keep everything SAP shows in the popup (title, headings, messages) but drop
+                # lines that repeat (e.g. "Enter Location" appearing several times).
+                ${message}=    Evaluate    ' | '.join(dict.fromkeys($meaningful))
+            END
+        END
+
+        Log To Console    Popup message captured: "${message}"
+        Run Keyword And Ignore Error    Click Element    wnd[1]/tbar[0]/btn[0]
+        Sleep    1s
+    END
+    RETURN    ${message}
+
+
+Close SAP Session
+    Coordinated Close SAP Session    ${session}

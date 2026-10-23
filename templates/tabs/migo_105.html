@@ -1,0 +1,581 @@
+<style>
+.req { color:#e74c3c; margin-left:2px; }
+.field-error { border-color:#e74c3c !important; }
+.field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
+.field-error-msg.show { display:block; }
+.readonly-field { background:#f8f9fb !important; color:#1e5ca8; font-weight:600; }
+
+.matched-105 {
+  margin-top:18px;
+  border:2px solid #f0a500; border-radius:8px; overflow:hidden;
+}
+.matched-105-header {
+  background:#fff3c4; color:#8a6100; border-left:3px solid #f0a500;
+  padding:9px 16px; font-weight:700; font-size:13px; letter-spacing:0.3px;
+}
+.matched-105-table { width:100%; border-collapse:collapse; font-size:12px; }
+.matched-105-table th {
+  background:#fffaf0; padding:8px 10px; text-align:left;
+  font-weight:600; border-bottom:2px solid #ffe6a8; color:#8a6100;
+  white-space:nowrap;
+}
+.matched-105-table td {
+  padding:7px 10px; border-bottom:1px solid #fff3d6;
+  white-space:nowrap;
+}
+.matched-105-table input.batch-input {
+  width:140px; padding:5px 8px; font-size:12px;
+  border:1.5px solid #f0d9a0; border-radius:5px;
+}
+.matched-105-table input.batch-input:focus {
+  outline:none; border-color:#f0a500;
+}
+
+/* ───────── Visual redesign (2026-08-24): restyled to match the xd-*
+   design system already used by extracted_data.html, gate_in.html and
+   migo_103.html, copied verbatim from those files -- not shared via
+   main.css, each tab template is self-contained. Every existing field
+   id, JS function, and behavior below is unchanged -- this only
+   restyles the surrounding markup. The Line Items table above keeps
+   its exact existing structure/ids -- only its header/border colors
+   were retouched to the amber theme (see .matched-105* above). ─────── */
+.approval-banner {
+  border-radius:10px; padding:9px 18px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-weight:500; font-size:13px; margin-bottom:14px;
+}
+.approval-banner.pending  { background:#fff3cd; color:#856404; border:1px solid #ffeaa7; }
+.approval-banner.approved { background:#ecfdf5; color:#1a7a3c; border:1px solid #00b894; }
+
+.xd-section-title {
+  display:flex; justify-content:space-between; align-items:center;
+  background:#fff8e6; border-left:3px solid #f0a500; border-radius:0;
+  padding:8px 14px; margin:18px 0 10px; font-size:12px; font-weight:700;
+  color:#8a6100; letter-spacing:0.6px;
+}
+.xd-section-title:first-of-type { margin-top:0; }
+
+.xd-table { border-collapse:collapse; width:100%; margin-bottom:2px; background:#f0f4ff; }
+.xd-table td {
+  border:1px solid #e3e3e3; padding:4px 8px; vertical-align:middle;
+  font-size:12.5px;
+}
+.xd-table td.xd-lbl {
+  writing-mode:vertical-rl; transform:rotate(180deg); text-align:center;
+  width:22px; background:#fff3c4; color:#7a5c00; font-weight:700;
+  font-size:10.5px; letter-spacing:0.3px;
+}
+.xd-table td.xd-attr-lbl {
+  font-weight:700; color:#37424d; font-size:11.5px;
+  background:#f7f9fc; white-space:nowrap; width:175px;
+}
+.xd-table td.xd-attr-val { width:auto; }
+.xd-table input, .xd-table select {
+  width:100%; border:1px solid transparent; background:transparent;
+  padding:2px 4px; font-size:12.5px; font-family:inherit; color:#2c3e50;
+  box-sizing:border-box; border-radius:3px;
+}
+.xd-table select { border-color:#dfe3e8; background:white; }
+.xd-table input:hover, .xd-table select:hover { border-color:#dfe3e8; }
+.xd-table input:focus, .xd-table select:focus { outline:none; border-color:#1e5ca8; background:white; }
+.xd-table input:disabled, .xd-table select:disabled { color:#4a5568; cursor:not-allowed; }
+.xd-band-pair { display:flex; gap:10px; margin-bottom:14px; align-items:stretch; }
+.xd-band-pair > .xd-table { flex:1; margin-bottom:0; }
+.xd-attr-note { font-size:10.5px; color:#888; font-weight:400; margin-left:6px; }
+.xd-table .field-error-msg { margin-top:2px; }
+
+/* ADDED (2026-09-03): searchable Storage Location box -- same "proximity
+   search" pattern as Gate In's vendor name lookup (gate_in.html), adapted
+   here since this template is self-contained (no shared CSS/JS). */
+.sloc-search-wrap { position:relative; }
+.sloc-dropdown {
+  display:none; position:absolute; top:100%; left:0; right:0; z-index:50;
+  background:#fff; border:1px solid #dfe3e8; border-radius:6px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.15); margin-top:2px; max-height:260px;
+  overflow-y:auto;
+}
+.sloc-dropdown.show { display:block; }
+.sloc-dropdown-count {
+  padding:6px 10px; font-size:11px; color:#888; background:#f7f9fc;
+  border-bottom:1px solid #f0f4ff; position:sticky; top:0;
+}
+.sloc-item { padding:7px 10px; cursor:pointer; font-size:12.5px; border-bottom:1px solid #f5f5f5; }
+.sloc-item:hover { background:#f0f4ff; }
+.sloc-item .sloc-code { font-weight:700; color:#1e5ca8; }
+.sloc-item .sloc-desc { color:#555; margin-left:6px; }
+.sloc-empty { padding:10px; color:#999; font-size:12px; text-align:center; }
+</style>
+
+<div class="content-card">
+  <h3>📦 MIGO 105 — Release from Blocked Stock</h3>
+
+<!-- {% set post_locked = (history is none) or (not history.migo_103) %}
+{% set step_locked = false %}
+
+  {% if step_locked %}
+  <div class="gate-banner">
+    ⏸ <strong>Awaiting MIGO 103</strong> — MIGO 105 unlocks once MIGO 103 is posted.
+  </div>
+  {% else %}
+  <div class="gate-banner unlocked">
+    ✓ <strong>MIGO 103 Done</strong> — Ready for MIGO 105 posting.
+  </div>
+  {% endif %} -->
+
+{% set post_locked = (history is none) or (not history.migo_103) %}
+{% set migo_103_done = history and history.migo_103 %}
+{% if not migo_103_done %}
+<div class="approval-banner pending">⏸ <strong>Awaiting MIGO 103</strong> — Complete MIGO 103 before posting MIGO 105.</div>
+{% else %}
+<div class="approval-banner approved">✓ <strong>MIGO 103 Done</strong> — Ready for MIGO 105 posting.</div>
+{% endif %}
+
+{% if history %}
+<div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#4a5568;">
+  <strong>Status:</strong>
+  Gate In: {% if history.gate_in %}<span style="color:#00b894">✓ Done (GIN: {{ history.gate_in_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 101: {% if history.migo_101 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_101_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 103: {% if history.migo_103 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.material_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIGO 105: {% if history.migo_105 %}<span style="color:#00b894">✓ Done (Mat. Doc: {{ history.migo_105_doc_number or '—' }})</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+  &nbsp;|&nbsp;
+  MIRO: {% if history.miro %}<span style="color:#00b894">✓ Done</span>{% else %}<span style="color:#e17055">Pending</span>{% endif %}
+</div>
+{% endif %}
+
+{# ADDED (2026-08-21): proactive warning matching MIGO 103's own reversed-
+   status banner -- without this, the only way to find out MIGO 105 is
+   blocked was clicking Post and getting a server error back. #}
+{% if history and history.migo_103_reversed %}
+<div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:0 0 16px;font-weight:500;">
+  ↩️ MIGO 103 for this record was reversed in SAP
+  {% if history.migo_103_reversal_doc_number %}(new document {{ history.migo_103_reversal_doc_number }}){% endif %}.
+  MIGO 105 cannot be posted.
+</div>
+{% endif %}
+
+  <input type="hidden" id="history_id_migo105" value="{{ history_id or '' }}">
+
+  <div class="xd-section-title"><span>📄 DOCUMENT DETAILS</span></div>
+  <div class="xd-band-pair">
+    <table class="xd-table">
+      {% if resolved_vendor_name %}
+      <tr>
+        <td class="xd-lbl" rowspan="3">Details</td>
+        <td class="xd-attr-lbl">Vendor Name <span class="xd-attr-note">from Gate In — view only</span></td>
+        <td class="xd-attr-val">
+          <input type="text" class="form-input" value="{{ resolved_vendor_name }}" disabled style="background:#f5f6f8;color:#555;">
+        </td>
+      </tr>
+      <tr>
+      {% else %}
+      <tr>
+        <td class="xd-lbl" rowspan="2">Details</td>
+      {% endif %}
+        <td class="xd-attr-lbl">Material Doc No. <span class="xd-attr-note">auto-filled from MIGO 103</span></td>
+        <td class="xd-attr-val">
+          <input type="text" id="materialDocNumber105" class="form-input" maxlength="10"
+             value="{{ (migo_data.get('material_doc_number') or (history.material_doc_number if history and history.material_doc_number else '')) or '' }}"
+             placeholder="Material document number from MIGO 103">
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Storage Location <span class="req">*</span></td>
+        <td class="xd-attr-val">
+          <div class="sloc-search-wrap">
+            <input type="text" id="storageLocation105Search" class="form-input"
+                   placeholder="Loading..." autocomplete="off"
+                   oninput="_filterStorageLocation105()" onfocus="_openStorageLocationDropdown105()"
+                   {% if step_locked %}disabled{% endif %}>
+            <input type="hidden" id="storageLocation105">
+            <div class="sloc-dropdown" id="storageLocationDropdown105"></div>
+          </div>
+          <div class="field-error-msg" id="err_storageLocation105">Required</div>
+        </td>
+      </tr>
+    </table>
+
+    <table class="xd-table">
+      <tr>
+        <td class="xd-lbl" rowspan="2">Invoice</td>
+        <td class="xd-attr-lbl">Vendor Invoice Amt</td>
+        <td class="xd-attr-val">
+          <input type="text" id="vendorInvoiceDetail105" class="form-input"
+                 value="{{ (migo_data.get('migo_105_vendor_invoice') if migo_data else '') or (invoice_data.get('grand_total') if invoice_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+        </td>
+      </tr>
+      <tr>
+        <td class="xd-attr-lbl">Remarks</td>
+        <td class="xd-attr-val">
+          <input type="text" id="remarks105" class="form-input"
+                 value="{{ (migo_data.get('migo_105_remarks') if migo_data else '') or '' }}"
+                 {% if step_locked %}disabled{% endif %}>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Matched Line Items from MIGO 103 -->
+  <div class="matched-105">
+    <div class="matched-105-header">📋 Line Items from MIGO 103 — Enter Batch per Line (leave blank for SAP auto-generation)</div>
+    <div style="overflow-x:auto;max-height:340px;">
+      <table class="matched-105-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Mat. Code</th>
+            <th>Short Text</th>
+            <th>HSN/SAC</th>
+            <th>UOM</th>
+            <th>Qty</th>
+            <th>Delivery Note Qty</th>
+            <th>Batch</th>
+          </tr>
+        </thead>
+        <tbody id="migo105ItemsBody">
+          <tr><td colspan="8" style="padding:14px;text-align:center;color:#888;">Loading line items...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="migo105Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+  <div class="action-buttons">
+    <button type="button" id="migo105Btn" class="btn btn-primary" onclick="submitMigo105()"
+        {% if history and (history.migo_105 or history.migo_103_reversed) %}disabled{% endif %}
+        {% if history and history.migo_103_reversed and not history.migo_105 %}title="MIGO 103 was reversed -- MIGO 105 cannot be posted."{% endif %}
+        style="{% if history and history.migo_105 %}background:#00b894;{% else %}background:#1e5ca8;{% endif %};padding:10px 20px;font-size:14px;font-weight:600;min-width:160px;">
+  {% if history and history.migo_105 %}✓ MIGO 105 Done{% else %}📮 Post MIGO 105{% endif %}
+</button>
+    {# ADDED (2026-10-14): MIGO 105 Reversal (SAP action A03), same bot and
+       same pattern as MIGO 103's Reverse button -- only offered once MIGO 105
+       has posted, not once already reversed, and not once MIRO has posted
+       (matches the server-side guard in app.py's run_migo_105_reversal()). #}
+    {% if history and history.migo_105 and not history.migo_105_reversed and not history.miro %}
+    <button type="button" id="migo105ReversalBtn" class="btn btn-danger" onclick="submitMigo105Reversal()"
+        style="background:#e17055;border-color:#e17055;">
+        ↩️ Reverse
+    </button>
+    {% endif %}
+  </div>
+
+  {% if history and history.migo_105_reversed %}
+  <div style="display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;">
+    ↩️ MIGO 105 was reversed in SAP
+    {% if history.migo_105_reversal_doc_number %}(new document {{ history.migo_105_reversal_doc_number }}){% endif %}
+    {% if history.migo_105_reversed_at %}on {{ history.migo_105_reversed_at }}{% endif %}
+    {% if history.migo_105_reversed_by %}by {{ history.migo_105_reversed_by }}{% endif %}. MIRO is blocked for this record.
+  </div>
+  {% endif %}
+  <div id="migo105ReversalStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+  {% if history_id %}
+  {% set remarks_panel_id = 'migo105' %}
+  {% include 'tabs/_remarks_panel.html' %}
+  {% endif %}
+</div>
+
+
+<script>
+const POST_LOCKED_105 = {{ 'true' if post_locked else 'false' }};
+// FIX: STEP_LOCKS_ENABLED was referenced but never declared -- see gate_in.html for full explanation.
+// v20 FIX: renamed to a per-tab name -- this collided with gate_in.html's/
+// migo_103.html's identically-named const in the shared page-level scope
+// and was silently killing this whole script block (see gate_in.html's
+// comment for detail).
+const STEP_LOCKS_ENABLED_105 = {{ 'true' if config.ENABLE_STEP_LOCKS else 'false' }};
+
+
+const HISTORY_ID_105 = {{ history_id|tojson }};
+const MIGO_105_LOCKED = false;
+// ============================================================
+// Storage Location search (ADDED 2026-09-03) -- same "proximity" search
+// pattern as Gate In's vendor name lookup (see gate_in.html's
+// _filterVendorDropdown): the full active list is fetched once, then
+// filtered entirely client-side as the user types -- a row matches if
+// every whitespace-separated word typed is a substring of ITS code OR
+// its description, in any order (e.g. "main ware" matches "SL01 — Main
+// Warehouse"). storageLocation105 (hidden input) keeps holding the real
+// code value exactly as before -- every other place in this file that
+// reads it (_doSubmitMigo105, validateMigo105 below) is unchanged.
+// storageLocation105Search is the new visible box the user types into.
+// ============================================================
+let _storageLocations105 = [];
+
+(function() {
+  const savedCode = "{{ (migo_data.get('migo_105_storage_loc') if migo_data else '') or '' }}";
+  const searchEl  = document.getElementById('storageLocation105Search');
+
+  // FIX: retry a transient failure before showing "Error loading" -- same
+  // fix as MIGO 101's identical pattern, see that file for the reasoning.
+  function _loadStorageLocations105(attemptsLeft) {
+    fetch('/api/storage_locations')
+      .then(r => r.json())
+      .then(data => {
+        _storageLocations105 = data.data || [];
+        const saved = _storageLocations105.find(l => l.code === savedCode);
+        if (saved) {
+          document.getElementById('storageLocation105').value = saved.code;
+          if (searchEl) searchEl.value = saved.code + ' — ' + saved.description;
+        }
+        if (searchEl) searchEl.placeholder = '🔎 Search storage location (code or name)...';
+      })
+      .catch(() => {
+        if (attemptsLeft > 0) {
+          setTimeout(() => _loadStorageLocations105(attemptsLeft - 1), 1000);
+        } else if (searchEl) {
+          searchEl.placeholder = 'Error loading — refresh page';
+        }
+      });
+  }
+  _loadStorageLocations105(2);
+})();
+
+function _openStorageLocationDropdown105() {
+  const el = document.getElementById('storageLocation105Search');
+  if (el && el.disabled) return;
+  _renderStorageLocationItems105(_storageLocations105);
+  document.getElementById('storageLocationDropdown105').classList.add('show');
+}
+
+function _filterStorageLocation105() {
+  const raw = (document.getElementById('storageLocation105Search').value || '').trim().toLowerCase();
+  const filtered = !raw ? _storageLocations105 : _storageLocations105.filter(function(loc) {
+    const haystack = [loc.code, loc.description].filter(Boolean).join(' ').toLowerCase();
+    return raw.split(/\s+/).every(w => haystack.indexOf(w) !== -1);
+  });
+  _renderStorageLocationItems105(filtered);
+  document.getElementById('storageLocationDropdown105').classList.add('show');
+  // Typing again means whatever was picked before no longer necessarily
+  // matches what's shown -- clear the real (hidden) value so an edited,
+  // half-typed search can never silently submit a stale/mismatched code.
+  // Re-picking from the list (via _selectStorageLocation105) sets it
+  // again; validateMigo105() below correctly blocks submit until then.
+  document.getElementById('storageLocation105').value = '';
+}
+
+function _renderStorageLocationItems105(list) {
+  const dd = document.getElementById('storageLocationDropdown105');
+  if (!dd) return;
+  if (list.length === 0) {
+    dd.innerHTML = '<div class="sloc-empty">No matches.</div>';
+    return;
+  }
+  dd.innerHTML = '<div class="sloc-dropdown-count">' + list.length + ' location(s)</div>' +
+    list.map((loc, i) =>
+      '<div class="sloc-item" data-idx="' + i + '">' +
+        '<span class="sloc-code">' + _escSloc105(loc.code) + '</span>' +
+        '<span class="sloc-desc">' + _escSloc105(loc.description || '') + '</span>' +
+      '</div>'
+    ).join('');
+  Array.from(dd.querySelectorAll('.sloc-item')).forEach((el, i) => {
+    el.onclick = function() { _selectStorageLocation105(list[i]); };
+  });
+}
+
+function _selectStorageLocation105(loc) {
+  document.getElementById('storageLocation105').value = loc.code;
+  const searchEl = document.getElementById('storageLocation105Search');
+  if (searchEl) {
+    searchEl.value = loc.code + ' — ' + loc.description;
+    searchEl.classList.remove('field-error');
+  }
+  document.getElementById('storageLocationDropdown105').classList.remove('show');
+  const err = document.getElementById('err_storageLocation105');
+  if (err) err.classList.remove('show');
+}
+
+function _escSloc105(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+document.addEventListener('click', function(e) {
+  const wrap = document.querySelector('.sloc-search-wrap');
+  const dd = document.getElementById('storageLocationDropdown105');
+  if (wrap && dd && !wrap.contains(e.target)) {
+    dd.classList.remove('show');
+  }
+});
+
+// Load matched pairs from MIGO 103
+// FIX: single-attempt fetch with no retry -- a transient blip (same class
+// of issue as MIGO 103's loadMatchedPairsFromDb and the storage-location
+// fetch) landed straight on "Failed to load line items" even though the
+// very next request almost always succeeds, matching the "works after I
+// refresh" symptom exactly. Retries twice more (3 attempts total, 1s
+// apart) before showing the error.
+function loadMigo105Items(attemptsLeft) {
+  if (attemptsLeft === undefined) attemptsLeft = 2;
+  fetch(`/api/migo_matched_pairs/${HISTORY_ID_105}`)
+    .then(r => r.json())
+    .then(data => {
+      const tbody = document.getElementById('migo105ItemsBody');
+      const items = data.items || [];
+      if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="padding:14px;text-align:center;color:#888;">No line items — complete MIGO 103 first.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      items.forEach((item, idx) => {
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-line', item.line || (idx + 1));
+        tr.innerHTML = `
+          <td style="color:#7c3aed;font-weight:600;">${idx + 1}</td>
+          <td>${_esc(item.material_code || '')}</td>
+          <td title="${_esc(item.short_text || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${_esc(item.short_text || '')}</td>
+          <td>${_esc(item.hsn_sac || '')}</td>
+          <td>${_esc(item.unit || '')}</td>
+          <td>${_esc(item.qty_expected || '')}</td>
+          <td>${_esc(item.qty_actual || '')}</td>
+          <td><input type="text" class="batch-input" value="${_esc(item.batch || '')}" placeholder="(auto)" ${MIGO_105_LOCKED ? 'disabled' : ''}></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    })
+    .catch(err => {
+      console.error(err);
+      if (attemptsLeft > 0) {
+        setTimeout(() => loadMigo105Items(attemptsLeft - 1), 1000);
+        return;
+      }
+      document.getElementById('migo105ItemsBody').innerHTML =
+        '<tr><td colspan="8" style="padding:14px;text-align:center;color:#e17055;">Failed to load line items.</td></tr>';
+    });
+}
+
+function _esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function _collectBatchesByLine() {
+  const rows = document.querySelectorAll('#migo105ItemsBody tr[data-line]');
+  const batches = [];
+  rows.forEach(row => {
+    const lineNum = parseInt(row.getAttribute('data-line'));
+    const batchInput = row.querySelector('.batch-input');
+    if (batchInput) {
+      batches.push({
+        line:  lineNum,
+        batch: batchInput.value.trim()
+      });
+    }
+  });
+  return batches;
+}
+
+function validateMigo105() {
+  const sel = document.getElementById('storageLocation105');
+  const searchEl = document.getElementById('storageLocation105Search');
+  const err = document.getElementById('err_storageLocation105');
+  if (searchEl) searchEl.classList.remove('field-error');
+  err.classList.remove('show');
+  if (!sel.value) {
+    if (searchEl) searchEl.classList.add('field-error');
+    err.classList.add('show');
+    return false;
+  }
+  return true;
+}
+
+
+function submitMigo105() {
+  if (POST_LOCKED_105 && STEP_LOCKS_ENABLED_105) {
+    showToast('⏸ MIGO 103 must be completed before posting MIGO 105.', 'warning');
+    return;
+  }
+  if (!validateMigo105()) return;
+  if (!HISTORY_ID_105) { showToast('History ID missing.', 'error'); return; }
+  showConfirm(
+    'Confirm MIGO 105 Posting',
+    'You are about to post MIGO 105 (Release from Blocked Stock) to SAP. Make sure storage location and batch values are correct.',
+    () => _doSubmitMigo105()
+  );
+}
+
+function _doSubmitMigo105() {
+  const payload = {
+    history_id:          HISTORY_ID_105,
+    storageLocation:     document.getElementById('storageLocation105').value,
+    vendorInvoiceDetail: document.getElementById('vendorInvoiceDetail105').value,
+    remarks105:          document.getElementById('remarks105').value,
+    line_batches:        _collectBatchesByLine(),
+    material_doc_number_override: document.getElementById('materialDocNumber105').value.trim(),
+  };
+
+  const btn      = document.getElementById('migo105Btn');
+  const statusEl = document.getElementById('migo105Status');
+
+  submitAndPoll('/api/run_migo_105', payload, btn, {
+    onSuccess: () => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = '✓ MIGO 105 posted! Proceed to MIRO.';
+      btn.textContent        = '✓ MIGO 105 Done';
+      btn.style.background   = '#00b894';
+      // FIX: see gate_in.html's identical comment -- prevents a second
+      // MIGO 105 submission once this one succeeds.
+      btn.disabled = true;
+      // FIX: see gate_in.html's identical comment -- other tabs were
+      // staying stale until a manual reload.
+      sessionStorage.setItem('mi_reload_tab', 'migo105');
+      setTimeout(() => window.location.reload(), 400);
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+// ── MIGO 105 Reversal (SAP action A03) ─────────────────────────────────────
+// ADDED (2026-10-14, client request): reverses this record's own already-posted
+// MIGO 105 document. A REAL, final SAP posting (not a dry run). Same pattern as
+// MIGO 103's submitMigoReversal(): confirm, submitAndPoll, reload this tab. The
+// server picks the document number itself (this record's MIGO 105 document) --
+// nothing about it is sent from the browser. After a successful reversal the
+// step is reset automatically, so MIGO 105 can be posted again right away.
+function submitMigo105Reversal() {
+  const historyId = HISTORY_ID_105;
+  if (!historyId) { showToast('History ID missing.', 'error'); return; }
+
+  const confirmed = confirm(
+    'Reverse this MIGO 105 in SAP?\n\n' +
+    'This posts a real cancellation (SAP action A03) -- it is not a preview ' +
+    'or dry run, and it cannot be undone from this app. MIGO 105 will then be ' +
+    'reset so it can be posted again for this record.\n\n' +
+    'Continue?'
+  );
+  if (!confirmed) return;
+
+  const btn      = document.getElementById('migo105ReversalBtn');
+  const statusEl = document.getElementById('migo105ReversalStatus');
+
+  submitAndPoll(`/api/run_migo_105_reversal/${historyId}`, {}, btn, {
+    onSuccess: (result) => {
+      statusEl.style.cssText = 'display:block;background:#ecfdf5;color:#00b894;border:1px solid #00b894;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `✓ MIGO 105 reversed in SAP${result.reversal_doc_number ? ' — new document ' + result.reversal_doc_number : ''}.`;
+      sessionStorage.setItem('mi_reload_tab', 'migo105');
+      setTimeout(() => window.location.reload(), 400);
+    },
+    onFailure: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    },
+    onError: (error) => {
+      statusEl.style.cssText = 'display:block;background:#fff5f5;color:#e17055;border:1px solid #e17055;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;';
+      statusEl.textContent   = `❌ ${error}`;
+    }
+  });
+}
+
+// Load on page open
+loadMigo105Items();
+</script>

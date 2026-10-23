@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Material Inward History - SPL</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:whitesmoke; min-height:100vh; }
+
+        .header {
+            background:white; padding:15px 40px;
+            display:flex; justify-content:space-between; align-items:center;
+            box-shadow:0 2px 10px rgba(0,0,0,0.1);
+        }
+        .logo-icon { width:auto; height:44px; }
+        .logo-icon img { width:100%; height:100%; object-fit:contain; }
+        .user-menu { position:relative; }
+        .user-profile {
+            width:45px; height:45px;
+            background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%);
+            border-radius:50%; display:flex; align-items:center; justify-content:center;
+            color:white; font-size:18px; font-weight:600; cursor:pointer;
+            text-transform:uppercase; transition:transform 0.3s;
+        }
+        .user-profile:hover { transform:scale(1.05); }
+        .dropdown-menu {
+            display:none; position:absolute; top:55px; right:0;
+            background:white; border-radius:10px;
+            box-shadow:0 8px 25px rgba(0,0,0,0.15);
+            min-width:180px; z-index:1000; overflow:hidden;
+        }
+        .dropdown-menu.show { display:block; animation:fadeIn 0.3s; }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+        .dropdown-menu a {
+            display:flex; align-items:center; gap:10px;
+            padding:14px 20px; color:#2c3e50; text-decoration:none;
+            font-size:14px; transition:background 0.2s;
+        }
+        .dropdown-menu a:hover { background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%); color:white; }
+        .dropdown-menu a:last-child { color:#e74c3c; }
+        .dropdown-menu a:last-child:hover { background:#e74c3c; color:white; }
+
+        .container { max-width:1400px; margin:30px auto; padding:0 20px; }
+
+        /* Today count cards */
+        .counts-row {
+            display:grid; grid-template-columns:repeat(4,1fr);
+            gap:16px; margin-bottom:24px;
+        }
+        .count-card {
+            background:white; border-radius:12px;
+            padding:20px 24px;
+            box-shadow:0 2px 12px rgba(0,0,0,0.08);
+            display:flex; align-items:center; gap:16px;
+        }
+        .count-icon { font-size:32px; }
+        .count-label { font-size:12px; color:#888; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
+        .count-value { font-size:28px; font-weight:800; color:#2c3e50; line-height:1; }
+        .count-card.total  { border-left:4px solid #1e5ca8; }
+        .count-card.pending { border-left:4px solid #fdcb6e; }
+        .count-card.progress { border-left:4px solid #74b9ff; }
+        .count-card.done   { border-left:4px solid #00b894; }
+        /* FIX (2026-08-12): count cards are now clickable filters (see
+           applyCardFilter() below) -- these are today-scoped counts
+           (get_today_counts()'s WHERE created_at::date = CURRENT_DATE), so
+           clicking one filters the table to today + that card's status. */
+        .count-card { cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; }
+        .count-card:hover { transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,0.14); }
+        .count-card.card-active { outline:2px solid #1e5ca8; outline-offset:-2px; }
+
+        /* ADDED (2026-09-22, client request): breakdown cards for the
+           locked Silent Hours "Awaiting Documents" view (see
+           #silentHoursCountsRow below). Informational only -- unlike the
+           today-count cards above, these buckets (OCR status, record
+           age) aren't values the existing status dropdown/applyCardFilter()
+           understands, so they override the shared .count-card cursor/
+           hover instead of adding an onclick that would do nothing. */
+        .count-card.sh-total       { border-left:4px solid #6c5ce7; }
+        .count-card.sh-notuploaded { border-left:4px solid #b2bec3; }
+        .count-card.sh-failed      { border-left:4px solid #e74c3c; }
+        .count-card.sh-aging       { border-left:4px solid #e67e22; }
+        .count-card.sh-total, .count-card.sh-notuploaded,
+        .count-card.sh-failed, .count-card.sh-aging {
+            cursor:default;
+        }
+        .count-card.sh-total:hover, .count-card.sh-notuploaded:hover,
+        .count-card.sh-failed:hover, .count-card.sh-aging:hover {
+            transform:none; box-shadow:0 2px 12px rgba(0,0,0,0.08);
+        }
+        .apply-filter-btn {
+            padding:10px 20px; background:linear-gradient(135deg,#1e5ca8,#164a8a);
+            border:none; border-radius:8px; font-size:14px; cursor:pointer;
+            color:white; font-weight:600; transition:0.2s; white-space:nowrap;
+        }
+        .apply-filter-btn:hover { opacity:0.9; transform:translateY(-1px); }
+
+        /* Page header */
+        .page-header {
+            display:flex; justify-content:space-between; align-items:center;
+            margin-bottom:20px; background:white;
+            padding:20px 28px; border-radius:12px;
+            box-shadow:0 2px 12px rgba(0,0,0,0.08);
+        }
+        .page-title { font-size:24px; color:#2c3e50; font-weight:700; display:flex; align-items:center; gap:10px; }
+        .page-title i { color:#1e5ca8; }
+        .new-invoice-btn {
+            background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%);
+            color:white; border:none; padding:12px 28px;
+            border-radius:8px; font-size:15px; font-weight:600;
+            cursor:pointer; transition:all 0.3s;
+            box-shadow:0 4px 15px rgba(102,126,234,0.4);
+            display:flex; align-items:center; gap:8px;
+        }
+        .new-invoice-btn:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(102,126,234,0.6); }
+
+        /* ADDED (2026-08-31, Silent Hours feature): appears automatically
+           for Gate Security during Silent Hours -- config.is_silent_hours()
+           -- no toggle or setup needed, it's just there when the window is
+           open and gone the moment it closes. Deliberately NOT styled like
+           new-invoice-btn above -- amber/orange instead of the usual blue,
+           plus a pulsing dot -- so it reads as "this is only available
+           right now" rather than a permanent nav item. */
+        .silent-hours-btn {
+            background:linear-gradient(135deg,#f39c12 0%,#e67e22 100%);
+            color:white; border:none; padding:12px 28px;
+            border-radius:8px; font-size:15px; font-weight:600;
+            cursor:pointer; transition:all 0.3s;
+            box-shadow:0 4px 15px rgba(230,126,34,0.45);
+            display:flex; align-items:center; gap:8px;
+        }
+        .silent-hours-btn:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(230,126,34,0.65); }
+        .silent-hours-pulse-dot {
+            width:8px; height:8px; border-radius:50%; background:#fff;
+            box-shadow:0 0 0 rgba(255,255,255,0.6);
+            animation:silentHoursPulse 1.6s infinite;
+        }
+        @keyframes silentHoursPulse {
+            0%   { box-shadow:0 0 0 0 rgba(255,255,255,0.6); }
+            70%  { box-shadow:0 0 0 7px rgba(255,255,255,0); }
+            100% { box-shadow:0 0 0 0 rgba(255,255,255,0); }
+        }
+        .status-awaiting-docs-sh { background:linear-gradient(135deg,#f8b500,#e67e22); color:white; }
+        /* Permanent origin marker (never clears, unlike the status above)
+           -- a small moon badge next to the record ID on any row that
+           started as a Silent Hours walk-in, visible to every viewer of
+           History regardless of role. */
+        .silent-hours-origin-mark {
+            display:inline-block; margin-left:6px; color:#e67e22; font-size:12px;
+            cursor:default;
+        }
+
+        /* ADDED (2026-09-11, Silent Hours Pending Documents): entry point
+           into the locked-filter view below. Deliberately smaller/outline
+           (not filled like new-invoice-btn/silent-hours-btn above) so a
+           third button in this row doesn't visually outweigh the other
+           two -- this one is a secondary, always-available shortcut, not
+           the primary action of the page. */
+        .silent-hours-pending-btn {
+            background:white; color:#c9660c; border:2px solid #f8b500;
+            padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600;
+            cursor:pointer; transition:all 0.2s;
+            display:flex; align-items:center; gap:6px;
+        }
+        .silent-hours-pending-btn:hover { background:#fff8ec; transform:translateY(-1px); }
+
+        /* ADDED (2026-09-22, client request): live pending count badge on
+           the button above -- was previously text-only, client asked for
+           the number to be visible without clicking through. Starts empty
+           (not "0") until the first fetch resolves, so it never flashes a
+           wrong number before the real count loads -- see
+           loadSilentHoursPendingCount() below. */
+        .silent-hours-pending-count {
+            display:inline-block; min-width:18px; padding:1px 7px;
+            border-radius:10px; background:#e67e22; color:#fff;
+            font-size:11px; font-weight:700; line-height:16px; text-align:center;
+        }
+        .silent-hours-pending-count:empty { display:none; }
+
+        /* Locked-filter banner shown in place of the normal filter bar when
+           this page was opened via the button above (?locked=silent_hours).
+           The real filter bar (search/status/date inputs) still renders
+           further down, just hidden with display:none -- every existing JS
+           function (loadHistory/_restoreFiltersFromUrl/etc.) still reads
+           and writes those real elements exactly as before, so none of
+           that logic needed to change for this. */
+        .locked-filter-pill {
+            display:inline-flex; align-items:center; gap:7px;
+            background:linear-gradient(135deg,#f8b500,#e67e22); color:white;
+            font-size:12px; font-weight:700; padding:8px 16px; border-radius:20px;
+            white-space:nowrap;
+        }
+
+        /* Search/filter bar */
+        /* FIX (2026-08-13): switched from a 4-column grid (which forced the
+           date filter's Apply button to wrap onto its own line, making that
+           cell taller than Search/Status/Clear and pushing them to the
+           bottom via align-items:end -- the whole bar visually looked like
+           2 rows instead of 1) to a single flex row. Now that the date
+           inputs are date-only (no time picker, see dateFrom/dateTo below),
+           everything comfortably fits on one line without wrapping. */
+        .filter-bar {
+            background:white; border-radius:12px;
+            padding:20px 24px; margin-bottom:20px;
+            box-shadow:0 2px 12px rgba(0,0,0,0.08);
+            display:flex; flex-wrap:wrap;
+            gap:12px; align-items:end;
+        }
+        .filter-group { flex:1 1 130px; min-width:110px; }
+        .filter-group.filter-search { flex:2 1 200px; }
+        .filter-group.filter-btn { flex:0 0 auto; }
+        .filter-group label {
+            display:block; font-size:12px; font-weight:600;
+            color:#666; margin-bottom:6px; text-transform:uppercase;
+        }
+        .filter-input, .filter-select {
+            width:100%; padding:10px 14px;
+            border:2px solid #e0e0e0; border-radius:8px;
+            font-size:14px; transition:border-color 0.2s; outline:none;
+        }
+        .filter-input:focus, .filter-select:focus { border-color:#1e5ca8; }
+        .filter-group.filter-btn .apply-filter-btn,
+        .filter-group.filter-btn .clear-btn { white-space:nowrap; }
+        .clear-btn {
+            padding:10px 20px; background:#f0f0f0; border:none;
+            border-radius:8px; font-size:14px; cursor:pointer;
+            color:#555; font-weight:500; transition:0.2s;
+        }
+        .clear-btn:hover { background:#e0e0e0; }
+
+        /* Table */
+        .history-table { background:white; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.08); overflow:hidden; }
+        table { width:100%; border-collapse:collapse; }
+        thead { background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%); color:white; }
+        th { padding:16px 20px; text-align:left; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:1px; }
+        td { padding:16px 20px; color:#2c3e50; font-size:14px; font-weight:500; border-bottom:1px solid #ecf0f1; }
+        tbody tr:hover { background:#f8f9fa; }
+
+        .status-badge { display:inline-block; padding:6px 14px; border-radius:20px; font-size:11px; font-weight:700; }
+        .status-pending  { background:linear-gradient(135deg,#ffeaa7,#fdcb6e); color:#d63031; }
+        .status-miro     { background:linear-gradient(135deg,#55efc4,#00b894); color:white; }
+        .status-migo     { background:linear-gradient(135deg,#a29bfe,#6c5ce7); color:white; }
+        .status-gate-in  { background:linear-gradient(135deg,#74b9ff,#0984e3); color:white; }
+        .status-data-approved { background:linear-gradient(135deg,#ffd3a5,#fd9853); color:white; }
+        .status-gst-approved  { background:linear-gradient(135deg,#a1c4fd,#4a7ee0); color:white; }
+
+        .view-btn {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:7px 14px;
+            background:linear-gradient(135deg,#1e5ca8 0%,#164a8a 100%);
+            color:white; text-decoration:none; border-radius:6px;
+            font-size:13px; font-weight:600; transition:all 0.3s;
+        }
+        .view-btn:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(102,126,234,0.4); }
+
+        .times-toggle-btn {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:6px 10px; background:#f0f4ff; border:1px solid #d0d9f0;
+            border-radius:6px; font-size:12px; color:#1e5ca8; cursor:pointer;
+        }
+        .times-toggle-btn:hover { background:#e2eaff; }
+        .step-times-row td { background:#f8f9fb; padding:12px 16px; }
+        .step-times-panel {
+            display:flex; flex-wrap:wrap; gap:20px;
+        }
+        .step-time-item { font-size:13px; color:#444; }
+        .step-time-label { font-weight:700; margin-right:6px; color:#1e5ca8; }
+        .step-time-value { color:#555; }
+        .step-time-by { color:#888; font-size:12px; font-style:italic; }
+
+        /* Pagination */
+        .pagination {
+            display:flex; justify-content:center; align-items:center;
+            gap:8px; padding:20px;
+        }
+        .page-btn {
+            padding:8px 14px; border:2px solid #e0e0e0; border-radius:6px;
+            background:white; color:#555; font-size:14px; cursor:pointer;
+            transition:0.2s; font-weight:500;
+        }
+        .page-btn:hover:not(:disabled) { border-color:#1e5ca8; color:#1e5ca8; }
+        .page-btn.active { background:#1e5ca8; color:white; border-color:#1e5ca8; }
+        .page-btn:disabled { opacity:0.4; cursor:not-allowed; }
+        .page-info { font-size:14px; color:#888; padding:0 8px; }
+
+        /* Empty state */
+        .empty-state { text-align:center; padding:60px 20px; color:#999; }
+        .empty-state-icon { font-size:64px; margin-bottom:16px; opacity:0.4; }
+
+        /* Loading */
+        .loading-row td { text-align:center; padding:40px; color:#888; font-size:15px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="logo-icon">
+        <img src="/static/spl-new-logo.png" alt="SPL Logo" onerror="this.style.display='none'">
+    </div>
+    <div class="user-menu">
+        <div class="user-profile" onclick="toggleDropdown(event)">
+            {{ role[0] if role else 'U' }}
+        </div>
+        <div class="dropdown-menu" id="userDropdown">
+            <a href="/history"><i class="fas fa-history"></i> History</a>
+            {% if is_superadmin or has_role('compliance') or allow_user_upload %}
+            <a href="/new_entry"><i class="fas fa-plus"></i> New Entry</a>
+            {% endif %}
+            {% if is_superadmin %}
+            <a href="/user_management"><i class="fas fa-users-cog"></i> User Management</a>
+            {% endif %}
+            {% if has_role('record_admin') %}
+            <a href="/admin/records"><i class="fas fa-database"></i> Record Admin</a>
+            {% endif %}
+            {% if is_superadmin or has_role('compliance') %}
+            <a href="/gst_verification"><i class="fas fa-file-invoice"></i> GST Verification</a>
+            {% endif %}
+            <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- Dashboard count cards -->
+    {% if show_dashboard_counts and today_counts and not locked_silent_hours %}
+    <div class="counts-row" id="countsRow">
+        <div class="count-card total" data-card-status="" onclick="applyCardFilter('', this)" title="Show today's records">
+            <div class="count-icon">📋</div>
+            <div>
+                <div class="count-label">Total Today</div>
+                <div class="count-value">{{ today_counts.total or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card pending" data-card-status="pending" onclick="applyCardFilter('pending', this)" title="Show today's Pending records">
+            <div class="count-icon">⏳</div>
+            <div>
+                <div class="count-label">Pending</div>
+                <div class="count-value">{{ today_counts.pending or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card progress" data-card-status="in_progress" onclick="applyCardFilter('in_progress', this)" title="Show today's In Progress records">
+            <div class="count-icon">🔄</div>
+            <div>
+                <div class="count-label">In Progress</div>
+                <div class="count-value">{{ today_counts.in_progress or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card done" data-card-status="completed" onclick="applyCardFilter('completed', this)" title="Show today's Completed records">
+            <div class="count-icon">✅</div>
+            <div>
+                <div class="count-label">Completed</div>
+                <div class="count-value">{{ today_counts.completed or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ADDED (2026-09-22, client request): "card system" for the locked
+         Silent Hours view -- same visual family as the Dashboard count
+         cards above, but this view's own breakdown instead (not today-
+         scoped -- see get_silent_hours_pending_breakdown()). Point is to
+         let a compliance/superadmin see AT A GLANCE, without opening any
+         record, which of these need attention right now: something
+         never uploaded at all vs. something uploaded whose OCR failed
+         vs. something that's been sitting a long time either way. -->
+    {% if locked_silent_hours and silent_hours_breakdown %}
+    <div class="counts-row" id="silentHoursCountsRow">
+        <div class="count-card sh-total" title="All Silent Hours entries currently awaiting documents">
+            <div class="count-icon">🌙</div>
+            <div>
+                <div class="count-label">Total Pending</div>
+                <div class="count-value">{{ silent_hours_breakdown.total or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card sh-notuploaded" title="No document has been uploaded for these yet">
+            <div class="count-icon">📭</div>
+            <div>
+                <div class="count-label">Nothing Uploaded Yet</div>
+                <div class="count-value">{{ silent_hours_breakdown.not_uploaded or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card sh-failed" title="A document was uploaded but OCR extraction failed -- needs Re-run OCR">
+            <div class="count-icon">⚠️</div>
+            <div>
+                <div class="count-label">OCR Failed</div>
+                <div class="count-value">{{ silent_hours_breakdown.ocr_failed or 0 }}</div>
+            </div>
+        </div>
+        <div class="count-card sh-aging" title="Waiting more than 24 hours since Gate In">
+            <div class="count-icon">⏰</div>
+            <div>
+                <div class="count-label">Over 24 Hours</div>
+                <div class="count-value">{{ silent_hours_breakdown.over_24h or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- v17: Pending PO Updates panel -- without-PO records where MIGO 103
+         has already captured a real PO number, waiting on this Gate In's
+         original submitter to backfill it via zgatein_update under their
+         own login. Hidden entirely when there's nothing pending. Loaded
+         once on page load (no continuous polling) -- see loadPendingPoUpdates(). -->
+    <div class="page-header" id="pendingPoPanel" style="display:none;border-left:4px solid #f39c12;">
+        <div style="width:100%;">
+            <h1 class="page-title" style="font-size:18px;margin-bottom:12px;">
+                <i class="fas fa-clock" style="color:#f39c12;"></i>
+                Pending PO Updates
+                <span id="pendingPoCount" style="font-size:13px;font-weight:500;color:#888;"></span>
+            </h1>
+            <div id="pendingPoList"></div>
+        </div>
+    </div>
+
+    <!-- Page header -->
+    <div class="page-header">
+        <h1 class="page-title">
+            <i class="fas fa-history"></i>
+            Material Inward History
+
+        </h1>
+        {% if not locked_silent_hours %}
+        {% if role == 'Admin' or allow_user_upload %}
+        <button class="new-invoice-btn" onclick="window.location.href='/new_entry'">
+            <i class="fas fa-plus-circle"></i> New Invoice
+        </button>
+        {% endif %}
+        {% if (is_superadmin or has_role('gate_in')) and config.is_silent_hours() %}
+        <button class="silent-hours-btn" onclick="window.location.href='/silent_hours_gate_in'"
+                title="Outside business hours -- post Gate In directly, documents come later.">
+            <span class="silent-hours-pulse-dot"></span>
+            <i class="fas fa-moon"></i> Silent Hours: Create Gate In Entry
+        </button>
+        {% endif %}
+        {% if is_superadmin or has_role('compliance') %}
+        <!-- ADDED (2026-09-11, Silent Hours Pending Documents): always
+             available (unlike the amber button above, not time-gated to
+             config.is_silent_hours()) since documents get added during
+             business hours, any day. Visible only to the roles that can
+             actually act on the list (compliance/superadmin -- same gate
+             /api/upload_missing already enforces on the upload itself), so
+             nobody sees a button leading to a page they can't do anything
+             on. -->
+        <button class="silent-hours-pending-btn" onclick="window.location.href='/history?status=awaiting_documents_silent_hours&amp;locked=silent_hours'"
+                title="Silent Hours walk-in entries still waiting on their documents.">
+            <i class="fas fa-moon"></i> Silent Hours: Pending Documents
+            <span id="silentHoursPendingCount" class="silent-hours-pending-count"></span>
+        </button>
+        {% endif %}
+        {% endif %}
+    </div>
+
+    <!-- ADDED (2026-09-11, Silent Hours Pending Documents): shown ONLY in
+         locked mode, in place of the real filter bar below. Just a status
+         pill + explanation + a way back -- no controls, since the point of
+         this view is "don't make the user re-apply the filter every time". -->
+    {% if locked_silent_hours %}
+    <div class="filter-bar" style="align-items:center;">
+        <span class="locked-filter-pill"><i class="fas fa-lock"></i> Filtered: Awaiting Documents (Silent Hours)</span>
+        <span style="font-size:12px;color:#999;flex:1;">This list only shows Silent Hours entries still missing documents.</span>
+        <a href="/history" style="font-size:13px;font-weight:600;color:#1e5ca8;text-decoration:none;white-space:nowrap;">
+            <i class="fas fa-arrow-left"></i> Back to full History
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- Search and filter bar -->
+    <!-- 2026-09-11: in locked mode, only Search stays visible/usable (per
+         request -- same search box, same debounceSearch(), searching
+         within the locked Silent Hours subset). Status/date/Apply/Clear
+         are still rendered (not removed) but individually hidden below --
+         loadHistory()/_restoreFiltersFromUrl()/clearFilters()/etc. all
+         read and write these exact elements by id unconditionally, so
+         removing any of them from the DOM would break that JS on this
+         page. Hiding leaves every one of those functions working
+         completely unchanged; the ?status= query param (read by
+         _restoreFiltersFromUrl() on load, already supported by
+         /api/history_search) is what keeps the status filter locked to
+         Silent Hours regardless of what else changes. -->
+    <div class="filter-bar">
+        <div class="filter-group filter-search">
+            <label>Search</label>
+            <input type="text" class="filter-input" id="searchInput"
+                placeholder="Invoice No, Vendor Name, Gate In No, PO No, Vehicle Number..."
+                oninput="debounceSearch()">
+        </div>
+        <div class="filter-group" {% if locked_silent_hours %}style="display:none;"{% endif %}>
+            <label>Status</label>
+            <select class="filter-select" id="statusFilter" onchange="onStatusFilterChange()">
+                <option value="">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="data_approved">Data Approved</option>
+                <option value="gate_in_done">Gate In Approved</option>
+                <option value="migo_101_done">MIGO 101 Done</option>
+                <option value="migo_103_done">MIGO 103 Done</option>
+                <option value="migo_105_done">MIGO 105 Done</option>
+                <option value="tax_classification_done">Tax Classification Done</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="awaiting_documents_silent_hours">Awaiting Documents (Silent Hours)</option>
+            </select>
+        </div>
+        <!-- FIX (2026-08-13): date-only now (no time-of-day picker) -- see
+             _todayRange()/get_history_search()'s created_at::date comparison
+             below. dateFrom/dateTo still only filter on an explicit "Apply"
+             click (see applyDateFilter()), same as before. -->
+        <div class="filter-group" {% if locked_silent_hours %}style="display:none;"{% endif %}>
+            <label>From Date</label>
+            <input type="date" class="filter-input" id="dateFrom">
+        </div>
+        <div class="filter-group" {% if locked_silent_hours %}style="display:none;"{% endif %}>
+            <label>To Date</label>
+            <input type="date" class="filter-input" id="dateTo">
+        </div>
+        <div class="filter-group filter-btn" {% if locked_silent_hours %}style="display:none;"{% endif %}>
+            <label>&nbsp;</label>
+            <button class="apply-filter-btn" onclick="applyDateFilter()">Apply Filter</button>
+        </div>
+        <div class="filter-group filter-btn" {% if locked_silent_hours %}style="display:none;"{% endif %}>
+            <label>&nbsp;</label>
+            <button class="clear-btn" onclick="clearFilters()">✕ Clear Filters</button>
+        </div>
+    </div>
+
+    <!-- History table -->
+    <div class="history-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Invoice No</th>
+                    <th>Vendor Name</th>
+                    <th>Vehicle Number</th>
+                    <th>LR No</th>
+                    <th>Status</th>
+                    {% if is_superadmin or has_role('compliance') %}
+                    <th>GST Verified</th>
+                    <!-- ADDED (2026-09-23, client request): Tax Classification --
+                         same compliance-only, independent-fact column shape as
+                         GST Verified just above. -->
+                    <th>Tax Classification</th>
+                    {% endif %}
+                    <th>Date</th>
+                    <th>Times</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="historyTableBody">
+                <tr class="loading-row"><td colspan="{{ 11 if (is_superadmin or has_role('compliance')) else 9 }}">Loading...</td></tr>
+            </tbody>
+        </table>
+        <div class="pagination" id="paginationBar"></div>
+    </div>
+
+</div>
+
+<script>
+let currentPage = 1;
+// FIX (2026-08-14, client request): compliance-only "GST Verified" Yes/No
+// column -- GST is no longer a pipeline stage (see getStatusBadge/the
+// status filter below), just an independent fact Compliance cares about.
+// Server-rendered <thead> above already gates the header the same way;
+// this JS-side flag keeps the row template and every colspan in this
+// file in sync with it.
+const SHOW_GST_VERIFIED = {{ 'true' if (is_superadmin or has_role('compliance')) else 'false' }};
+// ADDED (2026-09-23, client request): Tax Classification column rides
+// along on the same SHOW_GST_VERIFIED role gate (both are compliance-only
+// independent-fact columns) rather than introducing a second flag --
+// bumps the with-both-columns colspan from 10 to 11.
+const HISTORY_COLSPAN = SHOW_GST_VERIFIED ? 11 : 9;
+// ADDED (2026-09-11, Silent Hours Pending Documents): used only to skip
+// loadPendingPoUpdates() below -- that panel is a general, unrelated
+// "pending PO backfill" notice, out of place on this single-purpose view.
+const LOCKED_SILENT_HOURS = {{ 'true' if locked_silent_hours else 'false' }};
+let searchTimer = null;
+
+// FIX (2026-08-10): statusFilter/dateFrom/dateTo's onchange handlers used to
+// call plain loadHistory() -- unlike debounceSearch() below, which always
+// resets currentPage to 1 first. So applying a status or date filter while
+// sitting on page 2+ of the unfiltered list kept requesting that same page
+// number against the new, smaller filtered result set -- if the filtered
+// set didn't have that many pages, the API correctly returned zero rows for
+// a page that no longer exists, which just looked like "the date filter
+// doesn't work" (table goes empty) even though matching records existed on
+// page 1. Now passes 1 explicitly, same as debounceSearch()/clearFilters().
+function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { currentPage = 1; loadHistory(); }, 300);
+}
+
+// FIX (2026-08-12): dateFrom/dateTo are no longer read live off the inputs
+// on every loadHistory() call -- they're only picked up once "Apply Filter"
+// is clicked (or a count card, which applies its own today+status combo
+// immediately). appliedDateFrom/appliedDateTo hold whatever's actually in
+// effect; the input fields themselves can be freely edited in between
+// without affecting the table until Apply is clicked, which is what "the
+// status filter should work within that [applied] data" required -- a
+// status change alone must never pick up a half-edited, not-yet-applied
+// date range sitting in the boxes.
+let appliedDateFrom = '';
+let appliedDateTo   = '';
+
+// FIX (2026-08-13): date-only now (dateFrom/dateTo are type="date" inputs,
+// no time-of-day component) -- from/to are the same plain YYYY-MM-DD
+// string. The "to" side is made inclusive of the whole day server-side
+// (get_history_search()'s created_at::date comparison), not by encoding
+// 23:59 here.
+function _pad2(n) { return String(n).padStart(2, '0'); }
+function _todayRange() {
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}-${_pad2(d.getMonth() + 1)}-${_pad2(d.getDate())}`;
+    return { from: dateStr, to: dateStr };
+}
+
+function applyDateFilter() {
+    appliedDateFrom = document.getElementById('dateFrom').value;
+    appliedDateTo   = document.getElementById('dateTo').value;
+    _syncCardActiveState();
+    currentPage = 1;
+    loadHistory();
+}
+
+// Count cards are today-scoped (get_today_counts() only counts
+// created_at::date = CURRENT_DATE), so clicking one both applies today's
+// date range AND that card's status filter immediately -- no separate
+// Apply Filter click needed, matching "click Pending -> show today's
+// Pending" directly.
+function applyCardFilter(status, cardEl) {
+    const range = _todayRange();
+    document.getElementById('dateFrom').value = range.from;
+    document.getElementById('dateTo').value   = range.to;
+    appliedDateFrom = range.from;
+    appliedDateTo   = range.to;
+    document.getElementById('statusFilter').value = status;
+    _syncCardActiveState();
+    currentPage = 1;
+    loadHistory();
+}
+
+// FIX (2026-08-12): the status dropdown used to call loadHistory(1)
+// directly, so picking a status manually left whichever card was last
+// clicked still showing as "active" even though it no longer matched the
+// filter actually in effect. Routes through _syncCardActiveState() instead,
+// same as every other filter-changing action below.
+function onStatusFilterChange() {
+    _syncCardActiveState();
+    loadHistory(1);
+}
+
+function _clearCardActiveState() {
+    document.querySelectorAll('#countsRow .count-card').forEach(c => c.classList.remove('card-active'));
+}
+
+// FIX (2026-08-12): single source of truth for card highlighting. Called
+// after every action that can change status/date -- card click, manual
+// date Apply, manual status change, and page-load URL restore (see
+// _restoreFiltersFromUrl() below) -- so the highlighted card always
+// reflects what's actually filtered, not just what was last clicked.
+// Cards represent "today + status X" combos, so a card lights up only when
+// the currently-applied date range is exactly today's full-day range AND
+// the status dropdown matches that card's data-card-status. Anything else
+// (a non-today range, a status the cards don't cover like
+// "data_approved", or no filter at all) means no card can represent the
+// current state, so all cards are cleared instead of guessing.
+function _syncCardActiveState() {
+    _clearCardActiveState();
+    const range = _todayRange();
+    if (appliedDateFrom !== range.from || appliedDateTo !== range.to) return;
+    const status = document.getElementById('statusFilter').value;
+    const card = document.querySelector('#countsRow .count-card[data-card-status="' + status + '"]');
+    if (card) card.classList.add('card-active');
+}
+
+// FIX (2026-08-13): previously reset the date range to blank/unbounded
+// (all-time), which didn't match the page's own default -- a genuinely
+// fresh page load defaults to TODAY (see _restoreFiltersFromUrl()'s
+// 2026-08-12 fix), so "Clear Filters" landing on all-time-ever instead was
+// an inconsistent, surprising result (potentially years of records, no
+// card highlighted, nothing to indicate why it looked different from a
+// plain reload). Now resets to that exact same default: today + All
+// Status, with the Total Today card lit up to match, via
+// _syncCardActiveState() instead of _clearCardActiveState().
+function clearFilters() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('statusFilter').value = '';
+    const range = _todayRange();
+    document.getElementById('dateFrom').value = range.from;
+    document.getElementById('dateTo').value   = range.to;
+    appliedDateFrom = range.from;
+    appliedDateTo   = range.to;
+    _syncCardActiveState();
+    currentPage = 1;
+    loadHistory();
+}
+
+// FIX: loadHistory() had no protection against overlapping requests -- if
+// the filter/search changed again before the previous fetch resolved, TWO
+// requests were in flight at once, and whichever response happened to
+// arrive last (not whichever was requested last -- network timing decides)
+// is what got rendered. So selecting "Gate In Done" could still show
+// "Data Approved" results if that earlier request's response landed after
+// the Gate In Done one. _historyRequestSeq tags every request with an
+// incrementing id; a response only renders if it's still the most recent
+// one issued, so a stale/slow response from an abandoned filter selection
+// is silently dropped instead of overwriting the table.
+let _historyRequestSeq = 0;
+
+function loadHistory(page) {
+    if (page) currentPage = page;
+    const search   = document.getElementById('searchInput').value.trim();
+    const status   = document.getElementById('statusFilter').value;
+    // FIX (2026-08-12): date range now comes from appliedDateFrom/
+    // appliedDateTo (only ever updated by applyDateFilter()/
+    // applyCardFilter()/clearFilters()), not read live off the inputs --
+    // see those functions' comments for why.
+    const dateFrom = appliedDateFrom;
+    const dateTo   = appliedDateTo;
+
+    const params = new URLSearchParams({
+        search, status, date_from: dateFrom, date_to: dateTo, page: currentPage
+    });
+
+    // FIX (2026-08-11): reflect the current filters/page into the URL query
+    // string (replaceState -- doesn't spam browser history with one entry
+    // per keystroke/filter change) so that leaving this page (e.g. to view
+    // a record) and coming back -- or just hitting refresh -- restores
+    // exactly what was filtered, instead of always resetting to the
+    // unfiltered default. Paired with _restoreFiltersFromUrl() below, which
+    // reads this back out on page load.
+    const newUrl = window.location.pathname + '?' + params.toString();
+    window.history.replaceState(null, '', newUrl);
+
+    const tbody = document.getElementById('historyTableBody');
+    tbody.innerHTML = `<tr class="loading-row"><td colspan="${HISTORY_COLSPAN}">⏳ Loading...</td></tr>`;
+
+    const requestId = ++_historyRequestSeq;
+
+    fetch('/api/history_search?' + params)
+        .then(r => {
+            if (r.status === 401) { window.location.href = '/login'; return; }
+            return r.json();
+        })
+        .then(data => {
+            if (!data) return;
+            if (requestId !== _historyRequestSeq) return; // a newer request superseded this one
+            renderTable(data.records);
+            renderPagination(data.page, data.total_pages, data.total);
+        })
+        .catch(err => {
+            if (requestId !== _historyRequestSeq) return;
+            tbody.innerHTML = `<tr class="loading-row"><td colspan="${HISTORY_COLSPAN}">Error loading records.</td></tr>`;
+        });
+}
+
+function renderTable(records) {
+    const tbody = document.getElementById('historyTableBody');
+    if (!records || records.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="${HISTORY_COLSPAN}">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📂</div>
+                    <p>No records found</p>
+                </div>
+            </td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = records.map(r => {
+        // ocr_status is 'success' or 'failed' once OCR has actually run;
+        // still null/blank means the record was just created by the folder
+        // watcher and OCR is running right now -- distinct from "Pending"
+        // (OCR done, just waiting on Gate In), so it gets its own badge/row
+        // treatment instead of silently showing as a bunch of blank cells.
+        const isProcessing = !r.ocr_status;
+        const statusBadge = isProcessing
+            ? '<span class="status-badge status-pending"><i class="fas fa-spinner fa-spin"></i> Processing OCR...</span>'
+            : getStatusBadge(r.status);
+        const date = r.created_at ? r.created_at.split('T')[0] : '-';
+        const rowId = `stepTimes-${r.id}`;
+        const cell = (val) => isProcessing
+            ? '<i class="fas fa-spinner fa-spin" style="color:#aaa;"></i>'
+            : (val || '-');
+        const gstVerifiedCell = SHOW_GST_VERIFIED
+            ? `<td>${r.gst_check ? '<span class="status-badge status-data-approved">Yes</span>' : '<span class="status-badge status-pending">No</span>'}</td>`
+            : '';
+        // ADDED (2026-09-23, client request): three states (unlike GST
+        // Verified's plain Yes/No) since "not yet set" is a real, distinct
+        // state here -- it's what blocks MIRO (see app.py's
+        // _check_step_allowed).
+        const taxClassCell = SHOW_GST_VERIFIED
+            ? `<td>${
+                r.tax_classification === 'eligible,ineligible' ? '<span class="status-badge status-data-approved">Eligible</span> <span class="status-badge status-pending">Ineligible</span>' :
+                r.tax_classification === 'eligible' ? '<span class="status-badge status-data-approved">Eligible</span>' :
+                r.tax_classification === 'ineligible' ? '<span class="status-badge status-pending">Ineligible</span>' :
+                '<span class="status-badge status-pending">Pending</span>'
+              }</td>`
+            : '';
+        return `
+        <tr${isProcessing ? ' class="history-row-processing" data-history-id="' + r.id + '"' : ''}>
+            <td>${r.id}${r.silent_hours_entry ? '<span class="silent-hours-origin-mark" title="Started as a Silent Hours walk-in entry"><i class="fas fa-moon"></i></span>' : ''}</td>
+            <td>${cell(r.invoice_number)}</td>
+            <td>${cell(r.vendor_name)}</td>
+            <td>${cell(r.vehicle_number)}</td>
+            <td>${cell(r.lr_number)}</td>
+            <td>${statusBadge}</td>
+            ${gstVerifiedCell}
+            ${taxClassCell}
+            <td>${date}</td>
+            <td>
+                <button class="times-toggle-btn" onclick="toggleStepTimes('${rowId}', this)" title="Show step times">
+                    <i class="fas fa-clock"></i> <i class="fas fa-chevron-down"></i>
+                </button>
+            </td>
+            <td><a href="/view/${r.id}" class="view-btn" onclick="sessionStorage.setItem('historyReturnUrl', window.location.href)"><i class="fas fa-eye"></i> View</a></td>
+        </tr>
+        <tr id="${rowId}" class="step-times-row" style="display:none;">
+            <td colspan="${HISTORY_COLSPAN}">${renderStepTimes(r)}</td>
+        </tr>`;
+    }).join('');
+
+    _scheduleProcessingPoll();
+}
+
+// Lightweight per-row "still processing" poll -- only runs while at least
+// one row on the currently-loaded page has no ocr_status yet. Re-fetches
+// the whole page (cheap, same as any filter change) after a delay rather
+// than diffing individual rows, so a completed row just naturally stops
+// showing the spinner on the next render. Stops rescheduling itself once
+// no processing rows remain, so it doesn't poll forever in the background.
+let _historyPollTimer = null;
+function _scheduleProcessingPoll() {
+    clearTimeout(_historyPollTimer);
+    const stillProcessing = document.querySelectorAll('.history-row-processing').length > 0;
+    if (!stillProcessing) return;
+    _historyPollTimer = setTimeout(() => loadHistory(currentPage), 5000);
+}
+
+function toggleStepTimes(rowId, btn) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    const showing = row.style.display !== 'none';
+    row.style.display = showing ? 'none' : 'table-row';
+    const chevron = btn.querySelector('.fa-chevron-down, .fa-chevron-up');
+    if (chevron) {
+        chevron.classList.toggle('fa-chevron-down', showing);
+        chevron.classList.toggle('fa-chevron-up', !showing);
+    }
+}
+
+function formatStepTime(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+    });
+}
+
+function renderStepTimes(r) {
+    const steps = [
+        { label: 'Data Approved', iso: r.approval_at },
+        { label: 'GST Approved',  iso: r.gst_check_done_at },
+        // "by <user>" tucked into this same already-collapsed panel
+        // (not a new table column) so the main History table doesn't
+        // get any more cluttered -- see get_history_search()'s
+        // gate_in_submitted_by.
+        { label: 'Gate In',       iso: r.gatein_done_at, by: r.gate_in_submitted_by, no: r.gate_in_number },
+        { label: 'MIGO 101',      iso: r.migo_101_done_at },
+        { label: 'MIGO 103',      iso: r.migo_103_done_at },
+        { label: 'MIGO 105',      iso: r.migo_105_done_at },
+        { label: 'MIRO',          iso: r.miro_done_at },
+    ];
+    return `
+        <div class="step-times-panel">
+            ${steps.map(s => {
+                const formatted = formatStepTime(s.iso);
+                const byText = (formatted && s.by) ? ` <span class="step-time-by">by ${s.by}</span>` : '';
+                // GIN alongside the timestamp/submitter, same collapsed
+                // panel -- not a new always-visible column.
+                const noText = (formatted && s.no) ? ` <span class="step-time-by">(GIN: ${s.no})</span>` : '';
+                return `<div class="step-time-item">
+                    <span class="step-time-label">${s.label}:</span>
+                    <span class="step-time-value">${formatted || 'Not done yet'}${noText}${byText}</span>
+                </div>`;
+            }).join('')}
+        </div>`;
+}
+
+function getStatusBadge(status) {
+    const map = {
+        'MIRO Done':     '<span class="status-badge status-miro">✓ MIRO Done</span>',
+        'MIGO 105 Done': '<span class="status-badge status-migo">✓ MIGO 105 Done</span>',
+        'MIGO 103 Done': '<span class="status-badge status-migo">✓ MIGO 103 Done</span>',
+        'MIGO 101 Done': '<span class="status-badge status-migo">✓ MIGO 101 Done</span>',
+        // ADDED (2026-10-14): reversed states for 101/105 (see db_operations.py status CASE)
+        'MIGO 105 Reversed': '<span class="status-badge" style="background:#fff5f5;color:#e17055;border:1px solid #e17055;">↩️ MIGO 105 Reversed</span>',
+        'MIGO 101 Reversed': '<span class="status-badge" style="background:#fff5f5;color:#e17055;border:1px solid #e17055;">↩️ MIGO 101 Reversed</span>',
+        'Gate In Done':  '<span class="status-badge status-gate-in">✓ Gate In Approved</span>',
+        'Awaiting Documents (Silent Hours)': '<span class="status-badge status-awaiting-docs-sh"><i class="fas fa-moon"></i> Awaiting Documents (Silent Hours)</span>',
+        'Data Approved': '<span class="status-badge status-data-approved">✓ Data Approved</span>',
+        'Pending':       '<span class="status-badge status-pending">⏳ Pending</span>',
+    };
+    return map[status] || '<span class="status-badge status-pending">⏳ Pending</span>';
+}
+
+function renderPagination(page, totalPages, total) {
+    const bar = document.getElementById('paginationBar');
+    if (totalPages <= 1) { bar.innerHTML = ''; return; }
+
+    let html = `<button class="page-btn" onclick="loadHistory(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
+    
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= page-2 && i <= page+2)) {
+            html += `<button class="page-btn ${i===page?'active':''}" onclick="loadHistory(${i})">${i}</button>`;
+        } else if (i === page-3 || i === page+3) {
+            html += `<span class="page-info">...</span>`;
+        }
+    }
+
+    html += `<button class="page-btn" onclick="loadHistory(${page+1})" ${page>=totalPages?'disabled':''}>Next →</button>`;
+    html += `<span class="page-info">${total} records</span>`;
+    bar.innerHTML = html;
+}
+
+function toggleDropdown(event) {
+    event.stopPropagation();
+    document.getElementById("userDropdown").classList.toggle("show");
+}
+document.addEventListener("click", function(e) {
+    const menu = document.querySelector(".user-menu");
+    if (menu && !menu.contains(e.target)) {
+        document.getElementById("userDropdown").classList.remove("show");
+    }
+});
+
+// FIX (2026-08-11): restore filters/page from the URL (written by
+// loadHistory()'s replaceState call) before the initial load, instead of
+// always starting from the blank/default state. See loadHistory()'s own
+// comment for why this exists.
+// FIX (2026-08-12): defaults to TODAY's date range on a genuinely fresh
+// page load (no restorable state in the URL at all) -- previously defaulted
+// to blank/all-time. A URL that already carries filter state (returning
+// from a record view, a bookmarked/shared link, etc.) still restores
+// exactly what it says, including an explicitly blank date range from
+// clearFilters()'s replaceState -- so this only fires on a true first visit.
+function _restoreFiltersFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const hasAnyState = [...params.keys()].length > 0;
+
+    const search   = params.get('search');
+    const status   = params.get('status');
+    const dateFrom = params.get('date_from');
+    const dateTo   = params.get('date_to');
+    const page     = parseInt(params.get('page'), 10);
+
+    if (search)   document.getElementById('searchInput').value = search;
+    if (status)   document.getElementById('statusFilter').value = status;
+
+    if (hasAnyState) {
+        appliedDateFrom = dateFrom || '';
+        appliedDateTo   = dateTo || '';
+    } else {
+        const range = _todayRange();
+        appliedDateFrom = range.from;
+        appliedDateTo   = range.to;
+    }
+    document.getElementById('dateFrom').value = appliedDateFrom;
+    document.getElementById('dateTo').value   = appliedDateTo;
+
+    if (page && page > 0) currentPage = page;
+
+    // FIX (2026-08-12): reflect the restored status/date back onto the
+    // count cards -- previously a refresh or a return-to-page navigation
+    // could land on a status+date combo that matches a card exactly (e.g.
+    // status=pending on today's range) with no card shown as active.
+    _syncCardActiveState();
+}
+
+// Load on page open
+_restoreFiltersFromUrl();
+loadHistory();
+
+// ── v17: Pending PO Updates panel ───────────────────────────────────────
+// Loaded once here on page open -- no continuous polling. The existing
+// notification bell (static/js/notifications.js, 60s poll) is what nudges
+// a user that something new showed up; this panel just reflects current
+// DB state whenever /history is opened or reloaded.
+function _escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+}
+
+function loadPendingPoUpdates() {
+    fetch('/api/pending_po_updates')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            const panel = document.getElementById('pendingPoPanel');
+            const list  = document.getElementById('pendingPoList');
+            const count = document.getElementById('pendingPoCount');
+            if (!data || !data.success || !data.items || data.items.length === 0) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'block';
+            count.textContent = `(${data.items.length})`;
+            list.innerHTML = data.items.map(it => {
+                const isFailed = it.status === 'failed';
+                const btnLabel = isFailed ? 'Retry' : 'Update PO';
+                const btnColor = isFailed ? 'linear-gradient(135deg,#e74c3c,#c0392b)' : 'linear-gradient(135deg,#f39c12,#e67e22)';
+                return `
+                <div style="display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:14px;" data-history-id="${it.history_id}">
+                    <div style="flex:1;">
+                        <strong>${_escHtml(it.invoice_number || ('h' + it.history_id))}</strong>
+                        &nbsp;—&nbsp; GIN ${_escHtml(it.gate_in_number)} needs PO ${_escHtml(it.po_number)}
+                        ${isFailed ? '<span style="color:#e74c3c;font-weight:600;"> — last attempt failed</span>' : ''}
+                        <div style="font-size:12px;color:#888;">
+                            Requested by ${_escHtml(it.requested_by || 'unknown')} at ${_escHtml(it.requested_at || '')}
+                            ${isFailed && it.error_message ? `<br>Error: ${_escHtml(it.error_message)}` : ''}
+                        </div>
+                        <!-- FIX (2026-08-11): in-row status instead of alert()/confirm()
+                             popups -- see runPendingPoUpdate()/_pollPendingPoJob() below. -->
+                        <div class="pending-po-status" style="display:none;font-size:12px;margin-top:4px;padding:4px 8px;border-radius:4px;"></div>
+                    </div>
+                    <button onclick="runPendingPoUpdate(${it.history_id}, this)"
+                        style="padding:8px 16px;background:${btnColor};color:white;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">
+                        ${btnLabel}
+                    </button>
+                </div>
+            `;
+            }).join('');
+        })
+        .catch(() => {});
+}
+
+// FIX (2026-08-11): replaces alert() popups with an in-row status message
+// (the .pending-po-status div added next to each item above) -- users
+// asked not to be interrupted by native browser popups for this flow.
+function _showPendingPoRowStatus(historyId, msg, type) {
+    const row = document.querySelector(`#pendingPoList [data-history-id="${historyId}"]`);
+    const el  = row ? row.querySelector('.pending-po-status') : null;
+    if (!el) return;
+    const colors = { info: '#e8f0fe:#1e5ca8', error: '#fee2e2:#b91c1c', success: '#d1fae5:#065f46' };
+    const [bg, color] = (colors[type] || colors.info).split(':');
+    el.style.background = bg;
+    el.style.color      = color;
+    el.style.display    = 'block';
+    el.textContent      = msg;
+}
+
+function runPendingPoUpdate(historyId, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    _showPendingPoRowStatus(historyId, '⏳ Running PO update in SAP…', 'info');
+    fetch(`/api/pending_po_updates/${historyId}/run`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                _showPendingPoRowStatus(historyId, '❌ Failed to start: ' + (data.error || 'unknown error'), 'error');
+                btn.disabled = false;
+                btn.textContent = 'Update PO';
+                return;
+            }
+            _pollPendingPoJob(data.job_id, historyId, btn);
+        })
+        .catch(() => {
+            _showPendingPoRowStatus(historyId, '❌ Network error starting PO update.', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Update PO';
+        });
+}
+
+function _pollPendingPoJob(jobId, historyId, btn) {
+    fetch(`/api/queue_status/${jobId}`)
+        .then(r => r.json())
+        .then(data => {
+            const status = data.job && data.job.status;   // pending | running | done | failed
+            if (status === 'pending' || status === 'running') {
+                setTimeout(() => _pollPendingPoJob(jobId, historyId, btn), 3000);
+                return;
+            }
+            if (status === 'failed') {
+                const errMsg = (data.job.result && data.job.result.error) || data.job.error_message || 'Update did not succeed.';
+                _showPendingPoRowStatus(historyId, '❌ ' + errMsg, 'error');
+                if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+                return;
+            }
+            _showPendingPoRowStatus(historyId, '✓ PO update complete.', 'success');
+            // Terminal success -- refresh the panel shortly after so the
+            // resolved item disappears from the list (short delay so the
+            // success message is actually visible first).
+            setTimeout(loadPendingPoUpdates, 1500);
+        })
+        .catch(() => {
+            if (btn) { btn.disabled = false; btn.textContent = 'Update PO'; }
+        });
+}
+
+// 2026-09-11: skipped in locked mode -- this panel is unrelated to Silent
+// Hours (general PO-backfill notice) and would be out of place on a
+// single-purpose "just show me the Silent Hours list" view.
+if (!LOCKED_SILENT_HOURS) loadPendingPoUpdates();
+
+// ============================================================
+// ADDED (2026-09-22, client request): live count badge on the "Silent
+// Hours: Pending Documents" button. Reuses the SAME /api/history_search
+// endpoint the button itself links to (status=awaiting_documents_
+// silent_hours) -- get_history_search() runs a separate COUNT(*) query
+// with the identical WHERE clause used for the list, so this number is
+// guaranteed to match what clicking through actually shows, not a second
+// definition of "pending" that could drift from the first. per_page=1
+// keeps the response body tiny; the count itself is unaffected by
+// per_page since it's a separate query from the LIMIT/OFFSET one.
+//
+// "Automatically reduce" per the client's request: a record leaves this
+// bucket the moment OCR/Data Approval, GST Verification, or MIGO 103
+// completes for it (see db_operations.py's awaiting_documents_silent_
+// hours WHERE clause) -- but that almost always happens from a
+// DIFFERENT record's own tab, not from this History page, so a viewer
+// sitting on History wouldn't see it change just from page-load-once
+// polling like loadPendingPoUpdates() above uses. Refreshing every 60s
+// keeps the badge current without the viewer needing to reload -- cheap
+// enough for this to run continuously (one indexed COUNT query per
+// minute, per open History tab, only for the compliance/superadmin
+// viewers who see this button at all).
+function loadSilentHoursPendingCount() {
+    const badge = document.getElementById('silentHoursPendingCount');
+    if (!badge) return;
+    fetch('/api/history_search?status=awaiting_documents_silent_hours&per_page=1')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (!data) return;
+            badge.textContent = data.total || 0;
+        })
+        .catch(() => {});
+}
+if (!LOCKED_SILENT_HOURS) {
+    loadSilentHoursPendingCount();
+    setInterval(loadSilentHoursPendingCount, 60000);
+}
+</script>
+
+{# "Your SAP posting finished" toast -- keeps working after the user leaves an
+   invoice page and lands back here. See static/js/job_watcher.js. #}
+<script>
+window.MI_CTX = { username: {{ (current_username or '') | tojson }}, historyId: 0, invoiceNumber: '', vendor: '' };
+</script>
+<script src="{{ static_v('js/job_watcher.js') }}"></script>
+
+</body>
+</html>

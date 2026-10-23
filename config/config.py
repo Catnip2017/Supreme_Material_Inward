@@ -1,0 +1,487 @@
+
+# """
+# config/config.py — Central configuration loader.
+# All settings read from .env — never hardcode credentials.
+# """
+
+# import os
+# from dotenv import load_dotenv
+
+# # FIX: load_dotenv() with no argument searches for .env starting from the
+# # CURRENT WORKING DIRECTORY and walking upward -- fine when the Flask app is
+# # launched from the project root (start_server.bat's cwd), but Windows Task
+# # Scheduler tasks (dms_upload_runner.py, dms_scheduler.py) don't reliably run
+# # with that same cwd. If this silently fails to find .env, every os.getenv()
+# # below falls back to its hardcoded default -- e.g. RF_SCRIPTS_PATH falls
+# # back to "C:\material_inward\robot_scripts" instead of the real configured
+# # path, silently pointing at the wrong (possibly nonexistent, possibly
+# # stale) robot_scripts folder with no error at all. Anchoring to this file's
+# # own location (config/config.py -> project root is one level up) makes
+# # .env resolution independent of whatever process/cwd imported this module.
+# _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+
+
+
+# class Config:
+#     # --- Flask ---
+#     SECRET_KEY: str = os.getenv("FLASK_SECRET_KEY", "change-this-in-production")
+#     ENV: str = os.getenv("FLASK_ENV", "production")
+#     HOST: str = os.getenv("SERVER_HOST", "127.0.0.1")
+#     PORT: int = int(os.getenv("SERVER_PORT", 5000))
+#     ALLOWED_ORIGIN: str = os.getenv("ALLOWED_ORIGIN", "http://localhost:5000")
+
+#     # --- JWT ---
+#     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-this-in-production")
+#     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+
+#     # --- PostgreSQL ---
+#     DB_HOST: str = os.getenv("DB_HOST", "localhost")
+#     DB_PORT: int = int(os.getenv("DB_PORT", 5432))
+#     DB_NAME: str = os.getenv("DB_NAME", "material_inward")
+#     DB_USER: str = os.getenv("DB_USER", "")
+#     DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
+#     # Raised from 2/10: a single /view/<id> page load alone checks out 5
+#     # sequential connections (history + gate-in + migo + miro + PO line items),
+#     # plus continuous polling from every open tab (/api/gst/status every 5s,
+#     # /api/queue_status every 3s) and the background RF queue worker -- with
+#     # 20 concurrent users the old cap of 10 left very little headroom.
+#     DB_MIN_CONNECTIONS: int = 5
+#     DB_MAX_CONNECTIONS: int = 25
+
+#     # --- SAP ---
+#     SAP_LOGON_PATH: str = os.getenv("SAP_LOGON_PATH", r"C:\Program Files\SAP\FrontEnd\SAPGUI\saplogon.exe")
+#     SAP_CONNECTION_NAME: str = os.getenv("SAP_CONNECTION_NAME", "SAP Production System")
+#     SAP_CLIENT: str = os.getenv("SAP_CLIENT", "400")
+#     SAP_USERNAME: str = os.getenv("SAP_USERNAME", "")
+#     SAP_PASSWORD: str = os.getenv("SAP_PASSWORD", "")
+
+#     # --- Active Directory / LDAP (login) ---
+#     # Same spl.com domain / server used by the Password Reset app and the
+#     # Ecosystem Dashboard -- confirmed with the client to be the correct
+#     # domain for Material Inward's own login too, not a different one.
+#     AD_SERVER: str = os.getenv("AD_SERVER", "192.168.203.117")
+#     AD_DOMAIN: str = os.getenv("AD_DOMAIN", "spl.com")
+
+#     # --- Email SMTP (outgoing) ---
+#     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.office365.com")
+#     SMTP_PORT: int = int(os.getenv("SMTP_PORT", 587))
+#     EMAIL_SENDER: str = os.getenv("EMAIL_SENDER", "")
+#     EMAIL_PASSWORD: str = os.getenv("EMAIL_PASSWORD", "")
+
+#     # --- Email IMAP (mail poller) ---
+#     IMAP_SERVER: str = os.getenv("IMAP_SERVER", "outlook.office365.com")
+#     IMAP_PORT: int = int(os.getenv("IMAP_PORT", 993))
+#     IMAP_USERNAME: str = os.getenv("IMAP_USERNAME", "")
+#     IMAP_PASSWORD: str = os.getenv("IMAP_PASSWORD", "")
+#     IMAP_POLL_FOLDER: str = os.getenv("IMAP_POLL_FOLDER", "INBOX")
+
+#     # --- Step-specific Email Recipients (no fallback) ---
+#     GATEIN_OWNER_EMAIL: str   = os.getenv("GATEIN_OWNER_EMAIL", "")
+#     MIGO_103_OWNER_EMAIL: str = os.getenv("MIGO_103_OWNER_EMAIL", "")
+#     MIGO_105_OWNER_EMAIL: str = os.getenv("MIGO_105_OWNER_EMAIL", "")
+#     MIGO_101_OWNER_EMAIL: str = os.getenv("MIGO_101_OWNER_EMAIL", "")
+#     MIRO_OWNER_EMAIL: str     = os.getenv("MIRO_OWNER_EMAIL", "")
+#     ADMIN_EMAIL: str          = os.getenv("ADMIN_EMAIL", "")
+
+#     # --- WatsonX AI ---
+#     WATSONX_API_KEY: str    = os.getenv("WATSONX_API_KEY", "")
+#     WATSONX_PROJECT_ID: str = os.getenv("WATSONX_PROJECT_ID", "")
+#     WATSONX_URL: str        = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+#     WATSONX_MODEL_ID: str   = os.getenv("WATSONX_MODEL_ID", "meta-llama/llama-4-maverick-17b-128e-instruct-fp8")
+
+#     # --- Robot Framework ---
+#     RF_SCRIPTS_PATH: str = os.getenv("RF_SCRIPTS_PATH", r"C:\material_inward\robot_scripts")
+#     RF_OUTPUT_PATH: str  = os.getenv("RF_OUTPUT_PATH", r"C:\material_inward\logs\rf_output")
+
+#     # --- File Handling ---
+#     UPLOAD_FOLDER: str           = os.getenv("UPLOAD_FOLDER", "uploads")
+#     DMS_STAGING_FOLDER: str      = os.getenv("DMS_STAGING_FOLDER", r"C:\material_inward\dms_staging")
+#     # v16: where dms_upload.robot's document-link step (Send To > Generate
+#     # Document link) writes {filename, Contentverse URL} rows, and where
+#     # services/dms_links_import.py reads them from afterward. Kept
+#     # app-relative by default (next to robot_scripts/) instead of a
+#     # personal Downloads folder.
+#     DMS_LINKS_EXCEL_PATH: str    = os.getenv("DMS_LINKS_EXCEL_PATH", r"C:\material_inward\dms_staging\document_links.xlsx")
+#     UPLOAD_PROCESSED_FOLDER: str = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "processed")
+#     UPLOAD_FAILED_FOLDER: str    = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "failed")
+#     MAX_FILE_SIZE_BYTES: int     = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
+
+#     # --- Document keyword detection ---
+#     # Filenames arrive as INVOICENO_<KEYWORD>.pdf (any case) -- e.g.
+#     # 4500012345_INV.pdf / 4500012345_EWB.pdf / 4500012345_LR.pdf.
+#     # These are matched as the EXACT last underscore-segment of the filename
+#     # (see services/folder_watcher.py _detect_doc_type), not a substring
+#     # search -- so keep these short and exact, not partial words.
+#     INVOICE_KEYWORD: str  = os.getenv("INVOICE_KEYWORD", "inv").lower()
+#     EWAYBILL_KEYWORD: str = os.getenv("EWAYBILL_KEYWORD", "ewb").lower()
+#     LR_KEYWORD: str       = os.getenv("LR_KEYWORD", "lr").lower()
+#     # v14: 4th document type -- miscellaneous supporting docs, pre-merged by
+#     # the sender into a single PDF, not run through OCR but merged into the
+#     # DMS-bound consolidated PDF alongside invoice/eway/lr. At most one per
+#     # invoice group, same as the other three.
+#     OTHERS_KEYWORD: str   = os.getenv("OTHERS_KEYWORD", "oth").lower()
+
+#     # --- Folder-drop intake ---
+#     INTAKE_METHOD: str = os.getenv("INTAKE_METHOD", "folder").lower()
+#     WATCH_FOLDER: str  = os.getenv("WATCH_FOLDER", r"C:\material_inward\incoming")
+
+#     # --- Phase rollout: which workflow steps are enabled ---
+#     # Granular flags: gate_in, migo_103, migo_105, miro, gst
+#     _ENABLED_STEPS_RAW: str = os.getenv("ENABLED_STEPS", "gate_in,migo_103,migo_105,miro,gst")
+
+#     @classmethod
+#     def is_step_enabled(cls, step: str) -> bool:
+#         steps = [s.strip().lower() for s in cls._ENABLED_STEPS_RAW.split(",")]
+#         return step.lower() in steps
+
+#     # --- In-app notifications ---
+#     ENABLE_INAPP_NOTIFICATIONS: bool = os.getenv("ENABLE_INAPP_NOTIFICATIONS", "false").lower() == "true"
+
+#     # --- Auto-pair tuning ---
+#     AUTO_PAIR_MIN_MATCHES: int       = int(os.getenv("AUTO_PAIR_MIN_MATCHES", 3))
+#     AUTO_PAIR_AMOUNT_TOLERANCE: float = float(os.getenv("AUTO_PAIR_AMOUNT_TOLERANCE", 5))
+
+#     # --- Upload access ---
+#     ALLOW_USER_UPLOAD: bool       = os.getenv("ALLOW_USER_UPLOAD", "false").lower() == "true"
+#     SHOW_DASHBOARD_COUNTS: bool   = os.getenv("SHOW_DASHBOARD_COUNTS", "false").lower() == "true"
+
+#     ENABLE_STEP_LOCKS: bool = os.getenv('ENABLE_STEP_LOCKS', 'true').lower() == 'true'
+
+
+# config = Config()
+
+
+"""
+config/config.py — Central configuration loader.
+All settings read from .env — never hardcode credentials.
+"""
+
+import os
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# FIX: load_dotenv() with no argument searches for .env starting from the
+# CURRENT WORKING DIRECTORY and walking upward -- fine when the Flask app is
+# launched from the project root (start_server.bat's cwd), but Windows Task
+# Scheduler tasks (dms_upload_runner.py, dms_scheduler.py) don't reliably run
+# with that same cwd. If this silently fails to find .env, every os.getenv()
+# below falls back to its hardcoded default -- e.g. RF_SCRIPTS_PATH falls
+# back to "C:\material_inward\robot_scripts" instead of the real configured
+# path, silently pointing at the wrong (possibly nonexistent, possibly
+# stale) robot_scripts folder with no error at all. Anchoring to this file's
+# own location (config/config.py -> project root is one level up) makes
+# .env resolution independent of whatever process/cwd imported this module.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+
+
+
+class Config:
+    # --- Flask ---
+    SECRET_KEY: str = os.getenv("FLASK_SECRET_KEY", "change-this-in-production")
+    ENV: str = os.getenv("FLASK_ENV", "production")
+    HOST: str = os.getenv("SERVER_HOST", "127.0.0.1")
+    PORT: int = int(os.getenv("SERVER_PORT", 5000))
+    ALLOWED_ORIGIN: str = os.getenv("ALLOWED_ORIGIN", "http://localhost:5000")
+
+    # --- Environment switch: production vs development install location ---
+    # IS_PRODUCTION=true  -> use PROD_APP_ROOT below
+    # IS_PRODUCTION=false -> use DEV_APP_ROOT below
+    # Every environment-dependent folder this app writes to (robot scripts,
+    # robot output logs, DMS staging, GST screenshot/edge-profile folders)
+    # is derived from APP_ROOT below and keeps the SAME internal folder
+    # layout in both prod and dev -- only the root changes. This is the
+    # single switch that makes a dev install a full replica of prod.
+    # Deliberately NOT included in this switch (left as single values,
+    # unaffected by IS_PRODUCTION): DB_*, SAP_*, AD_* (by explicit
+    # instruction -- changed by hand for now), and services/robot_lock.py's
+    # lock file path (shared with the separate Password Reset app -- prod
+    # and dev run on different servers so there's no collision risk either
+    # way, and moving it would require hand-editing that other app too).
+    IS_PRODUCTION: bool = os.getenv("IS_PRODUCTION", "true").lower() == "true"
+    _PROD_APP_ROOT: str = os.getenv("PROD_APP_ROOT", r"C:\Users\ctn_suresh\Agents\material_inward_FINAL (2)\material_inward_FINAL\material_inward")
+    _DEV_APP_ROOT: str = os.getenv("DEV_APP_ROOT", r"C:\material_inward")
+    APP_ROOT: str = _PROD_APP_ROOT if IS_PRODUCTION else _DEV_APP_ROOT
+
+    # --- JWT ---
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-this-in-production")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+
+    # --- Session cookie security (ADDED 2026-09-03, CORRECTED same day) ---
+    # This app runs in production behind nginx doing real HTTPS
+    # termination (client-confirmed: https://materialinward.spl.co.in),
+    # with app.py's ProxyFix already trusting nginx's X-Forwarded-Proto
+    # header for that one hop. So SESSION_COOKIE_SECURE=True is CORRECT
+    # here -- it was never the cause of the History-navigation logout
+    # report (that misdiagnosis is on me -- I'd only seen Flask's own
+    # internal startup log, "http://127.0.0.1:5003", the plain-HTTP
+    # address nginx forwards to behind the scenes, and didn't know nginx
+    # was in front of it). Left env-configurable (rather than hardcoded)
+    # purely so a local/dev run without nginx+HTTPS in front of it can
+    # still override it to false via .env if ever needed -- default is
+    # true, matching the real production setup.
+    SESSION_COOKIE_SECURE: bool = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
+
+    # How long a login stays valid while INACTIVE (app.py makes the
+    # session permanent at login and sets PERMANENT_SESSION_LIFETIME to
+    # this -- Flask's default SESSION_REFRESH_EACH_REQUEST resets the
+    # clock on every authenticated request, so this is a sliding idle
+    # timeout, not a fixed cutoff -- someone actively working never hits
+    # it). 12 hours comfortably covers a full shift with gaps (lunch,
+    # walking the yard, a Silent Hours walk-in hours apart) without
+    # leaving logins open indefinitely.
+    SESSION_LIFETIME_HOURS: int = int(os.getenv("SESSION_LIFETIME_HOURS", 12))
+
+    # --- PostgreSQL ---
+    DB_HOST: str = os.getenv("DB_HOST", "localhost")
+    DB_PORT: int = int(os.getenv("DB_PORT", 5432))
+    DB_NAME: str = os.getenv("DB_NAME", "material_inward")
+    DB_USER: str = os.getenv("DB_USER", "")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
+    # Raised from 2/10: a single /view/<id> page load alone checks out 5
+    # sequential connections (history + gate-in + migo + miro + PO line items),
+    # plus continuous polling from every open tab (/api/gst/status every 5s,
+    # /api/queue_status every 3s) and the background RF queue worker -- with
+    # 20 concurrent users the old cap of 10 left very little headroom.
+    DB_MIN_CONNECTIONS: int = 5
+    DB_MAX_CONNECTIONS: int = 25
+
+    # --- SAP ---
+    SAP_LOGON_PATH: str = os.getenv("SAP_LOGON_PATH", r"C:\Program Files\SAP\FrontEnd\SAPGUI\saplogon.exe")
+    SAP_CONNECTION_NAME: str = os.getenv("SAP_CONNECTION_NAME", "SAP Production System")
+    SAP_CLIENT: str = os.getenv("SAP_CLIENT", "400")
+    SAP_USERNAME: str = os.getenv("SAP_USERNAME", "")
+    SAP_PASSWORD: str = os.getenv("SAP_PASSWORD", "")
+
+    # --- SAP multi-bot concurrency caps (ADDED 2026-09-03, REVISED same day) ---
+    # Client decision (revised): each distinct SAP login gets its OWN
+    # independent pool of concurrency slots -- NOT one shared global total.
+    # The shared spl_rpa service account gets its own pool of up to 6 jobs
+    # in flight at once (any mix -- gate-in, po_fetch, line updates...).
+    # Every OTHER distinct SAP username (a real person's own LDAP-based
+    # login) gets its OWN separate pool, independent of spl_rpa's and of
+    # every other individual user's -- starting at 4 each, deliberately
+    # easy to raise later purely by observation (bump this .env value, no
+    # code change) once real usage shows it's safe to go higher. There is
+    # NO flat shared ceiling across everyone combined any more -- the true
+    # system-wide total simply scales with however many distinct SAP
+    # usernames happen to be active at once (spl_rpa's 6, plus 4 per extra
+    # person logged in and running something right now). Enforced by
+    # rf_queue_worker.py's per-username dispatcher (_active_by_username /
+    # _cap_for_bucket), which buckets by the ACTUAL SAP username each job
+    # runs under, not by a single "ldap" catch-all.
+    MAX_CONCURRENT_SPL_RPA: int = int(os.getenv("MAX_CONCURRENT_SPL_RPA", 6))
+    MAX_CONCURRENT_PER_LDAP_USER: int = int(os.getenv("MAX_CONCURRENT_PER_LDAP_USER", 4))
+
+    # Generous, non-binding safety valve only -- see
+    # database/rf_queue_operations.py's claim_next_pending_job() docstring.
+    # This does NOT enforce the per-username design above (that's entirely
+    # rf_queue_worker.py's job); it only stops the DB from piling up an
+    # unbounded number of 'running' rows if something unexpected happens
+    # (e.g. a bug spawning far more distinct concurrent SAP usernames than
+    # the bot machine could ever really run at once). Set comfortably above
+    # any realistic combination of the pools above -- should never actually
+    # bind during normal operation, however busy.
+    MAX_CONCURRENT_TOTAL_SAFETY_CEILING: int = int(os.getenv("MAX_CONCURRENT_TOTAL_SAFETY_CEILING", 30))
+
+    # --- Active Directory / LDAP (login) ---
+    # Same spl.com domain / server used by the Password Reset app and the
+    # Ecosystem Dashboard -- confirmed with the client to be the correct
+    # domain for Material Inward's own login too, not a different one.
+    AD_SERVER: str = os.getenv("AD_SERVER", "192.168.203.117")
+    AD_DOMAIN: str = os.getenv("AD_DOMAIN", "spl.com")
+
+    # --- Email SMTP (outgoing) + IMAP (mail poller) — prod/dev pair ---
+    # Mailbox isn't in active use yet (INTAKE_METHOD=folder), but follows
+    # the same IS_PRODUCTION switch as everything else so it's ready
+    # whenever intake switches to "mail". DEV_* values are blank until you
+    # provide a dev mailbox -- fill them in .env when ready.
+    _MAIL_PREFIX: str = "PROD_" if IS_PRODUCTION else "DEV_"
+    SMTP_SERVER: str = os.getenv(_MAIL_PREFIX + "SMTP_SERVER", "smtp.office365.com")
+    SMTP_PORT: int = int(os.getenv(_MAIL_PREFIX + "SMTP_PORT", 587))
+    EMAIL_SENDER: str = os.getenv(_MAIL_PREFIX + "EMAIL_SENDER", "")
+    EMAIL_PASSWORD: str = os.getenv(_MAIL_PREFIX + "EMAIL_PASSWORD", "")
+
+    IMAP_SERVER: str = os.getenv(_MAIL_PREFIX + "IMAP_SERVER", "outlook.office365.com")
+    IMAP_PORT: int = int(os.getenv(_MAIL_PREFIX + "IMAP_PORT", 993))
+    IMAP_USERNAME: str = os.getenv(_MAIL_PREFIX + "IMAP_USERNAME", "")
+    IMAP_PASSWORD: str = os.getenv(_MAIL_PREFIX + "IMAP_PASSWORD", "")
+    IMAP_POLL_FOLDER: str = os.getenv("IMAP_POLL_FOLDER", "INBOX")
+
+    # --- Step-specific Email Recipients (no fallback) ---
+    GATEIN_OWNER_EMAIL: str   = os.getenv("GATEIN_OWNER_EMAIL", "")
+    MIGO_103_OWNER_EMAIL: str = os.getenv("MIGO_103_OWNER_EMAIL", "")
+    MIGO_105_OWNER_EMAIL: str = os.getenv("MIGO_105_OWNER_EMAIL", "")
+    MIGO_101_OWNER_EMAIL: str = os.getenv("MIGO_101_OWNER_EMAIL", "")
+    MIRO_OWNER_EMAIL: str     = os.getenv("MIRO_OWNER_EMAIL", "")
+    ADMIN_EMAIL: str          = os.getenv("ADMIN_EMAIL", "")
+
+    # --- WatsonX AI ---
+    WATSONX_API_KEY: str    = os.getenv("WATSONX_API_KEY", "")
+    WATSONX_PROJECT_ID: str = os.getenv("WATSONX_PROJECT_ID", "")
+    WATSONX_URL: str        = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+    WATSONX_MODEL_ID: str   = os.getenv("WATSONX_MODEL_ID", "meta-llama/llama-4-maverick-17b-128e-instruct-fp8")
+
+    # --- Robot Framework ---
+    # Derived from APP_ROOT (see IS_PRODUCTION switch above) -- no longer a
+    # standalone .env override, so it can never silently drift out of sync
+    # with which environment is actually active.
+    RF_SCRIPTS_PATH: str = os.path.join(APP_ROOT, "robot_scripts")
+    RF_OUTPUT_PATH: str  = os.path.join(APP_ROOT, "logs", "rf_output")
+
+    # --- File Handling ---
+    UPLOAD_FOLDER: str           = os.getenv("UPLOAD_FOLDER", "uploads")
+    DMS_STAGING_FOLDER: str      = os.path.join(APP_ROOT, "dms_staging")
+    # v16: where dms_upload.robot's document-link step (Send To > Generate
+    # Document link) writes {filename, Contentverse URL} rows, and where
+    # services/dms_links_import.py reads them from afterward. Derived from
+    # APP_ROOT like DMS_STAGING_FOLDER above -- dms_upload.robot itself now
+    # reads this straight from config.config too (see its Load Environment
+    # Variables keyword), instead of a separate raw .env lookup, so there's
+    # exactly one place this path is computed.
+    DMS_LINKS_EXCEL_PATH: str    = os.path.join(APP_ROOT, "dms_staging", "document_links.xlsx")
+    UPLOAD_PROCESSED_FOLDER: str = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "processed")
+    UPLOAD_FAILED_FOLDER: str    = os.path.join(os.getenv("UPLOAD_FOLDER", "uploads"), "failed")
+    MAX_FILE_SIZE_BYTES: int     = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
+
+    # --- GST bots (services/einvoice_bot.py, services/taxpayer_search_bot.py) ---
+    # Screenshot + persistent-Edge-profile roots, also derived from
+    # APP_ROOT. Each bot appends its own subfolder ("einvoice" / "taxpayer").
+    GST_SCREENSHOTS_ROOT: str   = os.path.join(APP_ROOT, "gst_screenshots")
+    GST_EDGE_PROFILE_ROOT: str  = os.path.join(APP_ROOT, "gst_edge_profile")
+
+    # --- ZGRN print bot (robot_scripts/zgrn.robot) ---
+    # ADDED (2026-08-14), SUPERSEDED (2026-09-03): where zgrn.robot's
+    # "Microsoft Print to PDF" used to save the GRN/CGD PDFs it produced,
+    # before services/rf_queue_worker.py copies them into UPLOAD_FOLDER.
+    # Was app-root-derived (environment-aware, like GST_SCREENSHOTS_ROOT)
+    # because the OLD script's Print-to-PDF flow let us choose the output
+    # path via --variable OUTPUT_FOLDER:.... No longer used by
+    # execute_zgrn_print_sap() -- kept only in case something else still
+    # references it -- see ZGRN_MIP_FOLDER below for the path actually in
+    # use now.
+    ZGRN_PRINT_FOLDER: str = os.path.join(APP_ROOT, "zgrn_print")
+
+    # ADDED (2026-09-03): zgrn.robot now uses SAP's own "Download for MIP"
+    # feature instead of Print-to-PDF -- SAP decides the download folder
+    # itself (fixed, confirmed against a real run: C:\zgrn_print), not
+    # something this app passes in or can redirect via APP_ROOT the way
+    # ZGRN_PRINT_FOLDER above was. Hardcoded to match zgrn.robot's own
+    # ${MIP_FOLDER} variable exactly -- if that ever needs to change, it
+    # has to change in both places together (this app has no way to make
+    # SAP write somewhere else).
+    ZGRN_MIP_FOLDER: str = r"C:\zgrn_print"
+
+    # --- Document keyword detection ---
+    # Filenames arrive as INVOICENO_<KEYWORD>.pdf (any case) -- e.g.
+    # 4500012345_INV.pdf / 4500012345_EWB.pdf / 4500012345_LR.pdf.
+    # These are matched as the EXACT last underscore-segment of the filename
+    # (see services/folder_watcher.py _detect_doc_type), not a substring
+    # search -- so keep these short and exact, not partial words.
+    INVOICE_KEYWORD: str  = os.getenv("INVOICE_KEYWORD", "inv").lower()
+    EWAYBILL_KEYWORD: str = os.getenv("EWAYBILL_KEYWORD", "ewb").lower()
+    LR_KEYWORD: str       = os.getenv("LR_KEYWORD", "lr").lower()
+    # v14: 4th document type -- miscellaneous supporting docs, pre-merged by
+    # the sender into a single PDF, not run through OCR but merged into the
+    # DMS-bound consolidated PDF alongside invoice/eway/lr. At most one per
+    # invoice group, same as the other three.
+    OTHERS_KEYWORD: str   = os.getenv("OTHERS_KEYWORD", "oth").lower()
+
+    # --- Folder-drop intake ---
+    INTAKE_METHOD: str = os.getenv("INTAKE_METHOD", "folder").lower()
+    WATCH_FOLDER: str  = os.getenv("WATCH_FOLDER", r"C:\material_inward\incoming")
+
+    # --- Phase rollout: which workflow steps are enabled ---
+    # Granular flags: gate_in, migo_103, migo_105, miro, gst
+    _ENABLED_STEPS_RAW: str = os.getenv("ENABLED_STEPS", "gate_in,migo_103,migo_105,miro,gst")
+
+    @classmethod
+    def is_step_enabled(cls, step: str) -> bool:
+        steps = [s.strip().lower() for s in cls._ENABLED_STEPS_RAW.split(",")]
+        return step.lower() in steps
+
+    # --- In-app notifications ---
+    ENABLE_INAPP_NOTIFICATIONS: bool = os.getenv("ENABLE_INAPP_NOTIFICATIONS", "false").lower() == "true"
+
+    # --- Auto-pair tuning ---
+    AUTO_PAIR_MIN_MATCHES: int       = int(os.getenv("AUTO_PAIR_MIN_MATCHES", 3))
+    AUTO_PAIR_AMOUNT_TOLERANCE: float = float(os.getenv("AUTO_PAIR_AMOUNT_TOLERANCE", 5))
+
+    # --- Upload access ---
+    ALLOW_USER_UPLOAD: bool       = os.getenv("ALLOW_USER_UPLOAD", "false").lower() == "true"
+    SHOW_DASHBOARD_COUNTS: bool   = os.getenv("SHOW_DASHBOARD_COUNTS", "false").lower() == "true"
+
+    ENABLE_STEP_LOCKS: bool = os.getenv('ENABLE_STEP_LOCKS', 'true').lower() == 'true'
+
+    # --- Timezone (Silent Hours Gate-In + IST-dependent date/time logic) ---
+    # true if THIS SERVER's system clock is UTC (needs +5:30 added to get
+    # real India time) -- confirmed true for this deployment. false would
+    # mean the server's own clock is already IST, so no offset is added.
+    # Single shared source of truth for "is the server on UTC": both the
+    # existing Posting Date fix (database/migo_operations.py) and the new
+    # Silent Hours window check below read this same flag, instead of
+    # each independently hardcoding its own answer to the same question.
+    UTC_TIMEZONE: bool = os.getenv('UTC_TIMEZONE', 'true').lower() == 'true'
+    _IST_OFFSET = timedelta(hours=5, minutes=30)
+
+    # --- Silent Hours override (client request, 2026-09-02) ---
+    # true = the Silent Hours walk-in Gate-In entry point is available
+    # around the clock, not only nights/weekends -- is_silent_hours()
+    # below returns True unconditionally while this is set, instead of
+    # checking the day/time window.
+    #
+    # TO REVERT: set SILENT_HOURS_ALWAYS_OPEN=false (or just delete this
+    # line) in .env, then restart the Flask service. That's the whole
+    # revert -- no code change needed, and the original weekday-evening/
+    # weekend-only window (is_silent_hours()'s own logic below) is still
+    # there untouched, it just resumes being checked again.
+    SILENT_HOURS_ALWAYS_OPEN: bool = os.getenv('SILENT_HOURS_ALWAYS_OPEN', 'false').lower() == 'true'
+
+    @classmethod
+    def get_ist_now(cls) -> datetime:
+        """Current India time. Adds the fixed +5:30 offset (India has no
+        DST, so a flat offset is correct) only when UTC_TIMEZONE=true;
+        returns the server's own clock unmodified when the server is
+        already running on IST."""
+        if cls.UTC_TIMEZONE:
+            return datetime.utcnow() + cls._IST_OFFSET
+        return datetime.now()
+
+    @classmethod
+    def is_silent_hours(cls) -> bool:
+        """Silent Hours window: all day Saturday/Sunday, or weekdays from
+        17:00 IST onward -- UNLESS SILENT_HOURS_ALWAYS_OPEN (.env) is set,
+        in which case this always returns True. Drives whether Gate
+        Security's walk-in Gate-In entry point (app.py) is offered."""
+        if cls.SILENT_HOURS_ALWAYS_OPEN:
+            return True
+        now = cls.get_ist_now()
+        if now.weekday() >= 5:  # Monday=0 ... Saturday=5, Sunday=6
+            return True
+        return now.hour >= 17
+
+
+config = Config()
+
+# --- Auto-create environment-dependent folders ---
+# So a freshly pointed DEV_APP_ROOT (or a PROD_APP_ROOT that hasn't been
+# fully unpacked yet) doesn't need every subfolder hand-built before first
+# run. Non-fatal if a folder can't be created (e.g. the drive isn't
+# reachable yet) -- individual callers still os.makedirs() before writing,
+# this is just a best-effort head start at import time.
+for _dir in (
+    config.RF_OUTPUT_PATH,
+    config.DMS_STAGING_FOLDER,
+    os.path.join(config.GST_SCREENSHOTS_ROOT, "einvoice"),
+    os.path.join(config.GST_SCREENSHOTS_ROOT, "taxpayer"),
+    os.path.join(config.GST_EDGE_PROFILE_ROOT, "einvoice"),
+    os.path.join(config.GST_EDGE_PROFILE_ROOT, "taxpayer"),
+    config.ZGRN_PRINT_FOLDER,
+    config.ZGRN_MIP_FOLDER,
+    os.path.join(config.APP_ROOT, "logs"),
+):
+    try:
+        os.makedirs(_dir, exist_ok=True)
+    except Exception:
+        pass

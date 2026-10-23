@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>No Access - SPL Document Processing</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            width: 100%;
+            max-width: 480px;
+            text-align: center;
+        }
+        .card-header {
+            background: linear-gradient(135deg, #1e5ca8 0%, #164a8a 100%);
+            padding: 36px 30px;
+            color: white;
+        }
+        .card-header i { font-size: 40px; margin-bottom: 12px; display: block; }
+        .card-body { padding: 32px 30px; color: #333; }
+        .card-body p { margin-bottom: 10px; line-height: 1.5; }
+        .card-body .username { font-weight: 600; color: #1e5ca8; }
+        .logout-btn {
+            display: inline-block;
+            margin-top: 18px;
+            padding: 10px 24px;
+            background: #1e5ca8;
+            color: white;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .logout-btn:hover { background: #164a8a; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="card-header">
+            <i class="fas fa-user-lock"></i>
+            <div style="font-size:20px;font-weight:600;">No Roles Assigned</div>
+        </div>
+        <div class="card-body">
+            <p>Your account, <span class="username">{{ username }}</span>, has been verified but doesn't have
+               any roles assigned in Material Inward yet.</p>
+            <p>Please contact your SuperAdmin to get access assigned before you can continue.</p>
+            <a href="{{ url_for('logout') }}" class="logout-btn">Log Out</a>
+        </div>
+    </div>
+</body>
+</html>
