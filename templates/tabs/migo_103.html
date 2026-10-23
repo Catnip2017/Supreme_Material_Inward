@@ -293,11 +293,20 @@
 
 /* ── Waiting for MIGO 103 panel + draft bar (static/js/pending_list.js,
       static/js/migo_103_draft.js) ── */
-.mpl { border:1px solid #dde3f0; border-radius:10px; background:#fff; margin:6px 0 18px; overflow:hidden; }
+.mpl { border:1px solid #dde3f0; border-radius:10px; background:#fff; margin:18px 0 6px; overflow:hidden; }
 .mpl-head { display:flex; justify-content:space-between; align-items:center; padding:9px 14px; background:#f0f4ff; font-weight:600; font-size:13px; color:#1e3a6e; }
 .mpl-count { display:inline-block; min-width:20px; padding:1px 7px; margin-left:6px; border-radius:10px; background:#1e5ca8; color:#fff; font-size:11px; text-align:center; }
 .mpl-toggle { background:none; border:1px solid #c3cde3; border-radius:6px; padding:2px 10px; font-size:12px; cursor:pointer; color:#1e5ca8; }
 .mpl-list { max-height:260px; overflow-y:auto; }
+.mpl-head-r { display:flex; align-items:center; gap:8px; }
+.mpl-back { font-size:12px; font-weight:600; color:#1e5ca8; text-decoration:none; border:1px solid #c3cde3; border-radius:6px; padding:2px 10px; background:#fff; max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mpl-back:hover { background:#eef4ff; }
+.mpl-searchrow { padding:8px 14px; border-top:1px solid #eef1f7; background:#fafbfe; }
+.mpl-search { width:100%; box-sizing:border-box; padding:7px 10px; border:1px solid #c3cde3; border-radius:6px; font-size:13px; }
+.mpl-empty { padding:14px; color:#888; font-size:13px; text-align:center; }
+.mpl-c-last { background:#f3e8ff; color:#7b2fbf; }
+.mpl-postcount { background:#f0f4ff; color:#1e5ca8; border:1px solid #c3cde3; border-radius:18px; padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer; }
+.mpl-postcount:hover { background:#e2eaff; }
 .mpl-row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 14px; border-top:1px solid #eef1f7; text-decoration:none; color:#2d3436; font-size:13px; }
 .mpl-row:hover { background:#f7f9fc; }
 .mpl-current { background:#eef4ff; border-left:3px solid #1e5ca8; }
@@ -321,16 +330,6 @@
 <div class="content-card">
   <h3>📦 MIGO 103 — Goods Receipt into Blocked Stock</h3>
 
-  {# ADDED: live "Waiting for MIGO 103" list (see static/js/pending_list.js).
-     Hidden until it has something to show. Rows are plain links to each
-     invoice; chips show Posting / "X is on it" / your draft. #}
-  <div id="migoPendingPanel" class="mpl" style="display:none;">
-    <div class="mpl-head">
-      <span>⏳ Waiting for MIGO 103 <span id="mplCount" class="mpl-count">0</span></span>
-      <button type="button" id="mplToggle" class="mpl-toggle">Hide</button>
-    </div>
-    <div id="mplBody"><div id="mplList" class="mpl-list"></div></div>
-  </div>
 
 {% set post_locked = (history is none) or (not history.gate_in) %}
 {% set gate_in_done = history and history.gate_in %}
@@ -788,6 +787,8 @@
         {% if history and history.migo_103 %}disabled style="background:#00b894;"{% endif %}>
         {% if history and history.migo_103 %}✓ MIGO 103 Done{% else %}📮 Post MIGO 103{% endif %}
     </button>
+    {# count of invoices still waiting; click scrolls to the list below (pending_list.js) #}
+    <button type="button" id="mplPostCount" class="mpl-postcount" style="display:none;" title="Show the waiting list"></button>
     {# ADDED (2026-08-14): zgrn.robot "Print" -- GR Certificate / Certificate
        of Goods Delivery, only meaningful once MIGO 103 has actually posted
        (needs a material_doc_number to run zgrn against). #}
@@ -830,6 +831,26 @@
   </div>
   {% endif %}
   <div id="migoReversalStatus" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
+
+  {# MOVED to the bottom (under the Post button) and extended: live "Waiting for
+     MIGO 103" list with a search box, "Last visited" tags and a Back button
+     (see static/js/pending_list.js). Hidden until it has something to show.
+     Rows are plain links to each invoice; chips show Posting / "X is on it" /
+     your draft. #}
+  <div id="migoPendingPanel" class="mpl" style="display:none;">
+    <div class="mpl-head">
+      <span>⏳ Waiting for MIGO 103 <span id="mplCount" class="mpl-count">0</span></span>
+      <span class="mpl-head-r">
+        <a id="mplBack" class="mpl-back" href="#" style="display:none;"></a>
+        <button type="button" id="mplToggle" class="mpl-toggle">Hide</button>
+      </span>
+    </div>
+    <div id="mplBody">
+      <div class="mpl-searchrow"><input type="search" id="mplSearch" class="mpl-search" placeholder="Search invoice no., vendor or ID…" autocomplete="off"></div>
+      <div id="mplList" class="mpl-list"></div>
+    </div>
+  </div>
+
 
   {% if history_id %}
   {% set remarks_panel_id = 'migo103' %}
