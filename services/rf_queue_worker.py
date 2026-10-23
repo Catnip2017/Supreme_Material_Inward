@@ -853,6 +853,7 @@ def _process_migo_105(history_id: int, payload: dict) -> dict:
             migo_105_doc=migo_105_doc
         )
         logger.info(f"MIGO 105 complete — history_id={history_id} doc={migo_105_doc}")
+        _after_posting_cleanup(history_id, "migo_105")   # drop everyone's unposted 105 drafts for this record
 
         # FIX: was passing mat_doc here -- MIGO 103's material document
         # number (the one this MIGO 105 posting was made AGAINST, resolved

@@ -1774,12 +1774,14 @@ def execute_migo103_link_sap(data: dict) -> dict:
     status_val = _extract_marked_value(result["output"], "MIGO103_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
+    # The robot-log folder is a server path -- logged for IT, never shown to the user.
+    logger.error(
+        "migo103_link robot ran but did not confirm the link was attached. "
+        f"Check robot log: {result.get('output_dir')}"
+    )
     return {
         "success": False,
-        "error": (
-            "migo103_link robot ran but did not confirm the link was "
-            f"attached. Check robot log: {result.get('output_dir')}"
-        )
+        "error": "migo103_link ran but did not confirm the link was attached. Try again."
     }
  
  
@@ -1807,12 +1809,14 @@ def execute_migo101_link_sap(data: dict) -> dict:
     status_val = _extract_marked_value(result["output"], "MIGO101_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
+    # The robot-log folder is a server path -- logged for IT, never shown to the user.
+    logger.error(
+        "migo101_link robot ran but did not confirm the link was attached. "
+        f"Check robot log: {result.get('output_dir')}"
+    )
     return {
         "success": False,
-        "error": (
-            "migo101_link robot ran but did not confirm the link was "
-            f"attached. Check robot log: {result.get('output_dir')}"
-        )
+        "error": "migo101_link ran but did not confirm the link was attached. Try again."
     }
 
 
@@ -1841,12 +1845,14 @@ def execute_migo105_link_sap(data: dict) -> dict:
     status_val = _extract_marked_value(result["output"], "MIGO105_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
+    # The robot-log folder is a server path -- logged for IT, never shown to the user.
+    logger.error(
+        "migo105_link robot ran but did not confirm the link was attached. "
+        f"Check robot log: {result.get('output_dir')}"
+    )
     return {
         "success": False,
-        "error": (
-            "migo105_link robot ran but did not confirm the link was "
-            f"attached. Check robot log: {result.get('output_dir')}"
-        )
+        "error": "migo105_link ran but did not confirm the link was attached. Try again."
     }
  
  
@@ -1879,12 +1885,14 @@ def execute_miro_link_sap(data: dict) -> dict:
     status_val = _extract_marked_value(result["output"], "MIRO_LINK_STATUS")
     if status_val and status_val.upper() == "SUCCESS":
         return {"success": True, "error": None}
+    # The robot-log folder is a server path -- logged for IT, never shown to the user.
+    logger.error(
+        "miro_link robot ran but did not confirm the link was attached. "
+        f"Check robot log: {result.get('output_dir')}"
+    )
     return {
         "success": False,
-        "error": (
-            "miro_link robot ran but did not confirm the link was "
-            f"attached. Check robot log: {result.get('output_dir')}"
-        )
+        "error": "miro_link ran but did not confirm the link was attached. Try again."
     }
 
 

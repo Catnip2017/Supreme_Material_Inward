@@ -146,6 +146,7 @@
     if (ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
     try { sessionStorage.setItem('mi_reload_tab', 'migo103'); } catch (e) {}   // land on this tab
     try { if (typeof window.miFlushDraft === 'function') window.miFlushDraft(); } catch (e) {}
+    try { if (typeof window.miFlushDraft105 === 'function') window.miFlushDraft105(); } catch (e) {}
   }
 
   function buildRow(it, visits, prevId) {

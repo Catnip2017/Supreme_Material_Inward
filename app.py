@@ -1989,6 +1989,57 @@ def api_migo_103_draft_delete(history_id):
     return jsonify({"success": ok})
 
 
+# ---- MIGO 105 drafts (same table/helpers as MIGO 103; static/js/migo_105_draft.js) ----
+@app.route("/api/draft/migo_105/<int:history_id>", methods=["GET"])
+@api_login_required
+def api_migo_105_draft_get(history_id):
+    if not _has_role("migo_105"):
+        return jsonify({"success": False, "error": "No permission."}), 403
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    username = session.get("username") or ""
+    if history.get("migo_105"):
+        # Already posted: nothing to restore.
+        return _no_store(jsonify({"success": True, "draft": None, "others": []}))
+    return _no_store(jsonify({
+        "success": True,
+        "draft":  step_state.get_draft(history_id, "migo_105", username),
+        "others": step_state.get_other_drafts(history_id, "migo_105", username),
+    }))
+
+
+@app.route("/api/draft/migo_105/<int:history_id>", methods=["PUT"])
+@api_login_required
+def api_migo_105_draft_put(history_id):
+    blocked = _require_role_edit("migo_105")
+    if blocked:
+        return blocked
+    if (request.content_length or 0) > _STEP_STATE_MAX_BODY:
+        return jsonify({"success": False, "error": "Draft too large."}), 413
+    body = request.get_json(silent=True) or {}
+    data = body.get("data")
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Invalid draft."}), 400
+    history = get_history_by_id(history_id)
+    if not history:
+        return jsonify({"success": False, "error": "Record not found"}), 404
+    if history.get("migo_105"):
+        return jsonify({"success": True, "saved": False})
+    ok = step_state.save_draft(history_id, "migo_105", session.get("username") or "", data)
+    return jsonify({"success": ok, "saved": ok})
+
+
+@app.route("/api/draft/migo_105/<int:history_id>", methods=["DELETE"])
+@api_login_required
+def api_migo_105_draft_delete(history_id):
+    blocked = _require_role_edit("migo_105")
+    if blocked:
+        return blocked
+    ok = step_state.delete_draft(history_id, "migo_105", session.get("username") or "")
+    return jsonify({"success": ok})
+
+
 @app.route("/api/claim/migo_103/<int:history_id>", methods=["POST"])
 @api_login_required
 def api_migo_103_claim(history_id):

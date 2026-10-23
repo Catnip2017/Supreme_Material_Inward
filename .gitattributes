@@ -1,0 +1,5 @@
+# Windows batch files must keep CRLF line endings or cmd.exe can mis-parse
+# labels / goto / call :sub. Without this, a checkout on a machine with
+# core.autocrlf=false turns them into LF and start_server.bat stops working.
+*.bat text eol=crlf
+*.cmd text eol=crlf

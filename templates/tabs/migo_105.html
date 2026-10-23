@@ -1,5 +1,9 @@
 <style>
 .req { color:#e74c3c; margin-left:2px; }
+/* draft bar (same look as MIGO 103's; repeated so it also works if that tab isn't on the page) */
+.mdraft-bar { display:none; align-items:center; gap:12px; flex-wrap:wrap; background:#fffbea; color:#7a5d00; border:1px solid #f0dd8c; border-radius:8px; padding:9px 14px; margin:12px 0; font-size:13px; }
+.mdraft-bar button { background:#fff; border:1px solid #d9c46b; border-radius:6px; padding:3px 10px; font-size:12px; cursor:pointer; color:#7a5d00; }
+.mdraft-saved { margin-left:auto; color:#00a383; font-size:12px; }
 .field-error { border-color:#e74c3c !important; }
 .field-error-msg { color:#e74c3c; font-size:12px; margin-top:4px; display:none; }
 .field-error-msg.show { display:block; }
@@ -240,6 +244,14 @@
         </tbody>
       </table>
     </div>
+  </div>
+
+  {# ADDED: draft notice (static/js/migo_105_draft.js) -- "Draft restored" /
+     "Draft saved" / Discard. Stays hidden unless there is something to say. #}
+  <div id="migoDraftBar105" class="mdraft-bar">
+    <span id="migoDraftMsg105"></span>
+    <button type="button" id="migoDraftDiscard105" style="display:none;">Discard draft</button>
+    <span id="migoDraftSaved105" class="mdraft-saved"></span>
   </div>
 
   <div id="migo105Status" style="display:none;padding:12px 16px;border-radius:8px;margin:16px 0;font-weight:500;"></div>
@@ -579,3 +591,4 @@ function submitMigo105Reversal() {
 // Load on page open
 loadMigo105Items();
 </script>
+<script src="{{ static_v('js/migo_105_draft.js') }}"></script>

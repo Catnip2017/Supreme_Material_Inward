@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 CLAIM_FRESH_SECONDS = 90          # heartbeat older than this = nobody is on it
 DRAFT_MAX_AGE_DAYS = 14
 DRAFT_MAX_BYTES = 200 * 1024
-SUPPORTED_STEPS = ("migo_103",)
+SUPPORTED_STEPS = ("migo_103", "migo_105")
 
 
 def _iso(v):
