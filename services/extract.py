@@ -54,6 +54,17 @@ _model_instance = None
 _WATSONX_RETRY_ATTEMPTS = 3
 _WATSONX_RETRY_DELAY_SECONDS = 3
 
+# Output-token cap for each OCR answer. Default 4000 = the value this file always
+# used. A long invoice (4-5 pages, many line items) can need more than that for
+# its JSON; the answer is then cut off mid-way and fails to parse ("Unterminated
+# string...", "Expecting value..." at ~12-13K characters). Raise it in .env with
+# WATSONX_MAX_TOKENS (e.g. 8000) -- must stay within what the configured model
+# allows, otherwise WatsonX rejects the request.
+try:
+    _WATSONX_MAX_TOKENS = max(1000, int(os.getenv("WATSONX_MAX_TOKENS", "4000")))
+except ValueError:
+    _WATSONX_MAX_TOKENS = 4000
+
 
 def _get_model() -> Optional[object]:
     """
@@ -81,7 +92,7 @@ def _get_model() -> Optional[object]:
                 model_id=config.WATSONX_MODEL_ID,
                 credentials=credentials,
                 project_id=config.WATSONX_PROJECT_ID,
-                params={"max_tokens": 4000}
+                params={"max_tokens": _WATSONX_MAX_TOKENS}
             )
             logger.info(f"WatsonX model initialized: {config.WATSONX_MODEL_ID}")
             return _model_instance
@@ -970,8 +981,24 @@ def process_document(doc_type: str, file_path: str, filename: str) -> Optional[d
 
         logger.debug(f"WatsonX raw response for {doc_type}: {raw_text[:500]}")
 
+        # "length" = the model hit the output-token cap and stopped mid-answer.
+        finish_reason = response["choices"][0].get("finish_reason")
+        truncated = (finish_reason == "length")
+        if truncated:
+            logger.error(
+                f"OCR output for {doc_type} '{filename}' was CUT OFF at the output-token "
+                f"limit (max_tokens={_WATSONX_MAX_TOKENS}, {len(raw_text)} chars). "
+                "Raise WATSONX_MAX_TOKENS in .env and restart."
+            )
+
         extracted = _parse_response(raw_text, doc_type)
         if not extracted:
+            if not truncated:
+                logger.error(
+                    f"OCR answer for {doc_type} '{filename}' could not be parsed "
+                    f"(finish_reason={finish_reason!r}, {len(raw_text)} chars, "
+                    f"max_tokens={_WATSONX_MAX_TOKENS})."
+                )
             return None
 
         # Clean all values — remove None/"N/A"/null etc
