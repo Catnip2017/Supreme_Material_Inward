@@ -38,6 +38,7 @@ from database.db_operations import (
     update_history_step,
     save_invoice_to_db, save_ewaybill_to_db, save_lr_to_db,
     get_history_search, get_today_counts, get_silent_hours_pending_breakdown,
+    get_silent_hours_pending_report,
     set_tax_classification,
     set_approval_status, set_hold_status,
     set_ocr_status, increment_ocr_retry, get_ocr_failed_path,
@@ -956,6 +957,77 @@ def api_history_search():
         date_from=date_from, date_to=date_to,
         page=page, per_page=20
     ))
+
+
+# ADDED: "Download report" on the History > Silent Hours: Pending Documents view.
+# Same viewers as the button that leads to that view (compliance / SuperAdmin);
+# read-only. Rows come from the same WHERE clause as the list and its badge --
+# see db_operations.get_silent_hours_pending_report().
+@app.route("/api/silent_hours_pending_report")
+@api_login_required_view_only
+def api_silent_hours_pending_report():
+    if not _has_role("compliance"):
+        return jsonify({"success": False, "error": "You do not have permission to download this report."}), 403
+    try:
+        rows = get_silent_hours_pending_report()
+    except Exception:
+        return jsonify({"success": False, "error": "Could not build the report. Check the server log."}), 500
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    cols = [
+        ("Record ID",          "record_id",        10),
+        ("Invoice No.",        "invoice_number",   22),
+        ("Vendor",             "vendor",           36),
+        ("PO No.",             "po_number",        16),
+        ("Gate In No.",        "gate_in_number",   16),
+        ("Vehicle No.",        "vehicle_no",       16),
+        ("Created By",         "created_by",       24),
+        ("Entry Created",      "entry_created_at", 20),
+        ("Hours Waiting",      "hours_waiting",    14),
+        ("Pending Reason",     "pending_reason",   24),
+    ]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Pending Documents"
+    ws.append([c[0] for c in cols])
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1E5CA8")
+        cell.alignment = Alignment(vertical="center")
+    for r in rows:
+        line = []
+        for _, key, _w in cols:
+            v = r.get(key)
+            if hasattr(v, "tzinfo") and getattr(v, "tzinfo", None) is not None:
+                v = v.replace(tzinfo=None)
+            elif v is not None and not isinstance(v, (str, int, float)) and not hasattr(v, "year"):
+                v = float(v)            # Decimal -> number
+            line.append(v)
+        ws.append(line)
+    for i, (_, key, width) in enumerate(cols, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+        if key == "entry_created_at":
+            for c in ws[get_column_letter(i)][1:]:
+                c.number_format = "dd-mmm-yyyy hh:mm"
+    # text that starts with "=" must stay text, never become an Excel formula
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            if isinstance(c.value, str) and c.value.startswith("="):
+                c.data_type = "s"
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = "silent_hours_pending_documents_" + datetime.now().strftime("%Y%m%d_%H%M") + ".xlsx"
+    return send_file(
+        buf, as_attachment=True, download_name=fname,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @app.route("/change_my_password", methods=["POST"])

@@ -1047,6 +1047,46 @@ def get_silent_hours_pending_breakdown() -> dict:
         logger.error(f"Failed to get silent hours pending breakdown: {e}")
         return {"total": 0, "not_uploaded": 0, "ocr_failed": 0, "over_24h": 0}
 
+
+def get_silent_hours_pending_report() -> list:
+    """
+    ADDED: rows for the "Download report" button on the locked Silent Hours
+    "Pending Documents" History view. The WHERE clause is the SAME one used by
+    get_history_search(status='awaiting_documents_silent_hours') and
+    get_silent_hours_pending_breakdown() above, so the file always matches the
+    list and the count badge on screen. Oldest first. Read-only.
+    """
+    sql = """
+        SELECT
+            h.id                                              AS record_id,
+            COALESCE(inv.invoice_number, h.invoice_number)    AS invoice_number,
+            COALESCE(sm.name_1, sm.name, gatein.vendor_name, inv.seller_name) AS vendor,
+            COALESCE(inv.po_number, h.po_number)              AS po_number,
+            h.gate_in_number                                  AS gate_in_number,
+            gatein.truck_no                                   AS vehicle_no,
+            COALESCE(h.silent_hours_created_by, gatein.submitted_by) AS created_by,
+            h.created_at                                      AS entry_created_at,
+            ROUND(EXTRACT(EPOCH FROM (NOW() - h.created_at)) / 3600.0, 1) AS hours_waiting,
+            CASE WHEN h.ocr_status = 'failed' THEN 'OCR failed'
+                 ELSE 'Documents not uploaded' END            AS pending_reason
+        FROM history h
+        LEFT JOIN invoice_data     inv    ON inv.id = h.id
+        LEFT JOIN gate_in_entries  gatein ON gatein.history_id = h.id
+        LEFT JOIN supplier_master  sm     ON sm.supplier = gatein.vendor_name
+        WHERE h.silent_hours_entry = 1 AND h.gate_in = 1 AND h.migo_103 = 0
+          AND COALESCE(h.ocr_status, '') != 'success'
+          AND COALESCE(h.gst_check, 0) != 1
+        ORDER BY h.created_at
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql)
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"Failed to get silent hours pending report: {e}")
+        raise
+
 # ============================================================
 # DMS STATUS
 # ============================================================

@@ -460,6 +460,12 @@
     <div class="filter-bar" style="align-items:center;">
         <span class="locked-filter-pill"><i class="fas fa-lock"></i> Filtered: Awaiting Documents (Silent Hours)</span>
         <span style="font-size:12px;color:#999;flex:1;">This list only shows Silent Hours entries still missing documents.</span>
+        {% if is_superadmin or has_role('compliance') %}
+        <a href="/api/silent_hours_pending_report" title="Download this list as an Excel file"
+           style="font-size:13px;font-weight:600;color:#fff;background:#1e7e4a;text-decoration:none;white-space:nowrap;padding:6px 12px;border-radius:6px;">
+            <i class="fas fa-file-excel"></i> Download report
+        </a>
+        {% endif %}
         <a href="/history" style="font-size:13px;font-weight:600;color:#1e5ca8;text-decoration:none;white-space:nowrap;">
             <i class="fas fa-arrow-left"></i> Back to full History
         </a>
